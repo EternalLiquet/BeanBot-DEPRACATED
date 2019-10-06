@@ -19,6 +19,11 @@ namespace BeanBot
 
         public async Task StartAsync()
         {
+            CreateLoggerConfiguration();
+        }
+
+        private void CreateLoggerConfiguration()
+        {
             Log.Logger = new LoggerConfiguration()
                 .MinimumLevel.Debug()
                 .WriteTo.Console()
