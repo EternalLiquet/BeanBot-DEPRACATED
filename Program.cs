@@ -7,6 +7,8 @@ using Discord.WebSocket;
 using Serilog;
 using Serilog.Configuration;
 
+using BeanBot.Util;
+
 namespace BeanBot
 {
     class Program
@@ -19,16 +21,9 @@ namespace BeanBot
 
         public async Task StartAsync()
         {
-            CreateLoggerConfiguration();
+            Support.StartupOperations();
         }
 
-        private void CreateLoggerConfiguration()
-        {
-            Log.Logger = new LoggerConfiguration()
-                .MinimumLevel.Debug()
-                .WriteTo.Console()
-                .WriteTo.File("logs\\BeanBotLogs.txt", rollingInterval: RollingInterval.Day)
-                .CreateLogger();
-        }
+
     }
 }
