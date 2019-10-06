@@ -4,6 +4,8 @@ using System.Text;
 
 using Serilog;
 
+using YamlDotNet;
+
 namespace BeanBot.Util
 {
     public static class Support
@@ -22,6 +24,11 @@ namespace BeanBot.Util
                 .WriteTo.Console()
                 .WriteTo.File("logs\\BeanBotLogs.txt", rollingInterval: RollingInterval.Day)
                 .CreateLogger();
+        }
+
+        private static void GetBotTokenFromConfigFile()
+        {
+
         }
     }
 }

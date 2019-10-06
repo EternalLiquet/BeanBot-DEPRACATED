@@ -30,3 +30,6 @@ msbuild.wrn
 
 # Visual Studio 2015
 .vs/
+
+# Bean Bot Specific Ignores
+bot_token.yml
