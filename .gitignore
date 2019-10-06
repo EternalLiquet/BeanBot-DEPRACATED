@@ -32,4 +32,4 @@ msbuild.wrn
 .vs/
 
 # Bean Bot Specific Ignores
-bot_token.yml
+beantoken.yml
