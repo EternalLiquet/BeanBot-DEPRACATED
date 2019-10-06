@@ -8,7 +8,7 @@ namespace BeanBot.Util
 {
     public static class Support
     {
-        static string botToken;
+        public static string botToken;
 
         public static void StartupOperations()
         {

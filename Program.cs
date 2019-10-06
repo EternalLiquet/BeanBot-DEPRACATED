@@ -22,6 +22,7 @@ namespace BeanBot
         public async Task StartAsync()
         {
             Support.StartupOperations();
+            _token = Support.botToken;
         }
 
 
