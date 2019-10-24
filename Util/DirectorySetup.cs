@@ -7,7 +7,7 @@ namespace BeanBot.Util
     public static class DirectorySetup
     {
         public readonly static string botBaseDirectory = $"{Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles)}\\BeanBot\\";
-        public readonly static string botTokenDirectory = botBaseDirectory + "BeanToken\";
+        public readonly static string botTokenDirectory = botBaseDirectory + "BeanToken\\";
 
         public static void MakeSureAllDirectoriesExist()
         {
