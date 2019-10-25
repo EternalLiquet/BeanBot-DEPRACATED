@@ -9,7 +9,8 @@ namespace BeanBot.Util
     public static class TokenSetup
     {
         public readonly static string botTokenFilePath = DirectorySetup.botTokenDirectory + "beantoken.succsuccsucc";
-        private static void MakeSureBeanTokenFileExists()
+
+        public static void MakeSureBeanTokenFileExists()
         {
             if (!File.Exists(botTokenFilePath))
             {
@@ -19,7 +20,21 @@ namespace BeanBot.Util
                 Log.Error($"Bean Token file created automatically at: {beanTokenFileLocation}");
                 Log.Error("Please configure this file with help using the documentation/readme");
             }
+        }
 
+        public static string GetBeanTokenFromFile()
+        {
+            return new NotImplementedException;
+        }
+
+        private static void ValidateBeanToken()
+        {
+            if (beanTokenFileContents == "INSERT BOT TOKEN HERE" || beanTokenFileContents == null)
+            {
+                Log.Error($"Please configure the bean token file at {Path.GetFullPath(botBasePath)}");
+                return false;
+            }
+            return true;
         }
         private static void GetBotTokenFromConfigFile()
         {
@@ -46,15 +61,6 @@ namespace BeanBot.Util
                 Log.Error("Please configure this file with help using the documentation/readme");
                 return null;
             }
-        }
-        private static bool ValidBeanToken(string beanTokenFileContents)
-        {
-            if (beanTokenFileContents == "INSERT BOT TOKEN HERE" || beanTokenFileContents == null)
-            {
-                Log.Error($"Please configure the bean token file at {Path.GetFullPath(botBasePath)}");
-                return false;
-            }
-            return true;
         }
     }
 }
