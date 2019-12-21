@@ -6,29 +6,28 @@ namespace BeanBot.Util
 {
     public static class DirectorySetup
     {
-        public readonly static string botBaseDirectory = $"{Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles)}\\BeanBot\\";
-        public readonly static string botTokenDirectory = botBaseDirectory + "BeanToken\\";
+        public readonly static string botBaseDirectory = $"BeanBotFiles\\";
 
         public static void MakeSureAllDirectoriesExist()
         {
             MakeSureBaseDirectoryExists();
-            MakeSureBotTokenDirectoryExists();
+            MakeSureBotTokenDirectoryExists(Path.GetFullPath(TokenSetup.botTokenDirectory));
         }
 
         private static void MakeSureBaseDirectoryExists()
         {
             if (Directory.Exists(botBaseDirectory))
             {
-                Log.Information($"Bean Bot base file directory found at {botBaseDirectory}");
+                Log.Information($"Bean Bot base file directory found at {Path.GetFullPath(botBaseDirectory)}");
             }
             else
             {
-                Log.Error($"Bean Bot base file directory not found, creating directory at: {botBaseDirectory}");
-                Directory.CreateDirectory(botBaseDirectory);
+                Log.Error($"Bean Bot base file directory not found, creating directory at: {Path.GetFullPath(botBaseDirectory)}");
+                Directory.CreateDirectory(Path.GetFullPath(botBaseDirectory));
             }
         }
 
-        private static void MakeSureBotTokenDirectoryExists()
+        private static void MakeSureBotTokenDirectoryExists(string botTokenDirectory)
         {
             if (Directory.Exists(botTokenDirectory))
             {

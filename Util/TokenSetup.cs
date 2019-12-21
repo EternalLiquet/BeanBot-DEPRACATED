@@ -8,59 +8,41 @@ namespace BeanBot.Util
 {
     public static class TokenSetup
     {
-        public readonly static string botTokenFilePath = DirectorySetup.botTokenDirectory + "beantoken.succsuccsucc";
+        public readonly static string botTokenDirectory = DirectorySetup.botBaseDirectory + "BeanToken\\";
+        public readonly static string botTokenFilePath = TokenSetup.botTokenDirectory + "beantoken.succsuccsucc";
 
         public static void MakeSureBeanTokenFileExists()
         {
             if (!File.Exists(botTokenFilePath))
             {
-                File.WriteAllText(botTokenFilePath, "INSERT BOT TOKEN HERE");
                 string beanTokenFileLocation = Path.GetFullPath(botTokenFilePath);
                 Log.Error("Bean Token file not found!");
                 Log.Error($"Bean Token file created automatically at: {beanTokenFileLocation}");
-                Log.Error("Please configure this file with help using the documentation/readme");
+                Console.WriteLine("To configure your bean token, please copy and paste your bean token here\n> ");
+                string beanTokenInput = Console.ReadLine();
+                File.WriteAllText(botTokenFilePath, beanTokenInput);
             }
         }
 
-        public static string GetBeanTokenFromFile()
+        public static string GetBeanTokenFromBeanTokenFile()
         {
-            return new NotImplementedException;
-        }
-
-        private static void ValidateBeanToken()
-        {
-            if (beanTokenFileContents == "INSERT BOT TOKEN HERE" || beanTokenFileContents == null)
-            {
-                Log.Error($"Please configure the bean token file at {Path.GetFullPath(botBasePath)}");
-                return false;
-            }
-            return true;
-        }
-        private static void GetBotTokenFromConfigFile()
-        {
-            string beanTokenFileContents = ReadBeanTokenFile();
-            if (ValidBeanToken(beanTokenFileContents))
-            {
-                //botToken = beanTokenFileContents;
-            }
-        }
-
-        private static string ReadBeanTokenFile()
-        {
+            string beanTokenFileContent;
             try
             {
-                string beanTokenFileContents = File.ReadAllText(botBasePath);
-                return beanTokenFileContents;
+                beanTokenFileContent = File.ReadAllText(botTokenFilePath);
             }
-            catch (FileNotFoundException)
+            catch (FileNotFoundException e)
             {
-                File.WriteAllText(botBasePath, "INSERT BOT TOKEN HERE");
-                string beanTokenFileLocation = Path.GetFullPath(botBasePath);
-                Log.Error("Bean Token file not found!");
-                Log.Error($"Bean Token file created automatically at: {beanTokenFileLocation}");
-                Log.Error("Please configure this file with help using the documentation/readme");
-                return null;
+                Log.Error(e.ToString());
+                MakeSureBeanTokenFileExists();
+                beanTokenFileContent = File.ReadAllText(botTokenFilePath);
             }
+            catch (Exception e)
+            {
+                Log.Error(e.ToString());
+                throw e;
+            }
+            return beanTokenFileContent;
         }
     }
 }
