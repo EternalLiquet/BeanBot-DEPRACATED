@@ -1,12 +1,48 @@
-﻿using System;
+﻿using BeanBot.Util;
+using Discord;
+using Discord.WebSocket;
+using Serilog;
+using System.IO;
+using System.Threading.Tasks;
 
 namespace BeanBot
 {
     class Program
     {
+        private DiscordSocketClient _client;
+        private string _token;
+
         static void Main(string[] args)
+            => new Program().StartAsync().GetAwaiter().GetResult();
+
+        public async Task StartAsync()
         {
-            Console.WriteLine("Hello World!");
+            Support.StartupOperations();
+            _client = new DiscordSocketClient(new DiscordSocketConfig
+            {
+                LogLevel = LogSeverity.Verbose, 
+                MessageCacheSize = 50
+            });
+            _token = Support.BotToken;
+            try
+            {
+                await _client.LoginAsync(TokenType.Bot, _token);
+                await _client.StartAsync();
+            }
+            catch (Discord.Net.HttpException e)
+            {
+                Log.Error(e.ToString());
+                Log.Error($"Bean Token was incorrect, please review the bean token file in {Path.GetFullPath(TokenSetup.botTokenFilePath)}");
+            }
+
+            _client.Log += LogMessages;
+            await Task.Delay(-1);
+        }
+
+        private Task LogMessages(LogMessage messages)
+        {
+            Log.Information($"{messages.Source.ToString()}\t{messages.Message.ToString()}");
+            return Task.CompletedTask;
         }
     }
 }
