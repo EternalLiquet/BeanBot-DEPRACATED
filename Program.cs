@@ -33,16 +33,14 @@ namespace BeanBot
             {
                 await _client.LoginAsync(TokenType.Bot, _token);
                 await _client.StartAsync();
-                //await _client.SetGameAsync();
             }
             catch (Discord.Net.HttpException e)
             {
+                Log.Error(e.ToString());
                 Log.Error($"Bean Token was incorrect, please review the bean token file in {Path.GetFullPath(TokenSetup.botTokenFilePath)}");
             }
 
-            _client.Log += (logMessages)
-                => LogMessages(logMessages);
-
+            _client.Log += LogMessages;
             await Task.Delay(-1);
         }
 
