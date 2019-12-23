@@ -46,9 +46,10 @@ namespace BeanBot
             await Task.Delay(-1);
         }
 
-        private async Task LogMessages(LogMessage messages)
+        private Task LogMessages(LogMessage messages)
         {
             Log.Information($"{messages.Source.ToString()}\t{messages.Message.ToString()}");
+            return Task.CompletedTask;
         }
     }
 }
