@@ -1,14 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-using System.IO;
-
-using Serilog;
-
-using YamlDotNet;
-using YamlDotNet.RepresentationModel;
-
-namespace BeanBot.Util
+﻿namespace BeanBot.Util
 {
     public static class Support
     {

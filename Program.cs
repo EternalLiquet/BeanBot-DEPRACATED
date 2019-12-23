@@ -1,15 +1,9 @@
-﻿using System;
-using System.Threading.Tasks;
-
+﻿using BeanBot.Util;
 using Discord;
 using Discord.WebSocket;
-
 using Serilog;
-using Serilog.Sinks;
-using Serilog.Configuration;
-
-using BeanBot.Util;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace BeanBot
 {
