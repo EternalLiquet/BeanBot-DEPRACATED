@@ -26,7 +26,8 @@ namespace BeanBot
             Support.StartupOperations();
             _client = new DiscordSocketClient(new DiscordSocketConfig
             {
-                LogLevel = LogSeverity.Verbose
+                LogLevel = LogSeverity.Verbose, 
+                MessageCacheSize = 50
             });
             _token = Support.BotToken;
             try
