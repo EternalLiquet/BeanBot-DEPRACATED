@@ -41,7 +41,25 @@ namespace BeanBot
 
         private Task LogMessages(LogMessage messages)
         {
-            Log.Information($"{messages.Source.ToString()}\t{messages.Message.ToString()}");
+            string formattedMessage = $"{messages.Source.ToString()}\t{messages.Message.ToString()}"
+            switch (messages.Severity)
+            {
+                case LogSeverity.Critical:
+                    Log.Fatal(formattedMessage);
+                    break;
+                case LogSeverity.Error:
+                    Log.Error(formattedMessage);
+                    break;
+                case LogSeverity.Warning:
+                    Log.Warning(formattedMessage);
+                    break;
+                case LogSeverity.Info:
+                    Log.Information(formattedMessage);
+                    break;
+                case LogSeverity.Verbose:
+                    Log.Verbose(formattedMessage);
+                    break;
+            }
             return Task.CompletedTask;
         }
     }
