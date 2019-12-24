@@ -9,8 +9,8 @@ namespace BeanBot
 {
     class Program
     {
-        private DiscordSocketClient _client;
-        private string _token;
+        private DiscordSocketClient _discordClient;
+        private string _discordBotToken;
 
         static void Main(string[] args)
             => new Program().StartAsync().GetAwaiter().GetResult();
@@ -18,16 +18,16 @@ namespace BeanBot
         public async Task StartAsync()
         {
             Support.StartupOperations();
-            _client = new DiscordSocketClient(new DiscordSocketConfig
+            _discordClient = new DiscordSocketClient(new DiscordSocketConfig
             {
                 LogLevel = LogSeverity.Verbose, 
                 MessageCacheSize = 50
             });
-            _token = Support.BotToken;
+            _discordBotToken = Support.BotToken;
             try
             {
-                await _client.LoginAsync(TokenType.Bot, _token);
-                await _client.StartAsync();
+                await _discordClient.LoginAsync(TokenType.Bot, _discordBotToken);
+                await _discordClient.StartAsync();
             }
             catch (Discord.Net.HttpException e)
             {
@@ -35,7 +35,7 @@ namespace BeanBot
                 Log.Error($"Bean Token was incorrect, please review the bean token file in {Path.GetFullPath(TokenSetup.botTokenFilePath)}");
             }
 
-            _client.Log += LogMessages;
+            _discordClient.Log += LogMessages;
             await Task.Delay(-1);
         }
 
