@@ -13,9 +13,8 @@ namespace BeanBot.Util
         {
             if (!File.Exists(botTokenFilePath))
             {
-                string beanTokenFileLocation = Path.GetFullPath(botTokenFilePath);
                 Log.Error("Bean Token file not found!");
-                Log.Error($"Bean Token file created automatically at: {beanTokenFileLocation}");
+                Log.Error($"Bean Token file created automatically at: {Path.GetFullPath(botTokenFilePath)}");
                 Console.Write("To configure your bean token, please copy and paste your bean token here\n> ");
                 string beanTokenInput = Console.ReadLine();
                 File.WriteAllText(botTokenFilePath, beanTokenInput);
