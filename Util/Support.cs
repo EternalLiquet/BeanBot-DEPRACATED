@@ -1,4 +1,6 @@
-﻿namespace BeanBot.Util
+﻿using Serilog;
+
+namespace BeanBot.Util
 {
     public static class Support
     {
@@ -10,6 +12,7 @@
             DirectorySetup.MakeSureAllDirectoriesExist();
             TokenSetup.MakeSureBeanTokenFileExists();
             BotToken = TokenSetup.GetBeanTokenFromBeanTokenFile();
+            Log.Information("Startup Operations complete");
         }
     }
 }

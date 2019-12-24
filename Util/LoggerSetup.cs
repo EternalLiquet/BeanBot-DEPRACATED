@@ -1,5 +1,7 @@
 ﻿using Serilog;
 
+using System.IO;
+
 namespace BeanBot.Util
 {
     public static class LoggerSetup
@@ -7,11 +9,11 @@ namespace BeanBot.Util
         public static void CreateLoggerConfiguration()
         {
             Log.Logger = new LoggerConfiguration()
-                .MinimumLevel.Debug()
+                .MinimumLevel.Verbose()
                 .WriteTo.Console()
-                .WriteTo.Async(a => a.File("logs\\BeanBotLogs.txt", rollingInterval: RollingInterval.Day))
+                .WriteTo.Async(a => a.File(Path.Combine(DirectorySetup.botBaseDirectory, "Logs", "BeanBotLogs.txt"), rollingInterval: RollingInterval.Day))
                 .CreateLogger();
-            Log.Information("Util/Support.cs - CreateLoggerConfiguration: Logger Configuration complete");
+            Log.Information("Logger Configuration complete");
         }
     }
 }
