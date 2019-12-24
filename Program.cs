@@ -41,7 +41,7 @@ namespace BeanBot
 
         private Task LogMessages(LogMessage messages)
         {
-            string formattedMessage = $"{messages.Source.ToString()}\t{messages.Message.ToString()}";
+            string formattedMessage = $"Discord:\t{messages.Source.ToString()}\t{messages.Message.ToString()}";
             switch (messages.Severity)
             {
                 case LogSeverity.Critical:
@@ -58,6 +58,10 @@ namespace BeanBot
                     break;
                 case LogSeverity.Verbose:
                     Log.Verbose(formattedMessage);
+                    break;
+                default:
+                    Log.Information($"Log Severity: {messages.Severity}");
+                    Log.Information(formattedMessage);
                     break;
             }
             return Task.CompletedTask;
