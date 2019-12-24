@@ -1,6 +1,8 @@
 ﻿using Discord.Commands;
 using Discord.WebSocket;
-using System;
+
+using Serilog;
+
 using System.Reflection;
 using System.Threading.Tasks;
 
@@ -13,12 +15,14 @@ namespace BeanBot.EventHandlers
 
         public CommandHandler(DiscordSocketClient discordClient, CommandService commandService)
         {
+            Log.Information("Instantiating Command Handler");
             this._discordClient = discordClient;
             this._commandService = commandService;
         }
 
         public async Task InstallCommandsAsync() 
         {
+            Log.Information("Installing Commands");
             _discordClient.MessageReceived += HandleCommandAsync;
             await _commandService.AddModulesAsync(assembly: Assembly.GetEntryAssembly(),
                                                   services: null);
