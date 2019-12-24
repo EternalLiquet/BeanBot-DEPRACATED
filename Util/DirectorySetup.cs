@@ -6,10 +6,11 @@ namespace BeanBot.Util
 {
     public static class DirectorySetup
     {
-        public readonly static string botBaseDirectory = $"BeanBotFiles\\";
+        public readonly static string botBaseDirectory = Path.Combine("BeanBotFiles");
 
         public static void MakeSureAllDirectoriesExist()
         {
+            Log.Information("Making sure all necessary directories exist");
             MakeSureBaseDirectoryExists();
             MakeSureBotTokenDirectoryExists(Path.GetFullPath(TokenSetup.botTokenDirectory));
         }

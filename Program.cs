@@ -41,7 +41,7 @@ namespace BeanBot
 
         private Task LogMessages(LogMessage messages)
         {
-            string formattedMessage = $"{messages.Source.ToString()}\t{messages.Message.ToString()}"
+            string formattedMessage = $"{messages.Source.ToString()}\t{messages.Message.ToString()}";
             switch (messages.Severity)
             {
                 case LogSeverity.Critical:

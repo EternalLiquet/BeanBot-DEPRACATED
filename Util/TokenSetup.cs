@@ -6,8 +6,8 @@ namespace BeanBot.Util
 {
     public static class TokenSetup
     {
-        public readonly static string botTokenDirectory = DirectorySetup.botBaseDirectory + "BeanToken\\";
-        public readonly static string botTokenFilePath = TokenSetup.botTokenDirectory + "beantoken.succsuccsucc";
+        public readonly static string botTokenDirectory = Path.Combine(DirectorySetup.botBaseDirectory, "BeanToken");
+        public readonly static string botTokenFilePath = Path.Combine(TokenSetup.botTokenDirectory, "beantoken.succsuccsucc");
 
         public static void MakeSureBeanTokenFileExists()
         {
@@ -20,6 +20,10 @@ namespace BeanBot.Util
                 string beanTokenInput = Console.ReadLine();
                 File.WriteAllText(botTokenFilePath, beanTokenInput);
             }
+            else
+            {
+                Log.Information($"Bean token file found at: {botTokenFilePath}");
+            }
         }
 
         public static string GetBeanTokenFromBeanTokenFile()
@@ -27,6 +31,7 @@ namespace BeanBot.Util
             string beanTokenFileContent;
             try
             {
+                Log.Information("Attempting to read token");
                 beanTokenFileContent = File.ReadAllText(botTokenFilePath);
             }
             catch (FileNotFoundException e)
