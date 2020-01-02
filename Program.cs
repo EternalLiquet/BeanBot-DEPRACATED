@@ -41,6 +41,11 @@ namespace BeanBot
             {
                 await _discordClient.LoginAsync(TokenType.Bot, Support.BotToken);
                 await _discordClient.StartAsync();
+                _discordClient.Ready += () =>
+                {
+                    Log.Information("Bean Bot successfully connected");
+                    return Task.CompletedTask;
+                };
             }
             catch (Discord.Net.HttpException e)
             {
