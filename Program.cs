@@ -1,7 +1,12 @@
-﻿using BeanBot.Util;
+﻿using BeanBot.EventHandlers;
+using BeanBot.Util;
+
 using Discord;
+using Discord.Commands;
 using Discord.WebSocket;
+
 using Serilog;
+
 using System.IO;
 using System.Threading.Tasks;
 
@@ -10,6 +15,7 @@ namespace BeanBot
     class Program
     {
         private DiscordSocketClient _discordClient;
+        private CommandService _commandService;
 
         static void Main(string[] args)
             => new Program().StartAsync().GetAwaiter().GetResult();
@@ -17,11 +23,20 @@ namespace BeanBot
         public async Task StartAsync()
         {
             Support.StartupOperations();
-            _discordClient = new DiscordSocketClient(new DiscordSocketConfig
+            await LogIntoDiscord();
+            _commandService = new CommandService(new CommandServiceConfig
             {
-                LogLevel = LogSeverity.Verbose, 
-                MessageCacheSize = 50
+                LogLevel = LogSeverity.Verbose,
+                CaseSensitiveCommands = false
             });
+            _discordClient.Log += LogMessages;
+            _commandService.Log += LogMessages;
+            await Task.Delay(-1);
+        }
+
+        private async Task LogIntoDiscord()
+        {
+            CreateNewDiscordSocketClientWithConfigurations();
             try
             {
                 await _discordClient.LoginAsync(TokenType.Bot, Support.BotToken);
@@ -32,8 +47,15 @@ namespace BeanBot
                 Log.Error(e.ToString());
                 Log.Error($"Bean Token was incorrect, please review the bean token file in {Path.GetFullPath(TokenSetup.botTokenFilePath)}");
             }
-            _discordClient.Log += LogMessages;
-            await Task.Delay(-1);
+        }
+
+        private void CreateNewDiscordSocketClientWithConfigurations()
+        {
+            _discordClient = new DiscordSocketClient(new DiscordSocketConfig
+            {
+                LogLevel = LogSeverity.Verbose,
+                MessageCacheSize = 50
+            });
         }
 
         private Task LogMessages(LogMessage messages)
