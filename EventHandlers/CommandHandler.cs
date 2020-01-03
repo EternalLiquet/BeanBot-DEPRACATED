@@ -31,12 +31,18 @@ namespace BeanBot.EventHandlers
         private async Task HandleCommandAsync(SocketMessage messageEvent)
         {
             var discordMessage = messageEvent as SocketUserMessage;
-            if (MessageIsSystemMessage(discordMessage)) return;
+            if (MessageIsSystemMessage(discordMessage)) 
+                return; //Return and ignore if the message is a discord system message
             int argPos = 0;
-            if (!(discordMessage.HasStringPrefix("succ", ref argPos) ||
-                discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos)) ||
+            if (!MessageHasCommandPrefix(discordMessage, ref argPos) ||
                 messageEvent.Author.IsBot)
-                return;
+                return; //Return and ignore if the discord message does not have the command prefixes or if the author of the message is a bot
+        }
+
+        private bool MessageHasCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
+        {
+            return (discordMessage.HasStringPrefix("succ", ref argPos) ||
+                            discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos));
         }
 
         private bool MessageIsSystemMessage(SocketUserMessage discordMessage)
