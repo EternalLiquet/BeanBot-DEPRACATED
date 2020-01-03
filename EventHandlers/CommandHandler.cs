@@ -20,7 +20,7 @@ namespace BeanBot.EventHandlers
             this._commandService = commandService;
         }
 
-        public async Task InstallCommandsAsync() 
+        public async Task InitializeCommandsAsync() 
         {
             Log.Information("Installing Commands");
             _discordClient.MessageReceived += HandleCommandAsync;
@@ -32,8 +32,11 @@ namespace BeanBot.EventHandlers
         {
             var discordMessage = messageEvent as SocketUserMessage;
             if (MessageIsSystemMessage(discordMessage)) return;
-            int argPos = 0; 
-            if(!(discordMessage))
+            int argPos = 0;
+            if (!(discordMessage.HasStringPrefix("succ", ref argPos) ||
+                discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos)) ||
+                messageEvent.Author.IsBot)
+                return;
         }
 
         private bool MessageIsSystemMessage(SocketUserMessage discordMessage)
