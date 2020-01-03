@@ -1,9 +1,7 @@
 ﻿using Discord;
 using Discord.WebSocket;
 using Serilog;
-using System;
-using System.Collections.Generic;
-using System.Text;
+
 using System.Threading.Tasks;
 
 namespace BeanBot.Examples

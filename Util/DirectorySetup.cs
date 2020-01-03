@@ -1,5 +1,5 @@
 ﻿using Serilog;
-using System;
+
 using System.IO;
 
 namespace BeanBot.Util
