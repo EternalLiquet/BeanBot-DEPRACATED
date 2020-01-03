@@ -30,5 +30,41 @@ namespace BeanBot.Examples
             var guild = (channel as SocketGuildChannel)?.Guild;
             return guild?.Owner;
         }
+
+
+        /*
+         * _discordClient.ReactionAdded += ReactionAdded;
+         * _discordClient.MessageReceived += seeIfMessageHasKazInIt;
+         * 
+         */
+        private async Task seeIfMessageHasKazInIt(SocketMessage arg)
+        {
+            var message = arg as SocketUserMessage;
+            if (message.Content.ToLower().Contains("kaz") || message.Content.ToLower().Contains("toes"))
+            {
+                await message.AddReactionAsync(Emote.Parse("<a:kaz:653283406712406036>"));
+                await message.Channel.SendMessageAsync("<:smug1:621953428477706240>");
+            }
+            else
+                return;
+        }
+
+        private async Task ReactionAdded(Cacheable<IUserMessage, ulong> arg1, ISocketMessageChannel arg2, SocketReaction arg3)
+        {
+            Log.Information(arg1.ToString());
+            Log.Information(_discordClient.CurrentUser.ToString());
+            Log.Information(arg3.User.Value.ToString());
+            var message = await arg1.GetOrDownloadAsync();
+            var socketReaction = arg3.Emote;
+            var user = arg3.User.Value;
+            if (_discordClient.CurrentUser == message.Author)
+                return;
+            if (user.ToString() != _discordClient.CurrentUser.ToString())
+            {
+                await arg2.SendMessageAsync("Hello don't mind me this is a test lmao");
+                await arg2.SendMessageAsync($"{socketReaction.Name} react added, reacting with hypersuhaha");
+            }
+            await message.AddReactionAsync(Emote.Parse("<:hypersuhaha:548280190388797451>"));
+        }
     }
 }
