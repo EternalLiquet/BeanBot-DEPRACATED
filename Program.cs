@@ -24,14 +24,19 @@ namespace BeanBot
         {
             Support.StartupOperations();
             await LogIntoDiscord();
+            CreateCommandServiceWithOptions(ref _commandService);
+            _discordClient.Log += LogMessages;
+            _commandService.Log += LogMessages;
+            await Task.Delay(-1);
+        }
+
+        private void CreateCommandServiceWithOptions(ref CommandService _commandService)
+        {
             _commandService = new CommandService(new CommandServiceConfig
             {
                 LogLevel = LogSeverity.Verbose,
                 CaseSensitiveCommands = false
             });
-            _discordClient.Log += LogMessages;
-            _commandService.Log += LogMessages;
-            await Task.Delay(-1);
         }
 
         private async Task LogIntoDiscord()

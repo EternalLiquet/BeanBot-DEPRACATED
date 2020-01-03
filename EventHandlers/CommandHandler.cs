@@ -32,6 +32,8 @@ namespace BeanBot.EventHandlers
         {
             var discordMessage = messageEvent as SocketUserMessage;
             if (MessageIsSystemMessage(discordMessage)) return;
+            int argPos = 0; 
+            if(!(discordMessage))
         }
 
         private bool MessageIsSystemMessage(SocketUserMessage discordMessage)
