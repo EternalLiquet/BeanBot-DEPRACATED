@@ -8,7 +8,7 @@ namespace BeanBot.Util
 
         public static void StartupOperations()
         {
-            LoggerSetup.CreateLoggerConfiguration();
+            LogHandler.CreateLoggerConfiguration();
             DirectorySetup.MakeSureAllDirectoriesExist();
             TokenSetup.MakeSureBeanTokenFileExists();
             BotToken = TokenSetup.GetBeanTokenFromBeanTokenFile();

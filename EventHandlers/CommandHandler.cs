@@ -1,4 +1,7 @@
-﻿using Discord.Commands;
+﻿using BeanBot.Util;
+
+using Discord;
+using Discord.Commands;
 using Discord.WebSocket;
 
 using Serilog;
@@ -24,8 +27,14 @@ namespace BeanBot.EventHandlers
         {
             Log.Information("Installing Commands");
             _discordClient.MessageReceived += HandleCommandAsync;
+            _commandService.CommandExecuted += OnCommandExecutedAsync;
             await _commandService.AddModulesAsync(assembly: Assembly.GetEntryAssembly(),
                                                   services: null);
+        }
+
+        public async Task OnCommandExecutedAsync(Optional<CommandInfo> command, ICommandContext context, IResult result)
+        {
+            
         }
 
         private async Task HandleCommandAsync(SocketMessage messageEvent)
@@ -43,6 +52,7 @@ namespace BeanBot.EventHandlers
                 argPos: argPos,
                 services: null);
             LogResultIfCommandFailed(executionResult);
+            _commandService.Log += LogHandler.LogMessages;
         }
 
         private void LogResultIfCommandFailed(IResult commandServiceResult)
