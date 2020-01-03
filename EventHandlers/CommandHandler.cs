@@ -37,6 +37,20 @@ namespace BeanBot.EventHandlers
             if (!MessageHasCommandPrefix(discordMessage, ref argPos) ||
                 messageEvent.Author.IsBot)
                 return; //Return and ignore if the discord message does not have the command prefixes or if the author of the message is a bot
+            var context = new SocketCommandContext(_discordClient, discordMessage);
+            var executionResult = await _commandService.ExecuteAsync(
+                context: context,
+                argPos: argPos,
+                services: null);
+            LogResultIfCommandFailed(executionResult);
+        }
+
+        private void LogResultIfCommandFailed(IResult commandServiceResult)
+        {
+            if (!commandServiceResult.IsSuccess)
+            {
+                Log.Error(commandServiceResult.ErrorReason);
+            }
         }
 
         private bool MessageHasCommandPrefix(SocketUserMessage discordMessage, ref int argPos)

@@ -16,6 +16,7 @@ namespace BeanBot
     {
         private DiscordSocketClient _discordClient;
         private CommandService _commandService;
+        private CommandHandler _commandHandler;
 
         static void Main(string[] args)
             => new Program().StartAsync().GetAwaiter().GetResult();
@@ -24,10 +25,18 @@ namespace BeanBot
         {
             Support.StartupOperations();
             await LogIntoDiscord();
-            CreateCommandServiceWithOptions(ref _commandService);
+            await InstantiateCommandServices();
             _discordClient.Log += LogMessages;
             _commandService.Log += LogMessages;
             await Task.Delay(-1);
+        }
+
+        private async Task InstantiateCommandServices()
+        {
+            Log.Information("Instantiating Command Services");
+            CreateCommandServiceWithOptions(ref _commandService);
+            _commandHandler = new CommandHandler(_discordClient, _commandService);
+            await _commandHandler.InitializeCommandsAsync();
         }
 
         private void CreateCommandServiceWithOptions(ref CommandService _commandService)
