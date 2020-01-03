@@ -1,7 +1,9 @@
 ﻿using Discord;
+using Discord.Commands;
 
 using Serilog;
 
+using System;
 using System.IO;
 using System.Threading.Tasks;
 
@@ -43,6 +45,21 @@ namespace BeanBot.Util
                     Log.Information($"Log Severity: {messages.Severity}");
                     Log.Information(formattedMessage);
                     break;
+            }
+            return Task.CompletedTask;
+        }
+
+        public static Task LogCommands(Optional<CommandInfo> command, ICommandContext context, IResult result)
+        {
+            var commandName = command.IsSpecified ? command.Value.Name : "Unspecified Command";
+            string formattedMessage = $"Discord:\t{commandName} was executed at {DateTime.UtcNow}";
+            if (result.IsSuccess)
+            {
+                Log.Information(formattedMessage);
+            }
+            else
+            {
+                Log.Error($"{formattedMessage}\n\t\t\tInput: {context.Message}");
             }
             return Task.CompletedTask;
         }

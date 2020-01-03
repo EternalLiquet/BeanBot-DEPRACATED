@@ -5,7 +5,7 @@ using Discord.Commands;
 using Discord.WebSocket;
 
 using Serilog;
-
+using System;
 using System.Reflection;
 using System.Threading.Tasks;
 
@@ -27,14 +27,9 @@ namespace BeanBot.EventHandlers
         {
             Log.Information("Installing Commands");
             _discordClient.MessageReceived += HandleCommandAsync;
-            _commandService.CommandExecuted += OnCommandExecutedAsync;
+            _commandService.CommandExecuted += LogHandler.LogCommands;
             await _commandService.AddModulesAsync(assembly: Assembly.GetEntryAssembly(),
                                                   services: null);
-        }
-
-        public async Task OnCommandExecutedAsync(Optional<CommandInfo> command, ICommandContext context, IResult result)
-        {
-            
         }
 
         private async Task HandleCommandAsync(SocketMessage messageEvent)
@@ -47,20 +42,10 @@ namespace BeanBot.EventHandlers
                 messageEvent.Author.IsBot)
                 return; //Return and ignore if the discord message does not have the command prefixes or if the author of the message is a bot
             var context = new SocketCommandContext(_discordClient, discordMessage);
-            var executionResult = await _commandService.ExecuteAsync(
+            await _commandService.ExecuteAsync(
                 context: context,
                 argPos: argPos,
                 services: null);
-            LogResultIfCommandFailed(executionResult);
-            _commandService.Log += LogHandler.LogMessages;
-        }
-
-        private void LogResultIfCommandFailed(IResult commandServiceResult)
-        {
-            if (!commandServiceResult.IsSuccess)
-            {
-                Log.Error(commandServiceResult.ErrorReason);
-            }
         }
 
         private bool MessageHasCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
