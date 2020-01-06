@@ -15,7 +15,7 @@ namespace BeanBot.Util
             MakeSureBotTokenDirectoryExists(Path.GetFullPath(TokenSetup.botTokenDirectory));
         }
 
-        private static void MakeSureBaseDirectoryExists()
+        internal static void MakeSureBaseDirectoryExists()
         {
             if (Directory.Exists(botBaseDirectory))
             {
@@ -28,7 +28,7 @@ namespace BeanBot.Util
             }
         }
 
-        private static void MakeSureBotTokenDirectoryExists(string botTokenDirectory)
+        internal static void MakeSureBotTokenDirectoryExists(string botTokenDirectory)
         {
             if (Directory.Exists(botTokenDirectory))
             {

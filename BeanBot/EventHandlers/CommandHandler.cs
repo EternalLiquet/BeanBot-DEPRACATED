@@ -31,7 +31,7 @@ namespace BeanBot.EventHandlers
                                                   services: null);
         }
 
-        private async Task HandleCommandAsync(SocketMessage messageEvent)
+        internal async Task HandleCommandAsync(SocketMessage messageEvent)
         {
             var discordMessage = messageEvent as SocketUserMessage;
             if (MessageIsSystemMessage(discordMessage)) 
@@ -47,13 +47,13 @@ namespace BeanBot.EventHandlers
                 services: null);
         }
 
-        private bool MessageHasCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
+        internal bool MessageHasCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
         {
             return (discordMessage.HasStringPrefix("succ ", ref argPos) ||
                             discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos));
         }
 
-        private bool MessageIsSystemMessage(SocketUserMessage discordMessage)
+        internal bool MessageIsSystemMessage(SocketUserMessage discordMessage)
         {
             if (discordMessage == null)
                 return true;
