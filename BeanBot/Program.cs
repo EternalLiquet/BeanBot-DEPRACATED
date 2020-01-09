@@ -18,7 +18,7 @@ namespace BeanBot
         private DiscordSocketClient _discordClient;
         private CommandService _commandService;
         private CommandHandler _commandHandler;
-        private AutoPosting _autoPostTimer;
+        private TimeBasedAutoPostHandler _autoPostTimer;
 
         static void Main(string[] args)
             => new Program().StartAsync().GetAwaiter().GetResult();
@@ -29,7 +29,7 @@ namespace BeanBot
             await LogIntoDiscord();
             await InstantiateCommandServices();
             _discordClient.Log += LogHandler.LogMessages;
-            _autoPostTimer = new AutoPosting(_discordClient);
+            _autoPostTimer = new TimeBasedAutoPostHandler(_discordClient);
             await Task.Delay(-1);
         }
 

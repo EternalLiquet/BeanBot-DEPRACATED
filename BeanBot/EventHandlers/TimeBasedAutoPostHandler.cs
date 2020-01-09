@@ -9,21 +9,22 @@ using System.Timers;
 
 namespace BeanBot.EventHandlers
 {
-    public class AutoPosting
+    public class TimeBasedAutoPostHandler
     {
         public System.Timers.Timer timer;
         private DiscordSocketClient _discordClient;
+        Thread timerThread;
 
-        public AutoPosting(DiscordSocketClient discordClient)
+        public TimeBasedAutoPostHandler(DiscordSocketClient discordClient)
         {
-            Log.Verbose("reached here");
+            Log.Information("Instantiating Time Based Auto-Posting");
             _discordClient = discordClient;
-            Thread timerThread = new Thread(checkEveryThirtySeconds);
-            timerThread.Start();
+            timerThread = new Thread(InitializeTimer);
         }
-        public void checkEveryThirtySeconds()
+        public void InitializeTimer()
         {
-            Log.Verbose("reached here");
+            Log.Information("Initializing the timer class and starting the thread on which it will run");
+            timerThread.Start();
             timer = new System.Timers.Timer(3000);
             timer.Start();
             timer.Elapsed += PostRubyHigh;
