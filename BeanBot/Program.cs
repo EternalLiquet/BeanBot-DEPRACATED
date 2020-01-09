@@ -30,6 +30,7 @@ namespace BeanBot
             await InstantiateCommandServices();
             _discordClient.Log += LogHandler.LogMessages;
             _autoPostTimer = new TimeBasedAutoPostHandler(_discordClient);
+            _autoPostTimer.InitializeTimer();
             await Task.Delay(-1);
         }
 

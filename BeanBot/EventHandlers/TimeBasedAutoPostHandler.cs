@@ -24,8 +24,7 @@ namespace BeanBot.EventHandlers
         public void InitializeTimer()
         {
             Log.Information("Initializing the timer class and starting the thread on which it will run");
-            timerThread.Start();
-            timer = new System.Timers.Timer(3000);
+            timer = new System.Timers.Timer(60000);
             timer.Start();
             timer.Elapsed += PostRubyHigh;
         }
@@ -35,6 +34,13 @@ namespace BeanBot.EventHandlers
             Log.Verbose($"Sender: {sender.ToString()}");
             Log.Verbose($"Arg: {args.ToString()}");
             Log.Verbose($"It is currently {DateTime.Now.TimeOfDay}");
+            Log.Verbose($"The minute is: {DateTime.Now.Minute}");
+            if (DateTime.Now.Minute == 20)
+            {
+                var discordChannel = _discordClient.GetChannel(621941444403396610) as SocketTextChannel;
+                discordChannel.SendMessageAsync("It's 4:20 SOMEWHERE in the world");
+                discordChannel.SendMessageAsync("<:rubyhigh:664243468125601792>");
+            }
         }
     }
 }
