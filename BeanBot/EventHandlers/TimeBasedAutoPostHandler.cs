@@ -19,7 +19,7 @@ namespace BeanBot.EventHandlers
         {
             Log.Information("Instantiating Time Based Auto-Posting");
             _discordClient = discordClient;
-            timerThread = new Thread(SendEventEveryMinute);
+            timerThread = new Thread(new ThreadStart(SendEventEveryMinute));
         }
 
         public void StartTimer() 
