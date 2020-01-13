@@ -8,6 +8,7 @@ using Discord.WebSocket;
 using Serilog;
 
 using System.IO;
+using System.Net;
 using System.Threading.Tasks;
 
 namespace BeanBot
@@ -17,6 +18,7 @@ namespace BeanBot
         private DiscordSocketClient _discordClient;
         private CommandService _commandService;
         private CommandHandler _commandHandler;
+        private TimeBasedAutoPostHandler _autoPostTimer;
 
         static void Main(string[] args)
             => new Program().StartAsync().GetAwaiter().GetResult();
@@ -27,6 +29,8 @@ namespace BeanBot
             await LogIntoDiscord();
             await InstantiateCommandServices();
             _discordClient.Log += LogHandler.LogMessages;
+            _autoPostTimer = new TimeBasedAutoPostHandler(_discordClient);
+            _autoPostTimer.StartTimer();
             await Task.Delay(-1);
         }
 
@@ -64,6 +68,10 @@ namespace BeanBot
             {
                 Log.Error(e.ToString());
                 Log.Error($"Bean Token was incorrect, please review the bean token file in {Path.GetFullPath(TokenSetup.botTokenFilePath)}");
+                if (e.HttpCode == HttpStatusCode.Unauthorized)
+                {
+                    Log.Verbose("Placeholder for Bug");
+                }
             }
         }
 
