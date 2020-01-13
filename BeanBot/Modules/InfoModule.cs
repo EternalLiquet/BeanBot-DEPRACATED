@@ -9,7 +9,7 @@ namespace BeanBot.Modules
     public class InfoModule : ModuleBase<SocketCommandContext>
     {
         [Command("dev")]
-        [Summary("Tags the lead developer on Discord, allowing you to message 'em or something..")]
+        [Summary("Tags the lead developer on Discord")]
         [Remarks("succ dev")]
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task DeveloperCommand()
