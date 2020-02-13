@@ -18,6 +18,7 @@ namespace BeanBot
         private DiscordSocketClient _discordClient;
         private CommandService _commandService;
         private CommandHandler _commandHandler;
+        private NewMemberHandler _newMemberHandler;
         private TimeBasedAutoPostHandler _autoPostTimer;
 
         static void Main(string[] args)
@@ -31,6 +32,8 @@ namespace BeanBot
             _discordClient.Log += LogHandler.LogMessages;
             //_autoPostTimer = new TimeBasedAutoPostHandler(_discordClient);
             //_autoPostTimer.StartTimer();
+            _newMemberHandler = new NewMemberHandler(_discordClient);
+            await _newMemberHandler.InitializeNewMembersAsync();
             await Task.Delay(-1);
         }
 
@@ -67,7 +70,7 @@ namespace BeanBot
             catch (Discord.Net.HttpException e)
             {
                 Log.Error(e.ToString());
-                Log.Error($"Bean Token was incorrect, please review the bean token file in {Path.GetFullPath(TokenSetup.botTokenFilePath)}");
+                Log.Error($"Bean Token was incorrect, please review the bean token file in {Path.GetFullPath(OptionsSetup.botTokenFilePath)}");
                 if (e.HttpCode == HttpStatusCode.Unauthorized)
                 {
                     Log.Verbose("Placeholder for Bug");

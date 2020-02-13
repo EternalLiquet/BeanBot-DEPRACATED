@@ -26,7 +26,7 @@ namespace BeanBot.EventHandlers
         {
             Log.Information("Installing Commands");
             _discordClient.MessageReceived += HandleCommandAsync;
-            _commandService.CommandExecuted += LogHandler.LogCommands;
+            //_commandService.CommandExecuted += LogHandler.LogCommands;
             await _commandService.AddModulesAsync(assembly: Assembly.GetEntryAssembly(),
                                                   services: null);
         }
@@ -50,7 +50,8 @@ namespace BeanBot.EventHandlers
         internal bool MessageHasCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
         {
             return (discordMessage.HasStringPrefix("succ ", ref argPos) ||
-                            discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos));
+                            discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos) ||
+                            discordMessage.HasCharPrefix('%', ref argPos));
         }
 
         internal bool MessageIsSystemMessage(SocketUserMessage discordMessage)
