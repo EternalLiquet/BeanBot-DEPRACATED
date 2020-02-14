@@ -1,6 +1,6 @@
 ﻿using Discord;
 using Discord.Commands;
-
+using Discord.WebSocket;
 using Serilog;
 
 using System;
@@ -49,6 +49,12 @@ namespace BeanBot.Util
             return Task.CompletedTask;
         }
 
+        public async static Task LogNewMember(SocketGuildUser newUser)
+        {
+            string formattedMessage = $"Discord:\t{newUser.Username} has joined {newUser.Guild} on {DateTime.UtcNow}";
+            Log.Information(formattedMessage);
+        }
+
         public static Task LogCommands(Optional<CommandInfo> command, ICommandContext context, IResult result)
         {
             var commandName = command.IsSpecified ? command.Value.Name : "Unspecified Command";
@@ -60,6 +66,7 @@ namespace BeanBot.Util
             else
             {
                 Log.Error($"{formattedMessage}\n\t\t\tInput: {context.Message}");
+                Log.Error($"{result.Error}, {result.ErrorReason}");
             }
             return Task.CompletedTask;
         }

@@ -12,7 +12,7 @@ namespace BeanBot.Util
         {
             Log.Information("Making sure all necessary directories exist");
             MakeSureBaseDirectoryExists();
-            MakeSureBotTokenDirectoryExists(Path.GetFullPath(TokenSetup.botTokenDirectory));
+            MakeSureBotTokenDirectoryExists(Path.GetFullPath(OptionsSetup.botTokenDirectory));
         }
 
         internal static void MakeSureBaseDirectoryExists()
