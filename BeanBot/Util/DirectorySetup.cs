@@ -12,7 +12,7 @@ namespace BeanBot.Util
         {
             Log.Information("Making sure all necessary directories exist");
             MakeSureBaseDirectoryExists();
-            MakeSureBotTokenDirectoryExists(Path.GetFullPath(OptionsSetup.botTokenDirectory));
+            MakeSureSettingsDirectoryExists(Path.GetFullPath(AppSettings.settingsFileDirectory));
         }
 
         internal static void MakeSureBaseDirectoryExists()
@@ -28,16 +28,16 @@ namespace BeanBot.Util
             }
         }
 
-        internal static void MakeSureBotTokenDirectoryExists(string botTokenDirectory)
+        internal static void MakeSureSettingsDirectoryExists(string settingsFileDirectory)
         {
-            if (Directory.Exists(botTokenDirectory))
+            if (Directory.Exists(settingsFileDirectory))
             {
-                Log.Information($"Bean Bot token file directory found at {botTokenDirectory}");
+                Log.Information($"Bean Bot settings file directory found at {settingsFileDirectory}");
             }
             else
             {
-                Log.Error($"Bean Bot token file directory not found, creating directory at: {botTokenDirectory}");
-                Directory.CreateDirectory(botTokenDirectory);
+                Log.Error($"Bean Bot settings file directory not found, creating directory at: {settingsFileDirectory}");
+                Directory.CreateDirectory(settingsFileDirectory);
             }
         }
     }
