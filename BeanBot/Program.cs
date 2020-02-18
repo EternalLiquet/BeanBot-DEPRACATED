@@ -59,7 +59,7 @@ namespace BeanBot
             CreateNewDiscordSocketClientWithConfigurations();
             try
             {
-                await _discordClient.LoginAsync(TokenType.Bot, Support.BotToken);
+                await _discordClient.LoginAsync(TokenType.Bot, AppSettings.Settings["botId"]);
                 await _discordClient.StartAsync();
                 _discordClient.Ready += () =>
                 {
@@ -70,7 +70,7 @@ namespace BeanBot
             catch (Discord.Net.HttpException e)
             {
                 Log.Error(e.ToString());
-                Log.Error($"Bean Token was incorrect, please review the bean token file in {Path.GetFullPath(OptionsSetup.botTokenFilePath)}");
+                Log.Error($"Bot Token was incorrect, please review the settings file in {Path.GetFullPath(AppSettings.settingsFilePath)}");
                 if (e.HttpCode == HttpStatusCode.Unauthorized)
                 {
                     Log.Verbose("Placeholder for Bug");

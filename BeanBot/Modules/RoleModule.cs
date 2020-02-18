@@ -14,7 +14,7 @@ namespace BeanBot.Modules
     [Name("Role Commands")]
     public class RoleModule : ModuleBase
     {
-        private readonly ulong ILserverId = (ulong)Support.ILServerId;
+        private readonly ulong ILserverId = ulong.Parse(AppSettings.Settings["IlServerId"]);
 
         [Command("shine")]
         [Summary("Will give you access to the Illinois Livers server")]
