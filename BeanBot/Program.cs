@@ -59,7 +59,7 @@ namespace BeanBot
             CreateNewDiscordSocketClientWithConfigurations();
             try
             {
-                await _discordClient.LoginAsync(TokenType.Bot, AppSettings.Settings["botId"]);
+                await _discordClient.LoginAsync(TokenType.Bot, AppSettings.Settings["botToken"]);
                 await _discordClient.StartAsync();
                 _discordClient.Ready += () =>
                 {

@@ -23,14 +23,11 @@ namespace BeanBot.EventHandlers
             _discordClient.UserJoined += async (u) => 
             {
                 var userDMChannel = await u.GetOrCreateDMChannelAsync();
+                Log.Debug("Successfully created user DM channel");
                 await userDMChannel.SendMessageAsync("Please read the rules in the Eli's Charter channel. If you agree to these rules and are over the age of 17, please use command %shine");
+                Log.Debug("Successfully sent message");
             };
             _discordClient.UserJoined += LogHandler.LogNewMember;
-        }
-
-        public async Task HandleNewMemberAsync(SocketGuildUser user)
-        {
-            
         }
     }
 }
