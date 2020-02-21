@@ -1,3 +1,4 @@
+![Bean Bot Version 1.0.0](https://img.shields.io/badge/Bean%20Bot%20Version-1.0.0-green?style=plastic)  
 # BeanBot
 This is the code behind the discord bot for the Illinois Livers server
 
