@@ -8,6 +8,7 @@ using Discord.WebSocket;
 using Serilog;
 
 using System.IO;
+using System.Net;
 using System.Threading.Tasks;
 
 namespace BeanBot
@@ -17,6 +18,8 @@ namespace BeanBot
         private DiscordSocketClient _discordClient;
         private CommandService _commandService;
         private CommandHandler _commandHandler;
+        private NewMemberHandler _newMemberHandler;
+        private TimeBasedAutoPostHandler _autoPostTimer;
 
         static void Main(string[] args)
             => new Program().StartAsync().GetAwaiter().GetResult();
@@ -27,6 +30,10 @@ namespace BeanBot
             await LogIntoDiscord();
             await InstantiateCommandServices();
             _discordClient.Log += LogHandler.LogMessages;
+            //_autoPostTimer = new TimeBasedAutoPostHandler(_discordClient);
+            //_autoPostTimer.StartTimer();
+            _newMemberHandler = new NewMemberHandler(_discordClient);
+            await _newMemberHandler.InitializeNewMembersAsync();
             await Task.Delay(-1);
         }
 
@@ -52,7 +59,7 @@ namespace BeanBot
             CreateNewDiscordSocketClientWithConfigurations();
             try
             {
-                await _discordClient.LoginAsync(TokenType.Bot, Support.BotToken);
+                await _discordClient.LoginAsync(TokenType.Bot, AppSettings.Settings["botToken"]);
                 await _discordClient.StartAsync();
                 _discordClient.Ready += () =>
                 {
@@ -63,7 +70,11 @@ namespace BeanBot
             catch (Discord.Net.HttpException e)
             {
                 Log.Error(e.ToString());
-                Log.Error($"Bean Token was incorrect, please review the bean token file in {Path.GetFullPath(TokenSetup.botTokenFilePath)}");
+                Log.Error($"Bot Token was incorrect, please review the settings file in {Path.GetFullPath(AppSettings.settingsFilePath)}");
+                if (e.HttpCode == HttpStatusCode.Unauthorized)
+                {
+                    Log.Verbose("Placeholder for Bug");
+                }
             }
         }
 

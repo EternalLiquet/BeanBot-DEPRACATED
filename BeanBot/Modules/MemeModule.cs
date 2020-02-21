@@ -4,6 +4,8 @@ using Discord.WebSocket;
 
 using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics;
+using Serilog;
 
 namespace BeanBot.Modules
 {
@@ -37,6 +39,12 @@ namespace BeanBot.Modules
         [Remarks("succ ocho ocho")]
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task OchoOcho()
+        {
+            Thread ochoOchoThread = new Thread(() => ReplyWithOchoOcho());
+            ochoOchoThread.Start();
+        }
+
+        private async Task ReplyWithOchoOcho()
         {
             await ReplyAsync("One plus one, equals two.");
             Thread.Sleep(1000);

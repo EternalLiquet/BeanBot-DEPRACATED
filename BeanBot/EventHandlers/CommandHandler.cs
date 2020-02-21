@@ -50,7 +50,8 @@ namespace BeanBot.EventHandlers
         internal bool MessageHasCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
         {
             return (discordMessage.HasStringPrefix("succ ", ref argPos) ||
-                            discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos));
+                            discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos) ||
+                            discordMessage.HasCharPrefix('%', ref argPos));
         }
 
         internal bool MessageIsSystemMessage(SocketUserMessage discordMessage)
