@@ -26,7 +26,7 @@ namespace BeanBot.Util
             }
             else
             {
-                Log.Information($"Bean token file found at: {settingsFilePath}");
+                Log.Information($"App settings file found at: {settingsFilePath}");
             }
         }
 
