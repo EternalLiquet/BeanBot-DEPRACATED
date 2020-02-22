@@ -20,15 +20,7 @@ jobs:
         git pull origin master
 
     - name: Build dotnet project
-      uses: actions/setup-dotnet@v1
+      uses:
+          actions/setup-dotnet@v1
       with:
-        dotnet-version: 2.2.108
-    - name: Build with dotnet
-      run: dotnet build --configuration Release
-    - name: Navigate to bot
-      run: |
-        cd BeanBot/bin/Release/netcoreapp2.2
-    - name: Run the bot
-      run: |
-        dotnet BeanBot.dll
-        
+          dotnet-version: 2.2.108
