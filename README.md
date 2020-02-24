@@ -1,4 +1,4 @@
-![Bean Bot Version 1.0.0](https://img.shields.io/badge/Bean%20Bot%20Version-1.0.0-green?style=plastic)  
+![Bean Bot Version 1.0.0](https://img.shields.io/badge/Bean%20Bot%20Version-1.1.0-green?style=plastic) ![.NET Core Master and Deploy Checks](https://github.com/EternalLiquet/BeanBot/workflows/.NET%20Core%20Master%20and%20Deploy%20Checks/badge.svg?branch=master)
 # BeanBot
 This is the code behind the discord bot for the Illinois Livers server
 
