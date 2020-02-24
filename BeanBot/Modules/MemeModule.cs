@@ -50,7 +50,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task BlazeIt()
         {
-            await ReplyAsync("<420stolfoit:680222994341036032>");
+            await ReplyAsync("<420stofloit:681383684175167508>");
         }
 
         private async Task ReplyWithOchoOcho()
