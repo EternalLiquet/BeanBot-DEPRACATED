@@ -44,6 +44,15 @@ namespace BeanBot.Modules
             ochoOchoThread.Start();
         }
 
+        [Command("420")]
+        [Summary("Astolfour-twenty blaze it")]
+        [Alias("blaze", "blaze it", "weed")]
+        [RequireBotPermission(ChannelPermission.SendMessages)]
+        public async Task BlazeIt()
+        {
+            await ReplyAsync("<420stolfoit:680222994341036032>");
+        }
+
         private async Task ReplyWithOchoOcho()
         {
             await ReplyAsync("One plus one, equals two.");
