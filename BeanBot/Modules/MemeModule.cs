@@ -1,11 +1,13 @@
-﻿using Discord;
+﻿using BeanBot.Util;
+using Discord;
 using Discord.Commands;
 using Discord.WebSocket;
-
+using Serilog;
+using System;
+using System.IO;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Diagnostics;
-using Serilog;
 
 namespace BeanBot.Modules
 {
@@ -20,7 +22,7 @@ namespace BeanBot.Modules
         public async Task UserSucc([Summary("The (optional) user to succ")] SocketUser user = null)
         {
             var userInformation = user ?? Context.Message.Author;
-            await ReplyAsync($"{userInformation.Mention} *succ succ succ* lol you're gay");
+            await Task.Run(() => { ReplyAsync($"{userInformation.Mention} *succ succ succ* lol you're gay"); });
         }
 
         [Command("2am")]
@@ -30,7 +32,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task McDonalds()
         {
-            await ReplyAsync("<:mcdonalds:661337575704887337>");
+            _ = ReplyAsync("<:mcdonalds:661337575704887337>");
         }
 
         [Command("ocho ocho")]
@@ -50,7 +52,43 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task BlazeIt()
         {
-            await ReplyAsync("<:420stolfoit:675553715759087618>");
+            _ = ReplyAsync("<420stofloit:681383684175167508>");
+        }
+
+        [Command("toes")]
+        [Summary("You've doomed yourself, Hatate")]
+        [Alias("toe", "kaz", "the toe fetish is just a joke")]
+        [RequireBotPermission(ChannelPermission.SendMessages)]
+        [RequireBotPermission(ChannelPermission.AttachFiles)]
+        public async Task Toes()
+        {
+            _ = Task.Factory.StartNew(() => sendImageFromUrl(AppSettings.Settings["hatoeteUrl"]));
+        }
+
+        [Command("yoshimaru")]
+        [Summary("The superior ship")]
+        [Alias("yohamaru", "canon ship")]
+        [RequireBotPermission(ChannelPermission.SendMessages)]
+        [RequireBotPermission(ChannelPermission.AttachFiles)]
+        public async Task YoshiMaru()
+        {
+            _ = Task.Factory.StartNew(() => sendImageFromUrl(AppSettings.Settings["yoshimaruUrl"]));
+        }
+
+        private async Task sendImageFromUrl(string url)
+        {
+            Stream responseStream;
+            try
+            {
+                var webClient = new HttpClient();
+                var response = await webClient.GetAsync(url);
+                Stream image = await response.Content.ReadAsStreamAsync();
+                await Context.Channel.SendFileAsync(image, "image.png");
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex.Message);
+            }
         }
 
         private async Task ReplyWithOchoOcho()

@@ -33,7 +33,7 @@ namespace BeanBot
             //_autoPostTimer = new TimeBasedAutoPostHandler(_discordClient);
             //_autoPostTimer.StartTimer();
             _newMemberHandler = new NewMemberHandler(_discordClient);
-            await _newMemberHandler.InitializeNewMembersAsync();
+            _newMemberHandler.InitializeNewMembers();
             await Task.Delay(-1);
         }
 
