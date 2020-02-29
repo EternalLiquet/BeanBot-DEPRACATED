@@ -22,7 +22,7 @@ namespace BeanBot.Modules
         public async Task UserSucc([Summary("The (optional) user to succ")] SocketUser user = null)
         {
             var userInformation = user ?? Context.Message.Author;
-            await Task.Run(() => { ReplyAsync($"{userInformation.Mention} *succ succ succ* lol you're gay"); });
+            await Task.Run(() => { _ = ReplyAsync($"{(userInformation as SocketGuildUser).Nickname} *succ succ succ* lol you're gay"); });
         }
 
         [Command("2am")]
@@ -32,7 +32,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task McDonalds()
         {
-            _ = ReplyAsync("<:mcdonalds:661337575704887337>");
+            await Task.Run(() => { _ = ReplyAsync("<:mcdonalds:661337575704887337>"); });
         }
 
         [Command("ocho ocho")]
@@ -42,8 +42,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task OchoOcho()
         {
-            Thread ochoOchoThread = new Thread(() => ReplyWithOchoOcho());
-            ochoOchoThread.Start();
+            await Task.Factory.StartNew(() => { _ = ReplyWithOchoOcho(); });
         }
 
         [Command("420")]
@@ -52,7 +51,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task BlazeIt()
         {
-            _ = ReplyAsync("<420stofloit:681383684175167508>");
+            _ = Task.Factory.StartNew(() => { _ = ReplyAsync("<420stofloit:681383684175167508>"); });
         }
 
         [Command("toes")]
@@ -62,7 +61,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.AttachFiles)]
         public async Task Toes()
         {
-            _ = Task.Factory.StartNew(() => sendImageFromUrl(AppSettings.Settings["hatoeteUrl"]));
+            await Task.Factory.StartNew(() => _ = sendImageFromUrl(AppSettings.Settings["hatoeteUrl"]));
         }
 
         [Command("yoshimaru")]
@@ -72,12 +71,11 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.AttachFiles)]
         public async Task YoshiMaru()
         {
-            _ = Task.Factory.StartNew(() => sendImageFromUrl(AppSettings.Settings["yoshimaruUrl"]));
+            await Task.Factory.StartNew(() => _ = sendImageFromUrl(AppSettings.Settings["yoshimaruUrl"]));
         }
 
         private async Task sendImageFromUrl(string url)
         {
-            Stream responseStream;
             try
             {
                 var webClient = new HttpClient();
