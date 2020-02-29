@@ -48,6 +48,13 @@ namespace BeanBot.Util
             }
         }
 
+        public static void FixTokenFile()
+        {
+            Console.Write("Please enter a valid bot token\n>");
+            string token = Console.ReadLine();
+            Settings["botToken"] = token;
+        }
+
         private static string CreateNewSettings()
         {
             return JsonConvert.SerializeObject(CreateSettingsDictionary(), Formatting.Indented);
