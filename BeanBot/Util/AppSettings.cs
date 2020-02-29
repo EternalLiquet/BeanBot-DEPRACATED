@@ -21,7 +21,7 @@ namespace BeanBot.Util
                 Log.Error("Settings file not found");
                 Log.Error($"Settings file created automatically at: {Path.GetFullPath(settingsFilePath)}");
                 Log.Information("Starting settings file creation process");
-                string jsonStringSettings = CreateNewSettings();
+                string jsonStringSettings = CreateNewSettings(CreateSettingsDictionary());
                 File.WriteAllText(settingsFilePath, jsonStringSettings);
             }
             else
@@ -48,16 +48,18 @@ namespace BeanBot.Util
             }
         }
 
-        public static void FixTokenFile()
+        public static void FixToken()
         {
             Console.Write("Please enter a valid bot token\n>");
             string token = Console.ReadLine();
             Settings["botToken"] = token;
+            string updatedJsonString = CreateNewSettings(Settings);
+            File.WriteAllText(settingsFilePath, updatedJsonString);
         }
 
-        private static string CreateNewSettings()
+        private static string CreateNewSettings(Dictionary<string, string> settingsDictionary)
         {
-            return JsonConvert.SerializeObject(CreateSettingsDictionary(), Formatting.Indented);
+            return JsonConvert.SerializeObject(settingsDictionary, Formatting.Indented);
         }
 
         private static Dictionary<string, string> CreateSettingsDictionary()

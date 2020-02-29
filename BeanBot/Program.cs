@@ -57,24 +57,29 @@ namespace BeanBot
         private async Task LogIntoDiscord()
         {
             CreateNewDiscordSocketClientWithConfigurations();
-            try
+            bool loggedIn = false;
+            while (loggedIn == false)
             {
-                await _discordClient.LoginAsync(TokenType.Bot, AppSettings.Settings["botToken"]);
-                await _discordClient.StartAsync();
-                await _discordClient.SetGameAsync("use %help for command list!", null, ActivityType.Playing);
-                _discordClient.Ready += () =>
+                try
                 {
-                    Log.Information("Bean Bot successfully connected");
-                    return Task.CompletedTask;
-                };
-            }
-            catch (Discord.Net.HttpException e)
-            {
-                Log.Error(e.ToString());
-                Log.Error($"Bot Token was incorrect, please review the settings file in {Path.GetFullPath(AppSettings.settingsFilePath)}");
-                if (e.HttpCode == HttpStatusCode.Unauthorized)
+                    await _discordClient.LoginAsync(TokenType.Bot, AppSettings.Settings["botToken"]);
+                    await _discordClient.StartAsync();
+                    await _discordClient.SetGameAsync("use %help for command list!", null, ActivityType.Playing);
+                    _discordClient.Ready += () =>
+                    {
+                        Log.Information("Bean Bot successfully connected");
+                        return Task.CompletedTask;
+                    };
+                    loggedIn = true;
+                }
+                catch (Discord.Net.HttpException e)
                 {
-                    Log.Verbose("Placeholder for Bug");
+                    Log.Error(e.ToString());
+                    Log.Error($"Bot Token was incorrect, please review the settings file in {Path.GetFullPath(AppSettings.settingsFilePath)}");
+                    if (e.HttpCode == HttpStatusCode.Unauthorized)
+                    {
+                        AppSettings.FixToken();
+                    }
                 }
             }
         }
