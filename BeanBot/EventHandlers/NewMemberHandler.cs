@@ -17,11 +17,17 @@ namespace BeanBot.EventHandlers
             this._discordClient = client;
         }
 
-        public async Task InitializeNewMembersAsync()
+        public void InitializeNewMembers()
+        {
+            _ = Task.Factory.StartNew(() => { HandleNewMember(); });
+        }
+
+        private void HandleNewMember()
         {
             Log.Information("Initializing New Member Handler");
-            _discordClient.UserJoined += async (u) => 
+            _discordClient.UserJoined += async (u) =>
             {
+                if (u.IsBot) return;
                 var userDMChannel = await u.GetOrCreateDMChannelAsync();
                 Log.Debug("Successfully created user DM channel");
                 await userDMChannel.SendMessageAsync("Please read the rules in the Eli's Charter channel. If you agree to these rules and are over the age of 17, please use command %shine");
