@@ -59,8 +59,9 @@ namespace BeanBot
             CreateNewDiscordSocketClientWithConfigurations();
             try
             {
-                await _discordClient.LoginAsync(TokenType.Bot, AppSettings.Settings["botId"]);
+                await _discordClient.LoginAsync(TokenType.Bot, AppSettings.Settings["botToken"]);
                 await _discordClient.StartAsync();
+                await _discordClient.SetGameAsync("use %help for command list!", null, ActivityType.Playing);
                 _discordClient.Ready += () =>
                 {
                     Log.Information("Bean Bot successfully connected");

@@ -26,7 +26,7 @@ namespace BeanBot.EventHandlers
         {
             Log.Information("Installing Commands");
             _discordClient.MessageReceived += HandleCommandAsync;
-            //_commandService.CommandExecuted += LogHandler.LogCommands;
+            _commandService.CommandExecuted += LogHandler.LogCommands;
             await _commandService.AddModulesAsync(assembly: Assembly.GetEntryAssembly(),
                                                   services: null);
         }

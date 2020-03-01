@@ -40,18 +40,21 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task OchoOcho()
         {
-            //Log.Verbose($"Threads Running Before Task Factory: { Process.GetCurrentProcess().Threads.Count }");
-            //await Task.Factory.StartNew(() => ReplyWithOchoOcho());
-            //Log.Verbose($"Threads Running After Task Factory: { Process.GetCurrentProcess().Threads.Count }");
-            Log.Verbose($"Threads Running Before Thread: { Process.GetCurrentProcess().Threads.Count }");
             Thread ochoOchoThread = new Thread(() => ReplyWithOchoOcho());
             ochoOchoThread.Start();
-            Log.Verbose($"Threads Running After Thread: { Process.GetCurrentProcess().Threads.Count }");
+        }
+
+        [Command("420")]
+        [Summary("Astolfour-twenty blaze it")]
+        [Alias("blaze", "blaze it", "weed")]
+        [RequireBotPermission(ChannelPermission.SendMessages)]
+        public async Task BlazeIt()
+        {
+            await ReplyAsync("<:420stolfoit:675553715759087618>");
         }
 
         private async Task ReplyWithOchoOcho()
         {
-            Log.Verbose($"Threads Running During Task Factory: { Process.GetCurrentProcess().Threads.Count }");
             await ReplyAsync("One plus one, equals two.");
             Thread.Sleep(1000);
             await ReplyAsync("Two plus two, equals four.");
