@@ -59,7 +59,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task BlazeIt()
         {
-            _ = Task.Factory.StartNew(() => { _ = ReplyAsync("<420stofloit:681383684175167508>"); });
+            await Task.Factory.StartNew(() => { _ = ReplyAsync("<420stofloit:681383684175167508>"); });
         }
 
         [Command("toes")]
@@ -69,7 +69,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.AttachFiles)]
         public async Task Toes()
         {
-            await Task.Factory.StartNew(() => _ = sendImageFromUrl(AppSettings.Settings["hatoeteUrl"]));
+            await Task.Factory.StartNew(() => { _ = sendImageFromUrl(AppSettings.Settings["hatoeteUrl"]); });
         }
 
         [Command("yoshimaru")]
@@ -79,7 +79,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.AttachFiles)]
         public async Task YoshiMaru()
         {
-            await Task.Factory.StartNew(() => _ = sendImageFromUrl(AppSettings.Settings["yoshimaruUrl"]));
+            await Task.Factory.StartNew(() => { _ = sendImageFromUrl(AppSettings.Settings["yoshimaruUrl"]); });
         }
 
         private async Task sendImageFromUrl(string url)
