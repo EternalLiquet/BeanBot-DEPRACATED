@@ -1,9 +1,9 @@
 name: Bean Bot Automated Release/Versioning
 
 on: 
-  release:
-    types: 
-      -created
+  push:
+    branches: 
+      - master
 
 jobs:
   build:
