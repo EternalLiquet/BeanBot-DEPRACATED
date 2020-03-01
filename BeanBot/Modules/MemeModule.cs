@@ -30,7 +30,7 @@ namespace BeanBot.Modules
             }
             if (userToSucc.Trim() == "")
                 userToSucc = null;
-            await Task.Run(() => { _ = ReplyAsync($"*succ succ succ* lol you're gay {userToSucc ?? Context.Message.Author.Mention}"); });
+            await Task.Factory.StartNew(() => { _ = ReplyAsync($"*succ succ succ* lol you're gay {userToSucc ?? Context.Message.Author.Mention}"); });
         }
 
         [Command("2am")]
@@ -40,7 +40,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task McDonalds()
         {
-            await Task.Run(() => { _ = ReplyAsync("<:mcdonalds:661337575704887337>"); });
+            await Task.Factory.StartNew(() => { _ = ReplyAsync("<:mcdonalds:661337575704887337>"); });
         }
 
         [Command("ocho ocho")]
