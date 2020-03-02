@@ -21,10 +21,11 @@ namespace BeanBotAutoDeployHook.Controllers
                     CreateNoWindow = true
                 }
             };
-            autodeployprocess.Start();
-            string result = autodeployprocess.StandardOutput.ReadToEnd();
-            autodeployprocess.WaitForExit();
-            return result;
+            Console.Write("Reached!!!");
+            //autodeployprocess.Start();
+            //string result = autodeployprocess.StandardOutput.ReadToEnd();
+            //autodeployprocess.WaitForExit();
+            return Directory.GetCurrentDirectory();
         }
     }
 }
