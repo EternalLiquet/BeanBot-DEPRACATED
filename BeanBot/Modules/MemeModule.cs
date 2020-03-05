@@ -59,7 +59,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task BlazeIt()
         {
-            await Task.Factory.StartNew(() => { _ = ReplyAsync("<420stofloit:681383684175167508>"); });
+            await Task.Factory.StartNew(() => { _ = ReplyAsync("<:420stolfoit:675553715759087618>"); });
         }
 
         [Command("toes")]
