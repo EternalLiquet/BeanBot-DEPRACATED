@@ -38,7 +38,7 @@ namespace BeanBot.Modules
                     var result = await command.CheckPreconditionsAsync(Context);
                     if (result.IsSuccess)
                     {
-                        description += $"**{command.Aliases.First()}**\nFunction: {command.Summary}\n";
+                        description += $"**{command.Aliases.First()}**\n";
                         if (command.Aliases.Count > 1)
                         {
                             description += command.Aliases.Count > 2 ? $"This command can also be used by using the following aliases: \n" : $"This command can also be used by using the following alias: \n";

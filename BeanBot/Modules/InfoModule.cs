@@ -19,13 +19,13 @@ namespace BeanBot.Modules
             await ReplyAsync($"<@{leadDeveloperDiscordUserId}> is my lead developer");
         }
 
-        [Command("patch")]
-        public async Task PatchCommand()
-        {
-            HttpClient client = new HttpClient();
-            var result = await client.PostAsync("https://localhost:5001/payload", null);
-            var stuff = await result.Content.ReadAsStringAsync();
-            await ReplyAsync(stuff);
-        }
+        //[Command("patch")]
+        //public async Task PatchCommand()
+        //{
+        //    HttpClient client = new HttpClient();
+        //    var result = await client.PostAsync("https://localhost:5001/payload", null);
+        //    var stuff = await result.Content.ReadAsStringAsync();
+        //    await ReplyAsync(stuff);
+        //}
     }
 }

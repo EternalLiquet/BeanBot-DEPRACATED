@@ -82,6 +82,19 @@ namespace BeanBot.Modules
             await Task.Factory.StartNew(() => { _ = sendImageFromUrl(AppSettings.Settings["yoshimaruUrl"]); });
         }
 
+        [Command("echo")]
+        [Summary("Gives the bot braincells")]
+        [Alias("say")]
+        [RequireBotPermission(ChannelPermission.SendMessages)]
+        public async Task Echo([Remainder] string text)
+        {
+            await Task.Factory.StartNew(() => 
+            {
+                _ = Context.Message.DeleteAsync();
+                _ = ReplyAsync(text); 
+            });
+        }
+
         private async Task sendImageFromUrl(string url)
         {
             try
