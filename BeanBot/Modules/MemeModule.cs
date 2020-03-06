@@ -97,7 +97,7 @@ namespace BeanBot.Modules
 
         [Command("boom")]
         [Summary("Recites a crimson demon's signature chant")]
-        [Alias("exp")]
+        [Alias("explosion")]
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task EXPLOSION()
         {
