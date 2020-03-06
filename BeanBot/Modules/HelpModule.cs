@@ -63,7 +63,7 @@ namespace BeanBot.Modules
                 }
             }
 
-            await Context.User.SendMessageAsync("", false, helpBuilder.Build());
+            await ReplyAsync("", false, helpBuilder.Build());
         }
     }
 }
