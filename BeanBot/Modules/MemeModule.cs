@@ -14,6 +14,18 @@ namespace BeanBot.Modules
     [Name("Meme Commands")]
     public class MemeModule : ModuleBase<SocketCommandContext>
     {
+        private string[] eightBallResponses = new string[8]
+        {
+            "Hell yeah brother",
+            "Yeehaw",
+            "The answer is yes if you let me suck your toes",
+            "It is unclear, let me succ you and try asking again",
+            "The spirit of Texas tells me No",
+            "Yes uwu",
+            "No umu",
+            "*succ succ succ* lol you're gay"
+        };
+
         [Command("succ")]
         [Summary("Astolfo will suck your dick and call you gay")]
         [Alias("succ succ", "cursed bean")]
@@ -99,9 +111,25 @@ namespace BeanBot.Modules
         [Summary("Recites a crimson demon's signature chant")]
         [Alias("explosion")]
         [RequireBotPermission(ChannelPermission.SendMessages)]
-        public async Task EXPLOSION()
+        public async Task Explosion()
         {
             await Task.Factory.StartNew(() => { _ = ReplyWithEXPLOSION(); });
+        }
+
+        [Command("8ball")]
+        [Summary("Let me predict your future.. for a price")]
+        [Alias("fortune")]
+        [RequireBotPermission(ChannelPermission.SendMessages)]
+        public async Task EightBall([Remainder] string allowInput)
+        {
+            await Task.Factory.StartNew(() => { _ = ChooseRandomAnswer(); });
+        }
+
+        private async Task ChooseRandomAnswer()
+        {
+            Random random = new Random();
+            var answer = eightBallResponses[random.Next(0, eightBallResponses.Length)];
+            await ReplyAsync(answer);
         }
 
         private async Task sendImageFromUrl(string url)
