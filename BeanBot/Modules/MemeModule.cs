@@ -14,6 +14,18 @@ namespace BeanBot.Modules
     [Name("Meme Commands")]
     public class MemeModule : ModuleBase<SocketCommandContext>
     {
+        private string[] eightBallResponses = new string[8]
+        {
+            "Hell yeah brother",
+            "Yeehaw",
+            "The answer is yes if you let me suck your toes",
+            "It is unclear, let me succ you and try asking again",
+            "The spirit of Texas tells me No",
+            "Yes uwu",
+            "No umu",
+            "*succ succ succ* lol you're gay"
+        };
+
         [Command("succ")]
         [Summary("Astolfo will suck your dick and call you gay")]
         [Alias("succ succ", "cursed bean")]
@@ -82,6 +94,44 @@ namespace BeanBot.Modules
             await Task.Factory.StartNew(() => { _ = sendImageFromUrl(AppSettings.Settings["yoshimaruUrl"]); });
         }
 
+        [Command("echo")]
+        [Summary("Gives the bot braincells")]
+        [Alias("say")]
+        [RequireBotPermission(ChannelPermission.SendMessages)]
+        public async Task Echo([Remainder] string text)
+        {
+            await Task.Factory.StartNew(() => 
+            {
+                _ = Context.Message.DeleteAsync();
+                _ = ReplyAsync(text); 
+            });
+        }
+
+        [Command("boom")]
+        [Summary("Recites a crimson demon's signature chant")]
+        [Alias("explosion")]
+        [RequireBotPermission(ChannelPermission.SendMessages)]
+        public async Task Explosion()
+        {
+            await Task.Factory.StartNew(() => { _ = ReplyWithEXPLOSION(); });
+        }
+
+        [Command("8ball")]
+        [Summary("Let me predict your future.. for a price")]
+        [Alias("fortune")]
+        [RequireBotPermission(ChannelPermission.SendMessages)]
+        public async Task EightBall([Remainder] string allowInput)
+        {
+            await Task.Factory.StartNew(() => { _ = ChooseRandomAnswer(); });
+        }
+
+        private async Task ChooseRandomAnswer()
+        {
+            Random random = new Random();
+            var answer = eightBallResponses[random.Next(0, eightBallResponses.Length)];
+            await ReplyAsync(answer);
+        }
+
         private async Task sendImageFromUrl(string url)
         {
             try
@@ -108,6 +158,47 @@ namespace BeanBot.Modules
             await ReplyAsync("Doblehin ang eight.");
             Thread.Sleep(1000);
             await ReplyAsync("Tayo'y mag ocho ocho, ocho ocho, mag ocho ocho pa");
+        }
+
+        private async Task ReplyWithEXPLOSION()
+        {
+            await ReplyAsync("Darkness blacker than black and darker than dark,");
+            Thread.Sleep(1500);
+            await ReplyAsync("I beseech thee, combine with my deep crimson.");
+            Thread.Sleep(1500);
+            await ReplyAsync("The time of awakening cometh.");
+            Thread.Sleep(1500);
+            await ReplyAsync("Justice, fallen upon the infallible boundary,");
+            Thread.Sleep(1500);
+            await ReplyAsync("appear now as an intangible distortions!");
+            Thread.Sleep(1500);
+            await ReplyAsync("I desire for my torrent of power a destructive force:");
+            Thread.Sleep(1500);
+            await ReplyAsync("a destructive force without equal!");
+            Thread.Sleep(1500);
+            await ReplyAsync("Return all creation to cinders,");
+            Thread.Sleep(1500);
+            await ReplyAsync("and come from the abyss!");
+            Thread.Sleep(1500);
+            var msg = await ReplyAsync("E");
+            Thread.Sleep(100);
+            await msg.ModifyAsync(m => { m.Content = "EX"; });
+            Thread.Sleep(100);
+            await msg.ModifyAsync(m => { m.Content = "EXP"; });
+            Thread.Sleep(100);
+            await msg.ModifyAsync(m => { m.Content = "EXPL"; });
+            Thread.Sleep(100);
+            await msg.ModifyAsync(m => { m.Content = "EXPLO"; });
+            Thread.Sleep(100);
+            await msg.ModifyAsync(m => { m.Content = "EXPLOS"; });
+            Thread.Sleep(100);
+            await msg.ModifyAsync(m => { m.Content = "EXPLOSI"; });
+            Thread.Sleep(100);
+            await msg.ModifyAsync(m => { m.Content = "EXPLOSIO"; });
+            Thread.Sleep(100);
+            await msg.ModifyAsync(m => { m.Content = "EXPLOSION"; });
+            Thread.Sleep(100);
+            await msg.ModifyAsync(m => { m.Content = "EXPLOSION!"; });
         }
     }
 }

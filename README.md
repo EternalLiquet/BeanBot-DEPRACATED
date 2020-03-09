@@ -34,7 +34,7 @@ Once the bot is up and running, it will prompt you to input some settings.
 Variables that will have to be setup: 
 
     botToken: <INSERTBOTTOKENHERE>,  
-    iLServerId: <It's named this but it can be the serverId of whatever server you are setting up>,  
+    ilServerId: <It's named this but it can be the serverId of whatever server you are setting up>,  
     hatoeteUrl: <Contact EternalLiquet>,  
     yoshimaruUrl: <Contact EternalLiquet>  
 

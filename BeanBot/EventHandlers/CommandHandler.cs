@@ -4,7 +4,7 @@ using Discord.Commands;
 using Discord.WebSocket;
 
 using Serilog;
-
+using System;
 using System.Reflection;
 using System.Threading.Tasks;
 
@@ -49,7 +49,7 @@ namespace BeanBot.EventHandlers
 
         internal bool MessageHasCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
         {
-            return (discordMessage.HasStringPrefix("succ ", ref argPos) ||
+            return (discordMessage.HasStringPrefix("succ ", ref argPos, StringComparison.OrdinalIgnoreCase) ||
                             discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos) ||
                             discordMessage.HasCharPrefix('%', ref argPos));
         }
