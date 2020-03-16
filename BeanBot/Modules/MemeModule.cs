@@ -26,23 +26,15 @@ namespace BeanBot.Modules
             "*succ succ succ* lol you're gay"
         };
 
-        [Command("succ")]
+        [Command("succ succ")]
         [Summary("Astolfo will suck your dick and call you gay")]
-        [Alias("succ succ", "cursed bean")]
+        [Alias("cursed bean")]
         [Remarks("succ")]
         [RequireBotPermission(ChannelPermission.SendMessages)]
-        public async Task UserSucc([Summary("The (optional) user to succ")] params string[] input)
+        public async Task UserSucc([Remainder] string input = "")
         {
-            string userToSucc = "";
-            if (input[0] == "succ")
-                input[0] = "";
-            foreach (string word in input)
-            {
-                userToSucc += word + " ";
-            }
-            if (userToSucc.Trim() == "")
-                userToSucc = null;
-            await Task.Factory.StartNew(() => { _ = ReplyAsync($"*succ succ succ* lol you're gay {userToSucc ?? Context.Message.Author.Mention}"); });
+            if (input.Equals("")) input = Context.Message.Author.Mention;
+            await Task.Factory.StartNew(() => { _ = ReplyAsync($"*succ succ succ* lol you're gay {input}"); });
         }
 
         [Command("2am")]
