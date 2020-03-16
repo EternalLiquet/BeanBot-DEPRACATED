@@ -54,10 +54,11 @@ namespace BeanBot.Util
             return Task.CompletedTask;
         }
 
-        public async static Task LogNewMember(SocketGuildUser newUser)
+        public static Task LogNewMember(SocketGuildUser newUser)
         {
             string formattedMessage = $"Discord:\t{newUser.Username} has joined {newUser.Guild} on {DateTime.UtcNow}";
             Log.Information(formattedMessage);
+            return Task.CompletedTask;
         }
 
         public static Task LogCommands(Optional<CommandInfo> command, ICommandContext context, IResult result)
