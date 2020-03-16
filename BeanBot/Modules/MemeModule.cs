@@ -107,13 +107,13 @@ namespace BeanBot.Modules
             });
         }
 
-        [Command("boom")]
+        [Command("boom test")]
         [Summary("Recites a crimson demon's signature chant")]
         [Alias("explosion")]
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task Explosion()
         {
-            await Task.Factory.StartNew(() => { _ = ReplyWithEXPLOSION(); });
+            await Task.Factory.StartNew(() => { _ = ReplyWithExplosion(); });
         }
 
         [Command("8ball")]
@@ -160,45 +160,17 @@ namespace BeanBot.Modules
             await ReplyAsync("Tayo'y mag ocho ocho, ocho ocho, mag ocho ocho pa");
         }
 
-        private async Task ReplyWithEXPLOSION()
+        private async Task ReplyWithExplosion()
         {
-            await ReplyAsync("Darkness blacker than black and darker than dark,");
+            await ReplyAsync("Darkness blacker than black and darker than dark, I beseech thee, combine with my deep crimson.\nThe time of awakening cometh.");
             Thread.Sleep(1500);
-            await ReplyAsync("I beseech thee, combine with my deep crimson.");
+            await ReplyAsync("Justice, fallen upon the infallible boundary, appear now as an intangible distortions!");
             Thread.Sleep(1500);
-            await ReplyAsync("The time of awakening cometh.");
+            await ReplyAsync("I desire for my torrent of power a destructive force: a destructive force without equal!");
             Thread.Sleep(1500);
-            await ReplyAsync("Justice, fallen upon the infallible boundary,");
+            await ReplyAsync("Return all creation to cinders, and come from the abyss!");
             Thread.Sleep(1500);
-            await ReplyAsync("appear now as an intangible distortions!");
-            Thread.Sleep(1500);
-            await ReplyAsync("I desire for my torrent of power a destructive force:");
-            Thread.Sleep(1500);
-            await ReplyAsync("a destructive force without equal!");
-            Thread.Sleep(1500);
-            await ReplyAsync("Return all creation to cinders,");
-            Thread.Sleep(1500);
-            await ReplyAsync("and come from the abyss!");
-            Thread.Sleep(1500);
-            var msg = await ReplyAsync("E");
-            Thread.Sleep(100);
-            await msg.ModifyAsync(m => { m.Content = "EX"; });
-            Thread.Sleep(100);
-            await msg.ModifyAsync(m => { m.Content = "EXP"; });
-            Thread.Sleep(100);
-            await msg.ModifyAsync(m => { m.Content = "EXPL"; });
-            Thread.Sleep(100);
-            await msg.ModifyAsync(m => { m.Content = "EXPLO"; });
-            Thread.Sleep(100);
-            await msg.ModifyAsync(m => { m.Content = "EXPLOS"; });
-            Thread.Sleep(100);
-            await msg.ModifyAsync(m => { m.Content = "EXPLOSI"; });
-            Thread.Sleep(100);
-            await msg.ModifyAsync(m => { m.Content = "EXPLOSIO"; });
-            Thread.Sleep(100);
-            await msg.ModifyAsync(m => { m.Content = "EXPLOSION"; });
-            Thread.Sleep(100);
-            await msg.ModifyAsync(m => { m.Content = "EXPLOSION!"; });
+            await ReplyAsync("EXPLOSION");
         }
     }
 }
