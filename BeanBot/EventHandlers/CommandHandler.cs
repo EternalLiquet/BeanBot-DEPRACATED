@@ -7,6 +7,9 @@ using Serilog;
 using System;
 using System.Reflection;
 using System.Threading.Tasks;
+using MongoDB.Driver;
+using MongoDB.Bson;
+using System.Collections.Generic;
 
 namespace BeanBot.EventHandlers
 {
@@ -26,9 +29,27 @@ namespace BeanBot.EventHandlers
         {
             Log.Information("Installing Commands");
             _discordClient.MessageReceived += HandleCommandAsync;
+            _discordClient.MessageReceived += InsertIntoCollection;
             _commandService.CommandExecuted += LogHandler.LogCommands;
             await _commandService.AddModulesAsync(assembly: Assembly.GetEntryAssembly(),
                                                   services: null);
+        }
+
+        internal async Task InsertIntoCollection(SocketMessage messageEvent)
+        {
+            try
+            {
+                IMongoCollection<BsonDocument> collection = MongoDbClient.beanDatabase.GetCollection<BsonDocument>("commandsUsed");
+                var doc = new BsonDocument();
+                var newDict = new Dictionary<string, BsonDocument>();
+                newDict.Add(DateTime.Now.ToString(), messageEvent.ToBsonDocument());
+                doc.AddRange(newDict);
+                collection.InsertOne(doc);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex.Message);
+            }
         }
 
         internal async Task HandleCommandAsync(SocketMessage messageEvent)
