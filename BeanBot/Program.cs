@@ -18,7 +18,7 @@ namespace BeanBot
         private DiscordSocketClient _discordClient;
         private CommandService _commandService;
         private CommandHandler _commandHandler;
-        private NewMemberHandler _newMemberHandler;
+        //private NewMemberHandler _newMemberHandler;
         private TimeBasedAutoPostHandler _autoPostTimer;
 
         static void Main(string[] args)
