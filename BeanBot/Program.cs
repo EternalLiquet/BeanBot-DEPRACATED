@@ -18,7 +18,7 @@ namespace BeanBot
         private DiscordSocketClient _discordClient;
         private CommandService _commandService;
         private CommandHandler _commandHandler;
-        private NewMemberHandler _newMemberHandler;
+        //private NewMemberHandler _newMemberHandler;
         private TimeBasedAutoPostHandler _autoPostTimer;
 
         static void Main(string[] args)
@@ -32,8 +32,8 @@ namespace BeanBot
             _discordClient.Log += LogHandler.LogMessages;
             //_autoPostTimer = new TimeBasedAutoPostHandler(_discordClient);
             //_autoPostTimer.StartTimer();
-            _newMemberHandler = new NewMemberHandler(_discordClient);
-            _newMemberHandler.InitializeNewMembers();
+            //_newMemberHandler = new NewMemberHandler(_discordClient);
+            //_newMemberHandler.InitializeNewMembers();
             await Task.Delay(-1);
         }
 
