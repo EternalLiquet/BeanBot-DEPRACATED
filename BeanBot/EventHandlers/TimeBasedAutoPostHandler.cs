@@ -42,9 +42,9 @@ namespace BeanBot.EventHandlers
             Log.Verbose($"The minute is: {DateTime.Now.Minute}");
             if (DateTime.Now.Minute == 20)
             {
-                var discordChannel = _discordClient.GetChannel(621941444403396610) as SocketTextChannel;
+                var discordChannel = _discordClient.GetChannel(436625112112955407) as SocketTextChannel;
                 discordChannel.SendMessageAsync("It's 4:20 SOMEWHERE in the world");
-                discordChannel.SendMessageAsync("<:rubyhigh:664243468125601792>");
+                discordChannel.SendMessageAsync("<:rubyhigh:652393832838856714>");
             }
         }
     }
