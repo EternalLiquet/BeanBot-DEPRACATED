@@ -42,9 +42,7 @@ namespace BeanBot.EventHandlers
         {
             Log.Information(Directory.GetCurrentDirectory());
             Log.Information(DateTime.Now.ToString());
-            var chicagoTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time");
-            Log.Information(chicagoTimeZone.ToString());
-            var chicagoTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, chicagoTimeZone);
+            var chicagoTime = DateTime.Now;
             Log.Information($"It is currently {chicagoTime.TimeOfDay} in Chicago");
             Log.Information($"The Hour is: {chicagoTime.Hour}");
             using (var reader = new StreamReader("Resources/puns.csv"))
