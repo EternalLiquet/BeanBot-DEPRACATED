@@ -42,12 +42,6 @@ namespace BeanBot.EventHandlers
             Log.Verbose($"The minute is: {DateTime.Now.Minute}");
             if (DateTime.Now.Minute == 20)
             {
-                var discordChannel = _discordClient.GetChannel(436625112112955407) as SocketTextChannel;
-                discordChannel.SendMessageAsync("It's 4:20 SOMEWHERE in the world");
-                discordChannel.SendMessageAsync("<:420stolfoit:675553715759087618>");
-                var discordChannel2 = _discordClient.GetChannel(630501319295107083) as SocketTextChannel;
-                discordChannel2.SendMessageAsync("It's 4:20 SOMEWHERE in the world");
-                discordChannel2.SendMessageAsync("<:420stolfoit:675553715759087618>");
             }
         }
     }
