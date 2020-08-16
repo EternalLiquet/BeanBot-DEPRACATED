@@ -42,10 +42,15 @@ namespace BeanBot.EventHandlers
         {
             var chicagoTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time");
             var chicagoTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, chicagoTimeZone);
+            Log.Verbose($"It is currently {chicagoTime.TimeOfDay} in Chicago");
+            Log.Verbose($"The Hour is: {chicagoTime.Hour}");
+            using (var reader = new StreamReader("Resources/puns.csv"))
+            using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture)) 
+            {
+                Log.Verbose(csv.ToString());
+            }
             if (chicagoTime.Hour == 16 && chicagoTime.Minute == 20)
             {
-                Log.Verbose($"It is currently {chicagoTime.TimeOfDay} in Chicago");
-                Log.Verbose($"The Hour is: {chicagoTime.Hour}");
                 using (var reader = new StreamReader("Resources/puns.csv"))
                 using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
                 {
