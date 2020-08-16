@@ -40,6 +40,7 @@ namespace BeanBot.EventHandlers
 
         private void PostRubyHigh(Object sender, ElapsedEventArgs args)
         {
+            Log.Information(Directory.GetCurrentDirectory());
             var chicagoTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time");
             var chicagoTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, chicagoTimeZone);
             Log.Verbose($"It is currently {chicagoTime.TimeOfDay} in Chicago");
