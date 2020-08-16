@@ -43,6 +43,7 @@ namespace BeanBot.EventHandlers
             Log.Information(Directory.GetCurrentDirectory());
             var chicagoTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time");
             Log.Information(chicagoTimeZone.ToString());
+            Log.Information(DateTime.Now.ToString());
             var chicagoTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, chicagoTimeZone);
             Log.Information($"It is currently {chicagoTime.TimeOfDay} in Chicago");
             Log.Information($"The Hour is: {chicagoTime.Hour}");
