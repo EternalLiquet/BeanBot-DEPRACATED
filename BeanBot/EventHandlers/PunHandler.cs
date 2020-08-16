@@ -43,8 +43,8 @@ namespace BeanBot.EventHandlers
             Log.Information(Directory.GetCurrentDirectory());
             var chicagoTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time");
             var chicagoTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, chicagoTimeZone);
-            Log.Verbose($"It is currently {chicagoTime.TimeOfDay} in Chicago");
-            Log.Verbose($"The Hour is: {chicagoTime.Hour}");
+            Log.Information($"It is currently {chicagoTime.TimeOfDay} in Chicago");
+            Log.Information($"The Hour is: {chicagoTime.Hour}");
             using (var reader = new StreamReader("Resources/puns.csv"))
             using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture)) 
             {
@@ -60,8 +60,8 @@ namespace BeanBot.EventHandlers
                     {
                         if ($"{record.Date.Month}/{record.Date.Day}" == $"{chicagoTime.Date.Month}/{chicagoTime.Date.Day}")
                         {
-                            Log.Verbose(record.Date.ToString());
-                            Log.Verbose(record.BadPost);
+                            Log.Information(record.Date.ToString());
+                            Log.Information(record.BadPost);
                             var discordChannel = _discordClient.GetChannel(generalChannelId) as SocketTextChannel;
                             discordChannel.SendMessageAsync("Pun Year 2 Electric Boogaloo, The Nightmare Never Ends Edition™");
                             discordChannel.SendMessageAsync("<:420stolfoit:675553715759087618>");
