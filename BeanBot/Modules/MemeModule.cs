@@ -1,10 +1,15 @@
-﻿using BeanBot.Util;
+﻿using BeanBot.Entities;
+using BeanBot.Util;
+using CsvHelper;
 using Discord;
 using Discord.Commands;
 using Discord.WebSocket;
 using Serilog;
 using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -100,10 +105,10 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task Echo([Remainder] string text)
         {
-            await Task.Factory.StartNew(() => 
+            await Task.Factory.StartNew(() =>
             {
                 _ = Context.Message.DeleteAsync();
-                _ = ReplyAsync(text); 
+                _ = ReplyAsync(text);
             });
         }
 
@@ -123,6 +128,34 @@ namespace BeanBot.Modules
         public async Task EightBall([Remainder] string allowInput)
         {
             await Task.Factory.StartNew(() => { _ = ChooseRandomAnswer(); });
+        }
+
+        [Command("pun")]
+        [Summary("I will give you one PunMaster™ branded pun")]
+        [RequireBotPermission(ChannelPermission.SendMessages)]
+        public async Task Pun()
+        {
+            await Task.Factory.StartNew(() =>
+            {
+                _ = ChooseRandomPun();
+            });
+        }
+
+        private async Task ChooseRandomPun()
+        {
+            using (var reader = new StreamReader("Resources/puns.csv"))
+            using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
+            {
+                var records = csv.GetRecords<Pun>();
+                List<string> punArray = new List<string>();
+                foreach (var record in records)
+                {
+                    punArray.Add(record.BadPost);
+                }
+                var random = new Random();
+                var index = random.Next(punArray.Count());
+                await ReplyAsync(punArray.ElementAt(index));
+            }
         }
 
         private async Task ChooseRandomAnswer()
