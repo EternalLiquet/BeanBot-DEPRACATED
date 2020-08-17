@@ -64,7 +64,7 @@ namespace BeanBot
                 {
                     await _discordClient.LoginAsync(TokenType.Bot, AppSettings.Settings["botToken"]);
                     await _discordClient.StartAsync();
-                    await _discordClient.SetGameAsync("use %help for command list!", null, ActivityType.Playing);
+                    await _discordClient.SetGameAsync("My purpose is to bully Hatate", null, ActivityType.Playing);
                     _discordClient.Ready += () =>
                     {
                         Log.Information("Bean Bot successfully connected");
