@@ -40,17 +40,10 @@ namespace BeanBot.EventHandlers
 
         private void PostRubyHigh(Object sender, ElapsedEventArgs args)
         {
-            var chicagoTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time");
-            var chicagoTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, chicagoTimeZone);
-            Log.Information($"It is currently {chicagoTime.TimeOfDay} in Chicago");
-            Log.Information($"The Hour is: {chicagoTime.Hour}");
-            using (var reader = new StreamReader("Resources/puns.csv"))
-            using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture)) 
-            {
-                Log.Verbose(csv.ToString());
-            }
+            var chicagoTime = DateTime.Now;
             if (chicagoTime.Hour == 16 && chicagoTime.Minute == 20)
             {
+                Log.Information($"It is currently {chicagoTime.TimeOfDay} in Chicago");
                 using (var reader = new StreamReader("Resources/puns.csv"))
                 using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
                 {
@@ -59,8 +52,6 @@ namespace BeanBot.EventHandlers
                     {
                         if ($"{record.Date.Month}/{record.Date.Day}" == $"{chicagoTime.Date.Month}/{chicagoTime.Date.Day}")
                         {
-                            Log.Information(record.Date.ToString());
-                            Log.Information(record.BadPost);
                             var discordChannel = _discordClient.GetChannel(generalChannelId) as SocketTextChannel;
                             discordChannel.SendMessageAsync("Pun Year 2 Electric Boogaloo, The Nightmare Never Ends Edition™");
                             discordChannel.SendMessageAsync("<:420stolfoit:675553715759087618>");
