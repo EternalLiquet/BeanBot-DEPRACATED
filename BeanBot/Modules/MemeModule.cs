@@ -4,6 +4,7 @@ using CsvHelper;
 using Discord;
 using Discord.Commands;
 using Discord.WebSocket;
+using Newtonsoft.Json;
 using Serilog;
 using System;
 using System.Collections.Generic;
@@ -19,6 +20,8 @@ namespace BeanBot.Modules
     [Name("Meme Commands")]
     public class MemeModule : ModuleBase<SocketCommandContext>
     {
+        private static HttpClient httpClient = new HttpClient();
+
         private string[] eightBallResponses = new string[8]
         {
             "Hell yeah brother",
@@ -141,6 +144,37 @@ namespace BeanBot.Modules
             });
         }
 
+        [Command("meme")]
+        [Summary("Will give you a random meme from reddit")]
+        [Remarks("meme")]
+        [RequireBotPermission(ChannelPermission.SendMessages)]
+        public async Task Meme()
+        {
+            await Task.Factory.StartNew(() => { _ = InvokeMemeApi(); });
+        }
+        private async Task InvokeMemeApi()
+        {
+            try
+            {
+                HttpResponseMessage response = await httpClient.GetAsync("https://meme-api.herokuapp.com/gimme");
+                if (!response.IsSuccessStatusCode) await ReplyAsync("The meme machine is down, quick, call 911!");
+                else
+                {
+                    MemeResponse meme = JsonConvert.DeserializeObject<MemeResponse>(await response.Content.ReadAsStringAsync());
+                    EmbedBuilder memeBuilder = new EmbedBuilder()
+                    {
+                        Title = meme.title,
+                        Description = $"/r/{meme.subreddit}",
+                        ImageUrl = meme.url
+                    };
+                    await ReplyAsync(embed: memeBuilder.Build());
+                }
+            }
+            catch (Exception e) { Log.Error(e.Message); }
+
+        }
+
+
         private async Task ChooseRandomPun()
         {
             using (var reader = new StreamReader("Resources/puns.csv"))
@@ -233,5 +267,14 @@ namespace BeanBot.Modules
             Thread.Sleep(100);
             await msg.ModifyAsync(m => { m.Content = "EXPLOSION!"; });
         }
+    }
+    public class MemeResponse
+    {
+        public string postLink { get; set; }
+        public string subreddit { get; set; }
+        public string title { get; set; }
+        public string url { get; set; }
+        public bool nsfw { get; set; }
+        public bool spoiler { get; set; }
     }
 }
