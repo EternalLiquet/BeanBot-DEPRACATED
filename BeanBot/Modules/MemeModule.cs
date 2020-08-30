@@ -4,6 +4,7 @@ using CsvHelper;
 using Discord;
 using Discord.Commands;
 using Discord.WebSocket;
+using Newtonsoft.Json;
 using Serilog;
 using System;
 using System.Collections.Generic;
@@ -13,12 +14,15 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Web;
 
 namespace BeanBot.Modules
 {
     [Name("Meme Commands")]
     public class MemeModule : ModuleBase<SocketCommandContext>
     {
+        private static HttpClient httpClient = new HttpClient();
+
         private string[] eightBallResponses = new string[8]
         {
             "Hell yeah brother",
@@ -141,6 +145,35 @@ namespace BeanBot.Modules
             });
         }
 
+        [Command("meme")]
+        [Summary("Will give you a random meme from reddit")]
+        [Remarks("meme")]
+        [RequireBotPermission(ChannelPermission.SendMessages)]
+        public async Task Meme(string subreddit = "")
+        {
+            await Task.Factory.StartNew(() => { _ = InvokeMemeApi(subreddit); });
+        }
+        private async Task InvokeMemeApi(string subreddit)
+        {
+            string uri;
+            if (string.IsNullOrEmpty(subreddit)) uri = $"https://meme-api.herokuapp.com/gimme";
+            else uri = $"https://meme-api.herokuapp.com/gimme/{HttpUtility.UrlEncode(subreddit)}";
+            HttpResponseMessage response = await httpClient.GetAsync(requestUri: uri);
+            if (!response.IsSuccessStatusCode) await ReplyAsync("The meme machine is down, quick, call 911!");
+            else
+            {
+                MemeResponse meme = JsonConvert.DeserializeObject<MemeResponse>(await response.Content.ReadAsStringAsync());
+                EmbedBuilder memeBuilder = new EmbedBuilder()
+                {
+                    Title = meme.title,
+                    Description = $"/r/{meme.subreddit}",
+                    ImageUrl = meme.url
+                };
+                await ReplyAsync(embed: memeBuilder.Build());
+            }
+        }
+
+
         private async Task ChooseRandomPun()
         {
             using (var reader = new StreamReader("Resources/puns.csv"))
@@ -233,5 +266,14 @@ namespace BeanBot.Modules
             Thread.Sleep(100);
             await msg.ModifyAsync(m => { m.Content = "EXPLOSION!"; });
         }
+    }
+    public class MemeResponse
+    {
+        public string postLink { get; set; }
+        public string subreddit { get; set; }
+        public string title { get; set; }
+        public string url { get; set; }
+        public bool nsfw { get; set; }
+        public bool spoiler { get; set; }
     }
 }
