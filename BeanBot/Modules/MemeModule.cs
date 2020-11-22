@@ -3,6 +3,7 @@ using BeanBot.Util;
 using CsvHelper;
 using Discord;
 using Discord.Commands;
+using Discord.Addons.Interactive;
 using Discord.WebSocket;
 using Newtonsoft.Json;
 using Serilog;
@@ -19,7 +20,7 @@ using System.Web;
 namespace BeanBot.Modules
 {
     [Name("Meme Commands")]
-    public class MemeModule : ModuleBase<SocketCommandContext>
+    public class MemeModule : InteractiveBase
     {
         private static HttpClient httpClient = new HttpClient();
 
@@ -73,6 +74,16 @@ namespace BeanBot.Modules
         {
             await Task.Factory.StartNew(() => { _ = ReplyWithOchoOcho(); });
         }
+
+        [Command("fancy ocho ocho")]
+        [Summary("Everyone that went to the Music Box is banned from this server")]
+        [Remarks("succ ocho ocho")]
+        [RequireBotPermission(ChannelPermission.SendMessages)]
+        public async Task OchoOcho2()
+        {
+            await Task.Factory.StartNew(() => { _ = ReplyWithOchoOcho2(); });
+        }
+
 
         [Command("420")]
         [Summary("Astolfour-twenty blaze it")]
@@ -129,9 +140,9 @@ namespace BeanBot.Modules
         [Summary("Let me predict your future.. for a price")]
         [Alias("fortune")]
         [RequireBotPermission(ChannelPermission.SendMessages)]
-        public async Task EightBall([Remainder] string allowInput)
+        public async Task EightBall([Remainder] string question)
         {
-            await Task.Factory.StartNew(() => { _ = ChooseRandomAnswer(); });
+            await Task.Factory.StartNew(() => { _ = ChooseRandomAnswer(question); });
         }
 
         [Command("pun")]
@@ -191,11 +202,25 @@ namespace BeanBot.Modules
             }
         }
 
-        private async Task ChooseRandomAnswer()
+        private async Task ChooseRandomAnswer(string question)
         {
-            Random random = new Random();
-            var answer = eightBallResponses[random.Next(0, eightBallResponses.Length)];
-            await ReplyAsync(answer);
+            if (IsQuestion(question))
+            {
+                Random random = new Random();
+                var answer = eightBallResponses[random.Next(0, eightBallResponses.Length)];
+                await ReplyAsync($"> {question} \n{answer}");
+            }
+            else
+            {
+                Random random = new Random();
+                var gordonGif = random.Next(1, 9);
+                await Context.Channel.SendFileAsync($"Resources/gordon{gordonGif}.gif", $"> {question} \nThat is not a question");
+            }
+        }
+
+        private bool IsQuestion(string question)
+        {
+            return question.EndsWith('?');
         }
 
         private async Task sendImageFromUrl(string url)
@@ -224,6 +249,12 @@ namespace BeanBot.Modules
             await ReplyAsync("Doblehin ang eight.");
             Thread.Sleep(1000);
             await ReplyAsync("Tayo'y mag ocho ocho, ocho ocho, mag ocho ocho pa");
+        }
+
+        private async Task ReplyWithOchoOcho2()
+        {
+            var pages = new[] { "One plus one, equals two.", "Two plus two, equals four.", "Four plus four, equals eight.", "Doblehin ang eight.", "Tayo'y mag ocho ocho, ocho ocho, mag ocho ocho pa" };
+            await PagedReplyAsync(pages);
         }
 
         private async Task ReplyWithEXPLOSION()
