@@ -206,9 +206,16 @@ namespace BeanBot.Modules
         {
             if (IsQuestion(question))
             {
-                Random random = new Random();
-                var answer = eightBallResponses[random.Next(0, eightBallResponses.Length)];
-                await ReplyAsync($"> {question} \n{answer}");
+                if (IsPunMaster())
+                {
+                    HandlePunMaster(question);
+                }
+                else
+                {
+                    Random random = new Random();
+                    var answer = eightBallResponses[random.Next(0, eightBallResponses.Length)];
+                    await ReplyAsync($"> {question} \n{answer}");
+                }
             }
             else
             {
@@ -216,6 +223,23 @@ namespace BeanBot.Modules
                 var gordonGif = random.Next(1, 9);
                 await Context.Channel.SendFileAsync($"Resources/gordon{gordonGif}.gif", $"> {question} \nThat is not a question");
             }
+        }
+
+        private async void HandlePunMaster(string question)
+        {
+            if (question.Contains("post") && question.Contains("succ") || question.Contains("rigged") && !question.Contains("not"))
+            {
+                await ReplyAsync($"> {question} \nThe spirit of Texas tells me No");
+            }
+            else
+            {
+                await ReplyAsync($"> {question} \n*succ succ succ* lol you're gay");
+            }
+        }
+
+        private bool IsPunMaster()
+        {
+            return (Context.Message.Author.Id == 262010462323998720 || Context.Message.Author.Id == 114559039731531781);
         }
 
         private bool IsQuestion(string question)
