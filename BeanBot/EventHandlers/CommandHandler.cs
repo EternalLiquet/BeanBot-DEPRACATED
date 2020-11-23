@@ -46,6 +46,20 @@ namespace BeanBot.EventHandlers
             if (MessageIsSystemMessage(discordMessage)) 
                 return; //Return and ignore if the message is a discord system message
             int argPos = 0;
+            if (discordMessage.Author.Id == 114559039731531781 && discordMessage.Content.Contains("queue8"))
+            {
+                Console.WriteLine("hello????");
+                if (discordMessage.Content.Contains("yes"))
+                {
+                    Program.queueEightBallAnswer = "positive";
+                    Program.queueRecipient = discordMessage.Author.Id;
+                }
+                else
+                {
+                    Program.queueEightBallAnswer = "negative";
+                    Program.queueRecipient = discordMessage.Author.Id;
+                }
+            }
             if (!MessageHasCommandPrefix(discordMessage, ref argPos) ||
                 messageEvent.Author.IsBot)
                 return; //Return and ignore if the discord message does not have the command prefixes or if the author of the message is a bot

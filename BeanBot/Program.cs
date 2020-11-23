@@ -21,6 +21,8 @@ namespace BeanBot
         //private NewMemberHandler _newMemberHandler;
         private PunHandler _autoPostTimer;
         private EditMessageHandler _editMessageHandler;
+        public static string queueEightBallAnswer;
+        public static ulong queueRecipient;
 
         static void Main(string[] args)
             => new Program().StartAsync().GetAwaiter().GetResult();

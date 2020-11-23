@@ -28,11 +28,11 @@ namespace BeanBot.Modules
         {
             "Hell yeah brother",
             "Yeehaw",
+            "Yes uwu",
+            "The spirit of Texas tells me No",
+            "No umu",
             "The answer is yes if you let me suck your toes",
             "It is unclear, let me succ you and try asking again",
-            "The spirit of Texas tells me No",
-            "Yes uwu",
-            "No umu",
             "*succ succ succ* lol you're gay"
         };
 
@@ -212,9 +212,32 @@ namespace BeanBot.Modules
                 }
                 else
                 {
-                    Random random = new Random();
-                    var answer = eightBallResponses[random.Next(0, eightBallResponses.Length)];
-                    await ReplyAsync($"> {question} \n{answer}");
+                    Console.WriteLine($"{Program.queueEightBallAnswer}, {Program.queueRecipient}");
+                    if (Program.queueEightBallAnswer != null && Context.Message.Author.Id == Program.queueRecipient)
+                    {
+                        Console.WriteLine("In queue 8ball for: " + Program.queueEightBallAnswer);
+                        if (Program.queueEightBallAnswer == "positive")
+                        {
+                            Console.WriteLine("positive");
+                            Random random = new Random();
+                            var answer = eightBallResponses[random.Next(0, 3)];
+                            await ReplyAsync($"> {question} \n{answer}");
+                        }
+                        else
+                        {
+                            Console.WriteLine("negative");
+                            Random random = new Random();
+                            var answer = eightBallResponses[random.Next(3, 5)];
+                            await ReplyAsync($"> {question} \n{answer}");
+                        }
+                        Program.queueEightBallAnswer = null;
+                    }
+                    else
+                    {
+                        Random random = new Random();
+                        var answer = eightBallResponses[random.Next(0, eightBallResponses.Length)];
+                        await ReplyAsync($"> {question} \n{answer}");
+                    }
                 }
             }
             else
