@@ -250,13 +250,17 @@ namespace BeanBot.Modules
 
         private async void HandlePunMaster(string question)
         {
-            if (question.Contains("post") && question.Contains("succ") || question.Contains("rigged") && !question.Contains("not"))
+            if (question.ToLower().Contains("post") && question.ToLower().Contains("succ") || 
+                question.ToLower().Contains("rigged") && !question.ToLower().Contains("not") || 
+                question.ToLower().Contains("ban") && question.ToLower().Contains("padoru") && !question.ToLower().Contains("not"))
             {
                 await ReplyAsync($"> {question} \nThe spirit of Texas tells me No");
             }
             else
             {
-                await ReplyAsync($"> {question} \n*succ succ succ* lol you're gay");
+                Random random = new Random();
+                var answer = eightBallResponses[random.Next(4, 8)];
+                await ReplyAsync($"> {question} \n{answer}");
             }
         }
 
