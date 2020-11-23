@@ -239,7 +239,7 @@ namespace BeanBot.Modules
 
         private bool IsPunMaster()
         {
-            return (Context.Message.Author.Id == 262010462323998720 || Context.Message.Author.Id == 114559039731531781);
+            return (Context.Message.Author.Id == 262010462323998720);
         }
 
         private bool IsQuestion(string question)

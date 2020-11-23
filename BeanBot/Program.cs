@@ -20,6 +20,7 @@ namespace BeanBot
         private CommandHandler _commandHandler;
         //private NewMemberHandler _newMemberHandler;
         private PunHandler _autoPostTimer;
+        private EditMessageHandler _editMessageHandler;
 
         static void Main(string[] args)
             => new Program().StartAsync().GetAwaiter().GetResult();
@@ -32,6 +33,8 @@ namespace BeanBot
             _discordClient.Log += LogHandler.LogMessages;
             _autoPostTimer = new PunHandler(_discordClient);
             _autoPostTimer.StartTimer();
+            _editMessageHandler = new EditMessageHandler(_discordClient);
+            _editMessageHandler.InitializeEventListener();
             //_newMemberHandler = new NewMemberHandler(_discordClient);
             //_newMemberHandler.InitializeNewMembers();
             await Task.Delay(-1);
