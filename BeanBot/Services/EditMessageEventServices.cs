@@ -29,16 +29,22 @@ namespace BeanBot.Services
             }
         }
 
-        private static async Task ModifyMessage(List<SocketMessage> messages, int oldMsgIndex)
+        private static async Task ModifyMessage(List<SocketMessage> messages, int oldMsgIndex, int retry = 0)
         {
             try
             {
                 var eightballmessage = messages[oldMsgIndex + 1] as SocketUserMessage;
                 await eightballmessage.ModifyAsync(m => m.Content = "Do not edit your 8ball requests in my presence, mortal.");
             }
-            catch
+            catch (Exception e)
             {
-                await ModifyMessage(messages, oldMsgIndex);
+                if (retry < 3)
+                    await ModifyMessage(messages, oldMsgIndex, retry++);
+                else
+                {
+                    Console.WriteLine($"Modify message failed for reason: {e.Message}");
+
+                }
             }
         }
     }
