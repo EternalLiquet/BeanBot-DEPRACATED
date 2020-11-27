@@ -261,6 +261,7 @@ namespace BeanBot.Modules
             else
             {
                 Random random = new Random();
+                var chance = random.next(1, 101);
                 var answer = eightBallResponses[random.Next(4, 8)];
                 await ReplyAsync($"> {question} \n{answer}");
             }
