@@ -52,7 +52,7 @@ namespace BeanBot.Modules
             }
             if (userToSucc.Trim() == "")
                 userToSucc = null;
-            if (userToSucc == "Bean Bot" || userToSucc == "@Bean Bot")
+            if (userToSucc.Contains("Bean Bot"))
                 userToSucc = null;
             await Task.Factory.StartNew(() => { _ = ReplyAsync($"*succ succ succ* lol you're gay {userToSucc ?? Context.Message.Author.Mention}"); });
         }
