@@ -53,7 +53,7 @@ namespace BeanBot.Modules
             if (userToSucc.Trim() == "")
                 userToSucc = null;
             Console.WriteLine(userToSucc);
-            if (userToSucc.Contains("Bean Bot"))
+            if (userToSucc.Contains("Bean Bot") || userToSucc.Contains("<@!630470467261693982>"))
                 userToSucc = Context.Message.Author.Mention;
             await Task.Factory.StartNew(() => { _ = ReplyAsync($"*succ succ succ* lol you're gay {userToSucc ?? Context.Message.Author.Mention}"); });
         }
