@@ -261,9 +261,22 @@ namespace BeanBot.Modules
             else
             {
                 Random random = new Random();
-                var chance = random.next(1, 101);
-                var answer = eightBallResponses[random.Next(4, 8)];
-                await ReplyAsync($"> {question} \n{answer}");
+                var chance = random.Next(1, 101);
+                if (chance >= 1 && chance <= 10)
+                {
+                    var positiveAns = eightBallResponses[random.Next(0, 3)];
+                    await ReplyAsync($"> {question} \n{positiveAns}");
+                }
+                else if (chance > 10 && chance <= 40)
+                {
+                    var negativeAns = eightBallResponses[random.Next(3, 5)];
+                    await ReplyAsync($"> {question} \n{negativeAns}");
+                }
+                else
+                {
+                    var succAns = eightBallResponses[random.Next(5, 8)];
+                    await ReplyAsync($"> {question} \n{succAns}");
+                }
             }
         }
 
