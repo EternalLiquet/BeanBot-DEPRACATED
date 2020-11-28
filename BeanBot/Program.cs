@@ -18,7 +18,7 @@ namespace BeanBot
         private DiscordSocketClient _discordClient;
         private CommandService _commandService;
         private CommandHandler _commandHandler;
-        //private NewMemberHandler _newMemberHandler;
+        private NewMemberHandler _newMemberHandler;
         private PunHandler _autoPostTimer;
         private EditMessageHandler _editMessageHandler;
         public static string queueEightBallAnswer;
@@ -37,8 +37,8 @@ namespace BeanBot
             _autoPostTimer.StartTimer();
             _editMessageHandler = new EditMessageHandler(_discordClient);
             _editMessageHandler.InitializeEventListener();
-            //_newMemberHandler = new NewMemberHandler(_discordClient);
-            //_newMemberHandler.InitializeNewMembers();
+            _newMemberHandler = new NewMemberHandler(_discordClient);
+            _newMemberHandler.InitializeNewMembers();
             await Task.Delay(-1);
         }
 
