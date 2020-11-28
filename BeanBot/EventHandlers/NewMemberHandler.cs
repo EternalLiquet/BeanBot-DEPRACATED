@@ -27,6 +27,7 @@ namespace BeanBot.EventHandlers
             Log.Information("Initializing New Member Handler");
             _discordClient.UserJoined += async (u) =>
             {
+                Log.Information($"User {u} joined");
                 if (u.IsBot) return;
                 var userDMChannel = await u.GetOrCreateDMChannelAsync();
                 Log.Debug("Successfully created user DM channel");
