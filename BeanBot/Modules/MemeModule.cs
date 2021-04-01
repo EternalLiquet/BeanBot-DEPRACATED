@@ -36,6 +36,18 @@ namespace BeanBot.Modules
             "*succ succ succ* lol you're gay"
         };
 
+        private string[] texasFacts = new string[8]
+        {
+            "The tale of the Alamo is retold through the stars",
+            "The King Ranch in Texas is bigger than the entire state of California",
+            "Texas is the largest country in the world",
+            "Texas is the largest exporter of Freedom per capita in the world",
+            "Texas boasts the largest herd of wild padorus",
+            "Astolfo, the most famous Texan cowboy, was born in Europe",
+            "More species of cursed bean live in Texas than any other part of the world",
+            "The entire country of Texas has 5 Jollibees"
+        };
+
         [Command("succ")]
         [Summary("Astolfo will suck your dick and call you gay")]
         [Alias("succ succ", "cursed bean")]
@@ -185,6 +197,33 @@ namespace BeanBot.Modules
                 };
                 await ReplyAsync(embed: memeBuilder.Build());
             }
+        }
+
+        [Command("texasnationalbird")]
+        [Summary("I will educate you on Texas' official national bird")]
+        [Remarks("texasnationalbird")]
+        [RequireBotPermission(ChannelPermission.SendMessages)]
+        public async Task NationalBird()
+        {
+            await ReplyAsync("The Texas Offical National Bird is the AR-15");
+        }
+
+        [Command("texasnationalflower")]
+        [Summary("I will educate you on the Texas' official national flower")]
+        [Remarks("texasnationalflower")]
+        public async Task NationalFlower()
+        {
+            await ReplyAsync("The Texas Official National Flower is the Jimmy Dean breakfast taco");
+        }
+
+        [Command("texasfacts")]
+        [Summary("I will give you a random Texas fact")]
+        [Remarks("texasfacts")]
+        public async Task TexasFacts()
+        {
+            Random random = new Random();
+            var fact = texasFacts[random.Next(0, texasFacts.Length)];
+            await ReplyAsync($"Did you know: {fact}");
         }
 
 
