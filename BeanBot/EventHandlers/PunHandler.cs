@@ -41,7 +41,7 @@ namespace BeanBot.EventHandlers
         private void PostRubyHigh(Object sender, ElapsedEventArgs args)
         {
             var chicagoTime = DateTime.Now;
-            if (chicagoTime.Hour == 16 && chicagoTime.Minute == 42)
+            if (chicagoTime.Hour == 16 && chicagoTime.Minute == 45)
             {
                 Log.Information($"It is currently {chicagoTime.TimeOfDay} in Chicago");
                 using (var reader = new StreamReader("Resources/puns.csv"))
