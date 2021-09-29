@@ -240,7 +240,7 @@ namespace BeanBot.Modules
                 }
                 var random = new Random();
                 var index = random.Next(punArray.Count());
-                await ReplyAsync(punArray.ElementAt(0));
+                await ReplyAsync(punArray.ElementAt(index));
             }
         }
 
