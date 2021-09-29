@@ -41,7 +41,7 @@ namespace BeanBot.EventHandlers
         private void PostRubyHigh(Object sender, ElapsedEventArgs args)
         {
             var chicagoTime = DateTime.Now;
-            if (chicagoTime.Hour == 16 && chicagoTime.Minute == 20)
+            if (chicagoTime.Hour == 16 && chicagoTime.Minute == 36)
             {
                 Log.Information($"It is currently {chicagoTime.TimeOfDay} in Chicago");
                 using (var reader = new StreamReader("Resources/puns.csv"))
@@ -53,7 +53,7 @@ namespace BeanBot.EventHandlers
                         if ($"{record.Date.Month}/{record.Date.Day}" == $"{chicagoTime.Date.Month}/{chicagoTime.Date.Day}")
                         {
                             var discordChannel = _discordClient.GetChannel(generalChannelId) as SocketTextChannel;
-                            discordChannel.SendMessageAsync("Pun Year 2 Electric Boogaloo, The Nightmare Never Ends Edition™");
+                            discordChannel.SendMessageAsync("Bean Bot ~~Episode~~ Year 3: Revenge Of The Pun");
                             discordChannel.SendMessageAsync("<:420stolfoit:675553715759087618>");
                             discordChannel.SendMessageAsync(record.BadPost);
                         }
