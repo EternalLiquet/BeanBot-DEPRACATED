@@ -21,6 +21,7 @@ namespace BeanBot
         private NewMemberHandler _newMemberHandler;
         private PunHandler _autoPostTimer;
         private EditMessageHandler _editMessageHandler;
+        private ReactHandler _reactHandler;
         public static string queueEightBallAnswer;
         public static ulong queueRecipient;
 
@@ -39,6 +40,8 @@ namespace BeanBot
             _editMessageHandler.InitializeEventListener();
             _newMemberHandler = new NewMemberHandler(_discordClient);
             _newMemberHandler.InitializeNewMembers();
+            _reactHandler = new ReactHandler(_discordClient, new Services.RoleReactService(new Repository.RoleReactRepository()));
+            await _reactHandler.InitializeReactDependentServices();
             await Task.Delay(-1);
         }
 
@@ -55,7 +58,7 @@ namespace BeanBot
             _commandService = new CommandService(new CommandServiceConfig
             {
                 LogLevel = LogSeverity.Verbose,
-                CaseSensitiveCommands = false
+                CaseSensitiveCommands = false,
             });
         }
 
@@ -94,7 +97,9 @@ namespace BeanBot
             _discordClient = new DiscordSocketClient(new DiscordSocketConfig
             {
                 LogLevel = LogSeverity.Verbose,
-                MessageCacheSize = 50
+                MessageCacheSize = 50,
+                ExclusiveBulkDelete = true,
+                AlwaysDownloadUsers = true
             });
         }
     }
