@@ -15,6 +15,7 @@
     <None Remove="Resources\gordon6.gif" />
     <None Remove="Resources\gordon7.gif" />
     <None Remove="Resources\gordon8.gif" />
+    <None Remove="Resources\PR.png" />
   </ItemGroup>
 
   <ItemGroup>
@@ -66,6 +67,12 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Resources\gordon8.gif">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Resources\PR.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

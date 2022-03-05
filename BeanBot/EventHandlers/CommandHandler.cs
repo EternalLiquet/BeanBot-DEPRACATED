@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using System;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace BeanBot.EventHandlers
@@ -46,6 +47,7 @@ namespace BeanBot.EventHandlers
             if (MessageIsSystemMessage(discordMessage)) 
                 return; //Return and ignore if the message is a discord system message
             int argPos = 0;
+            checkForStringPr(discordMessage);
             if (discordMessage.Author.Id == 114559039731531781 && discordMessage.Content.Contains("queue8"))
             {
                 Console.WriteLine("hello????");
@@ -68,6 +70,15 @@ namespace BeanBot.EventHandlers
                 context: context,
                 argPos: argPos,
                 services: _services);
+        }
+
+        private void checkForStringPr(SocketUserMessage discordMessage)
+        {
+            Regex rgx = new Regex(@"\bpr\b");
+            if (rgx.Match(discordMessage.Content.ToLower()).Success || discordMessage.Content.ToLower().Contains("pull request"))
+            {
+                discordMessage.Channel.SendFileAsync($"Resources/PR.png");
+            } 
         }
 
         internal bool MessageHasCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
