@@ -17,7 +17,7 @@ namespace BeanBot.Repository
         {
             try
             {
-                roleSettings.lastAccessed = new DateTime();
+                roleSettings.lastAccessed = DateTime.Now;
                 await _roleSettingsRef.InsertOneAsync(roleSettings);
                 Log.Information($"Settings successfully created");
             }
@@ -45,13 +45,12 @@ namespace BeanBot.Repository
         {
             try
             {
-                var filterByLastAccessedDate = Builders<RoleSettings>.Filter.Where(result => (new DateTime() - result.lastAccessed).Days < 30);
+                var filterByLastAccessedDate = Builders<RoleSettings>.Filter.Where(result => result.lastAccessed >= DateTime.Now.AddDays(-30));
                 var results = await _roleSettingsRef.FindAsync<RoleSettings>(filterByLastAccessedDate);
                 return await results.ToListAsync();
             }
             catch (Exception e)
             {
-                Log.Error($"Error retrieving role settings from the database: {e.Message}");
                 return null;
             }
         }

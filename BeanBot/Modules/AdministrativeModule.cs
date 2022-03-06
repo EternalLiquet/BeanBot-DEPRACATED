@@ -46,7 +46,7 @@ namespace BeanBot.Modules
                 {
                     messagesInInteraction.Add(await ReplyAsync("Which role would you like to set up?"));
                     var roleToSetup = await NextMessageAsync(timeout: TimeSpan.FromSeconds(60));
-                    var roleToAdd = (roleToSetup.Channel as SocketTextChannel).Guild.Roles.FirstOrDefault(role => roleToSetup.Content.Contains(role.Name));
+                    var roleToAdd = (roleToSetup.Channel as SocketTextChannel).Guild.Roles.First(role => roleToSetup.Content.ToString().ToLower().Trim() == role.Name.ToString().ToLower().Trim());
                     if (!await IsRoleNotNullAndValid(messagesInInteraction, roleToSetup, roleToAdd)) return;
                     messagesInInteraction.Add(await ReplyAsync($"Which emote would you like to set up with the role {roleToSetup.Content}"));
                     var emoteToSetup = await NextMessageAsync(timeout: TimeSpan.FromSeconds(60));
