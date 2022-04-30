@@ -30,6 +30,7 @@ namespace BeanBot.EventHandlers
         {
             Log.Information("Instantiating Role Services");
             _ = Task.Factory.StartNew(() => { _discordClient.ReactionAdded += _roleService.HandleReact; });
+            _ = Task.Factory.StartNew(() => { _discordClient.ReactionRemoved += _roleService.HandleRemoveReact; });
             return Task.CompletedTask;
         }
     }

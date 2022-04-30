@@ -1,7 +1,9 @@
 ﻿using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Text;
 
 namespace BeanBot.Entities
@@ -24,6 +26,11 @@ namespace BeanBot.Entities
             this.guildId = guildId;
             this.channelId = channelId;
             this.messageId = messageId;
+        }
+
+        public override string ToString()
+        {
+            return JsonConvert.SerializeObject(this, Formatting.Indented);
         }
     }
 }

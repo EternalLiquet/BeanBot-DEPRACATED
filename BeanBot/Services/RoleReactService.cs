@@ -65,6 +65,38 @@ namespace BeanBot.Services
             }
         }
 
+        public async Task HandleRemoveReact(Cacheable<IUserMessage, ulong> message, ISocketMessageChannel channel, SocketReaction reaction)
+        {
+            try
+            {
+                var cachedMessage = await message.GetOrDownloadAsync();
+                if (cachedMessage.Author.Id != _client.CurrentUser.Id) return; //If it isn't Bean Bot's message then we don't care about it.
+                if (cachedMessage.Author.Id == reaction.UserId) return; //If the bot is the one reacting, we ignore this too
+                if (roleSettings == null || roleSettings.Count == 0)
+                {
+                    roleSettings = await this.GetAllRoleSettings();
+                    if (roleSettings.Count == 0) return;
+                }
+                var roleSetting = roleSettings.Find(setting => setting.messageId == message.Id.ToString()) ?? await this.GetRoleSetting(cachedMessage);
+                if (roleSetting == null) return;
+                var guild = (channel as SocketTextChannel).Guild as IGuild;
+                var user = await guild.GetUserAsync(reaction.UserId, CacheMode.AllowDownload);
+                var emojiId = (reaction.Emote as Emote).Id;
+                var roleId = roleSetting.roleEmotePair.Find(pair => pair.emojiId == emojiId.ToString()).roleId;
+                var role = guild.Roles.Where(guildRoles => guildRoles.Id.ToString() == roleId).FirstOrDefault();
+                ulong? userRole = user.RoleIds.First(userRoleId => userRoleId.ToString() == roleId);
+                Console.WriteLine("Haha" + userRole);
+                if (userRole != null) {
+                    await user.RemoveRoleAsync(role);
+                }
+            }
+            catch (Exception e)
+            {
+                Log.Error(e.StackTrace);
+                Log.Error(e.Message);
+            }
+        }
+
         public async Task SaveRoleSettings(List<RoleEmotePair> roleEmotePair, IMessage messageToListen)
         {
             RoleSettings roleSettings = new RoleSettings(

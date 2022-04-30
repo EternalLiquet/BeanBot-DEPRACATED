@@ -26,6 +26,7 @@ namespace BeanBot.Modules
         [Remarks("role setting")]
         [RequireGuild]
         [RequireUserPermission(GuildPermission.ManageRoles)]
+        [RequireBotPermission(GuildPermission.EmbedLinks)]
         public async Task RoleSetting()
         {
             await Task.Factory.StartNew(() => { _ = InvokeRoleSettingsAsync(); });
@@ -33,6 +34,7 @@ namespace BeanBot.Modules
 
         public async Task InvokeRoleSettingsAsync()
         {
+            
             List<IMessage> messagesInInteraction = new List<IMessage>();
             try
             {
