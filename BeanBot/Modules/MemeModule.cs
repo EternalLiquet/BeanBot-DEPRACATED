@@ -50,7 +50,7 @@ namespace BeanBot.Modules
 
         [Command("succ")]
         [Summary("Astolfo will suck your dick and call you gay")]
-        [Alias("succ succ", "cursed bean")]
+        [Alias("cursed bean")]
         [Remarks("succ")]
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task UserSucc([Summary("The (optional) user to succ")] params string[] input)
@@ -62,11 +62,10 @@ namespace BeanBot.Modules
             {
                 userToSucc += word + " ";
             }
-            if (userToSucc.Trim() == "")
-                userToSucc = null;
-            Console.WriteLine(userToSucc);
             if (userToSucc.Contains("Bean Bot") || userToSucc.Contains("<@!630470467261693982>"))
                 userToSucc = Context.Message.Author.Mention;
+            if (userToSucc.Trim() == "")
+                userToSucc = null;
             await Task.Factory.StartNew(() => { _ = ReplyAsync($"*succ succ succ* lol you're gay {userToSucc ?? Context.Message.Author.Mention}"); });
         }
 
