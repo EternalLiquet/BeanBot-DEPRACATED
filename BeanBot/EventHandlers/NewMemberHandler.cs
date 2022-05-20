@@ -31,7 +31,7 @@ namespace BeanBot.EventHandlers
                 if (u.IsBot) return;
                 var userDMChannel = await u.GetOrCreateDMChannelAsync();
                 Log.Debug("Successfully created user DM channel");
-                await userDMChannel.SendMessageAsync("Please read the rules in the Eli's Charter channel. If you agree to these rules and are over the age of 17, please DM one of the moderators (i.e discount Hatate/Makoto Kikuchi#2351) for full access to the server! (I promise it's worth it)");
+                await userDMChannel.SendMessageAsync("Please read the rules in the Eli's Charter channel. If you agree to these rules and are over the age of 17, please DM one of the moderators with the blue role \"Student Council\" (i.e discount Hatate/Makoto Kikuchi#2351) for full access to the server! (I promise it's worth it)");
                 Log.Debug("Successfully sent message");
             };
             _discordClient.UserJoined += LogHandler.LogNewMember;
