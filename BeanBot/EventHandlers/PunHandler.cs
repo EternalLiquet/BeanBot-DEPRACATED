@@ -44,6 +44,9 @@ namespace BeanBot.EventHandlers
             if (chicagoTime.Hour == 16 && chicagoTime.Minute == 20)
             {
                 Log.Information($"It is currently {chicagoTime.TimeOfDay} in Chicago");
+                var discordChannel = _discordClient.GetChannel(generalChannelId) as SocketTextChannel;
+                discordChannel.SendMessageAsync("Bean Bot ~~Episode~~ Year 4: A New Vtuber Hope, Bump Gets Banned");
+                discordChannel.SendMessageAsync("<:420stolfoit:675553715759087618>");
                 using (var reader = new StreamReader("Resources/puns.csv"))
                 using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
                 {
@@ -52,9 +55,6 @@ namespace BeanBot.EventHandlers
                     {
                         if ($"{record.Date.Month}/{record.Date.Day}" == $"{chicagoTime.Date.Month}/{chicagoTime.Date.Day}")
                         {
-                            var discordChannel = _discordClient.GetChannel(generalChannelId) as SocketTextChannel;
-                            discordChannel.SendMessageAsync("Bean Bot ~~Episode~~ Year 3: Revenge Of The Pun");
-                            discordChannel.SendMessageAsync("<:420stolfoit:675553715759087618>");
                             discordChannel.SendMessageAsync(record.BadPost);
                         }
                     }
