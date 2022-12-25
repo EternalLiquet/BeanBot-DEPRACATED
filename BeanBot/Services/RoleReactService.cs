@@ -23,7 +23,7 @@ namespace BeanBot.Services
             this._roleReactRepository = roleReactRepository;
             roleSettings = this.GetAllRecentRoleSettings().Result;
         }
-
+        // like nya
         public RoleReactService(RoleReactRepository roleReactRepository, DiscordSocketClient client)
         {
             this._roleReactRepository = roleReactRepository;
