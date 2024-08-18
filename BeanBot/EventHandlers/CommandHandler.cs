@@ -9,7 +9,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using System;
 using System.Reflection;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace BeanBot.EventHandlers
@@ -32,7 +31,7 @@ namespace BeanBot.EventHandlers
                 .BuildServiceProvider();
         }
 
-        public async Task InitializeCommandsAsync() 
+        public async Task InitializeCommandsAsync()
         {
             Log.Information("Installing Commands");
             _discordClient.MessageReceived += HandleCommandAsync;
@@ -44,10 +43,12 @@ namespace BeanBot.EventHandlers
         internal async Task HandleCommandAsync(SocketMessage messageEvent)
         {
             var discordMessage = messageEvent as SocketUserMessage;
-            if (MessageIsSystemMessage(discordMessage)) 
+            if (MessageIsSystemMessage(discordMessage))
+            {
                 return; //Return and ignore if the message is a discord system message
+            }
+
             int argPos = 0;
-            checkForStringPr(discordMessage);
             if (discordMessage.Author.Id == 114559039731531781 && discordMessage.Content.Contains("queue8"))
             {
                 Console.WriteLine("hello????");
@@ -64,21 +65,15 @@ namespace BeanBot.EventHandlers
             }
             if (!MessageHasCommandPrefix(discordMessage, ref argPos) ||
                 messageEvent.Author.IsBot)
+            {
                 return; //Return and ignore if the discord message does not have the command prefixes or if the author of the message is a bot
+            }
+
             var context = new SocketCommandContext(_discordClient, discordMessage);
             await _commandService.ExecuteAsync(
                 context: context,
                 argPos: argPos,
                 services: _services);
-        }
-
-        private void checkForStringPr(SocketUserMessage discordMessage)
-        {
-            Regex rgx = new Regex(@"\bpr\b");
-            if (rgx.Match(discordMessage.Content.ToLower()).Success || discordMessage.Content.ToLower().Contains("pull request"))
-            {
-                discordMessage.Channel.SendFileAsync($"Resources/PR.png");
-            } 
         }
 
         internal bool MessageHasCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
@@ -91,9 +86,13 @@ namespace BeanBot.EventHandlers
         internal bool MessageIsSystemMessage(SocketUserMessage discordMessage)
         {
             if (discordMessage == null)
+            {
                 return true;
+            }
             else
+            {
                 return false;
+            }
         }
     }
 }
