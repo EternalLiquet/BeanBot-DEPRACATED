@@ -1,13 +1,11 @@
 ﻿using BeanBot.Entities;
 using BeanBot.Repository;
 using Discord;
-using Discord.Commands;
 using Discord.WebSocket;
 using Serilog;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace BeanBot.Services
@@ -18,7 +16,7 @@ namespace BeanBot.Services
         private readonly DiscordSocketClient _client;
         private List<RoleSettings> roleSettings;
 
-        public RoleReactService(RoleReactRepository roleReactRepository) 
+        public RoleReactService(RoleReactRepository roleReactRepository)
         {
             this._roleReactRepository = roleReactRepository;
             roleSettings = this.GetAllRecentRoleSettings().Result;
@@ -40,16 +38,31 @@ namespace BeanBot.Services
                 Console.WriteLine(_client.CurrentUser.Id);
                 Console.WriteLine(cachedMessage.Author.Id);
                 Console.WriteLine(cachedMessage.Author.Id == reaction.UserId);
-                if (cachedMessage.Author.Id != _client.CurrentUser.Id) return; //If it isn't Bean Bot's message then we don't care about it.
-                if (cachedMessage.Author.Id == reaction.UserId) return; //If the bot is the one reacting, we ignore this too
+                if (cachedMessage.Author.Id != _client.CurrentUser.Id)
+                {
+                    return; //If it isn't Bean Bot's message then we don't care about it.
+                }
+
+                if (cachedMessage.Author.Id == reaction.UserId)
+                {
+                    return; //If the bot is the one reacting, we ignore this too
+                }
+
                 if (roleSettings == null || roleSettings.Count == 0)
                 {
                     roleSettings = await this.GetAllRoleSettings();
                     Console.WriteLine(roleSettings.FirstOrDefault().ToString());
-                    if (roleSettings.Count == 0) return;
+                    if (roleSettings.Count == 0)
+                    {
+                        return;
+                    }
                 }
                 var roleSetting = roleSettings.Find(setting => setting.messageId == message.Id.ToString()) ?? await this.GetRoleSetting(cachedMessage);
-                if (roleSetting == null) return;
+                if (roleSetting == null)
+                {
+                    return;
+                }
+
                 var guild = (channel as SocketTextChannel).Guild as IGuild;
                 var user = await guild.GetUserAsync(reaction.UserId, CacheMode.AllowDownload);
                 var emojiId = (reaction.Emote as Emote).Id;
@@ -70,15 +83,30 @@ namespace BeanBot.Services
             try
             {
                 var cachedMessage = await message.GetOrDownloadAsync();
-                if (cachedMessage.Author.Id != _client.CurrentUser.Id) return; //If it isn't Bean Bot's message then we don't care about it.
-                if (cachedMessage.Author.Id == reaction.UserId) return; //If the bot is the one reacting, we ignore this too
+                if (cachedMessage.Author.Id != _client.CurrentUser.Id)
+                {
+                    return; //If it isn't Bean Bot's message then we don't care about it.
+                }
+
+                if (cachedMessage.Author.Id == reaction.UserId)
+                {
+                    return; //If the bot is the one reacting, we ignore this too
+                }
+
                 if (roleSettings == null || roleSettings.Count == 0)
                 {
                     roleSettings = await this.GetAllRoleSettings();
-                    if (roleSettings.Count == 0) return;
+                    if (roleSettings.Count == 0)
+                    {
+                        return;
+                    }
                 }
                 var roleSetting = roleSettings.Find(setting => setting.messageId == message.Id.ToString()) ?? await this.GetRoleSetting(cachedMessage);
-                if (roleSetting == null) return;
+                if (roleSetting == null)
+                {
+                    return;
+                }
+
                 var guild = (channel as SocketTextChannel).Guild as IGuild;
                 var user = await guild.GetUserAsync(reaction.UserId, CacheMode.AllowDownload);
                 var emojiId = (reaction.Emote as Emote).Id;
@@ -86,7 +114,8 @@ namespace BeanBot.Services
                 var role = guild.Roles.Where(guildRoles => guildRoles.Id.ToString() == roleId).FirstOrDefault();
                 ulong? userRole = user.RoleIds.First(userRoleId => userRoleId.ToString() == roleId);
                 Console.WriteLine("Haha" + userRole);
-                if (userRole != null) {
+                if (userRole != null)
+                {
                     await user.RemoveRoleAsync(role);
                 }
             }
@@ -100,7 +129,7 @@ namespace BeanBot.Services
         public async Task SaveRoleSettings(List<RoleEmotePair> roleEmotePair, IMessage messageToListen)
         {
             RoleSettings roleSettings = new RoleSettings(
-                roleEmotePair, 
+                roleEmotePair,
                 (messageToListen.Channel as SocketTextChannel).Guild.Id.ToString(),
                 messageToListen.Channel.Id.ToString(),
                 messageToListen.Id.ToString()

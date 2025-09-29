@@ -1,7 +1,7 @@
 ﻿using BeanBot.Attributes;
 using BeanBot.Entities;
-using BeanBot.Services;
 using BeanBot.Repository;
+using BeanBot.Services;
 using Discord;
 using Discord.Addons.Interactive;
 using Discord.Commands;
@@ -9,7 +9,6 @@ using Discord.WebSocket;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -34,7 +33,7 @@ namespace BeanBot.Modules
 
         public async Task InvokeRoleSettingsAsync()
         {
-            
+
             List<IMessage> messagesInInteraction = new List<IMessage>();
             try
             {
@@ -43,17 +42,29 @@ namespace BeanBot.Modules
                 List<RoleEmotePair> roleEmotePair = new List<RoleEmotePair>();
                 messagesInInteraction.Add(await ReplyAsync("How many roles do you wish to configure?"));
                 var amountOfRoles = await NextMessageAsync(timeout: TimeSpan.FromSeconds(60));
-                if (!await IsNumberOfRolesNotNullAndValid(messagesInInteraction, amountOfRoles)) return;
+                if (!await IsNumberOfRolesNotNullAndValid(messagesInInteraction, amountOfRoles))
+                {
+                    return;
+                }
+
                 for (int i = 0; i < int.Parse(amountOfRoles.Content); i++)
                 {
                     messagesInInteraction.Add(await ReplyAsync("Which role would you like to set up?"));
                     var roleToSetup = await NextMessageAsync(timeout: TimeSpan.FromSeconds(60));
                     var roleToAdd = (roleToSetup.Channel as SocketTextChannel).Guild.Roles.First(role => roleToSetup.Content.ToString().ToLower().Trim() == role.Name.ToString().ToLower().Trim());
-                    if (!await IsRoleNotNullAndValid(messagesInInteraction, roleToSetup, roleToAdd)) return;
+                    if (!await IsRoleNotNullAndValid(messagesInInteraction, roleToSetup, roleToAdd))
+                    {
+                        return;
+                    }
+
                     messagesInInteraction.Add(await ReplyAsync($"Which emote would you like to set up with the role {roleToSetup.Content}"));
                     var emoteToSetup = await NextMessageAsync(timeout: TimeSpan.FromSeconds(60));
                     var emoteToAdd = (emoteToSetup.Channel as SocketTextChannel).Guild.Emotes.FirstOrDefault(emote => emoteToSetup.Content.Contains(emote.Name));
-                    if (!await IsEmoteNotNullAndValid(messagesInInteraction, emoteToSetup, emoteToAdd)) return;
+                    if (!await IsEmoteNotNullAndValid(messagesInInteraction, emoteToSetup, emoteToAdd))
+                    {
+                        return;
+                    }
+
                     if (roleEmotePair.Find(role => role.roleId == roleToAdd.Id.ToString()) != null || roleEmotePair.Find(emote => emote.emojiId == emoteToAdd.Id.ToString()) != null)
                     {
                         messagesInInteraction.Add(await ReplyAsync("You seem to have entered a role or emote that is already being setup, please try again"));
@@ -66,7 +77,11 @@ namespace BeanBot.Modules
                 }
                 messagesInInteraction.Add(await ReplyAsync("Please label this group of roles (i.e Games, Position, NSFW, etc)"));
                 var roleGroupLabel = await NextMessageAsync();
-                if (!await IsRoleGroupLabelNotNull(messagesInInteraction, roleGroupLabel)) return;
+                if (!await IsRoleGroupLabelNotNull(messagesInInteraction, roleGroupLabel))
+                {
+                    return;
+                }
+
                 var messageToListen = await CreateMessageToListen(roleEmotePair, roleGroupLabel.Content);
                 await roleReactService.SaveRoleSettings(roleEmotePair, messageToListen);
             }
@@ -75,6 +90,14 @@ namespace BeanBot.Modules
                 await CleanUpMessagesAfterFiveSeconds(messagesInInteraction);
             }
         }
+
+        /*[Command("delete messages")]
+        public async Task DeleteMessages(int amountOfMessages)
+        {
+            var messages = await Context.Channel.GetMessagesAsync(amountOfMessages + 1).FlattenAsync();
+            await (Context.Channel as ITextChannel).DeleteMessagesAsync(messages);
+
+        }*/
 
         private async Task<bool> IsRoleGroupLabelNotNull(List<IMessage> messagesInInteraction, SocketMessage roleGroupLabel)
         {
