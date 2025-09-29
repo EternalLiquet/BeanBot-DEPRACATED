@@ -6,9 +6,10 @@ using Discord.Commands;
 using Discord.WebSocket;
 
 using Serilog;
-
+using System;
 using System.IO;
 using System.Net;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace BeanBot
@@ -19,7 +20,7 @@ namespace BeanBot
         private CommandService _commandService;
         private CommandHandler _commandHandler;
         private NewMemberHandler _newMemberHandler;
-        private PunHandler _autoPostTimer;
+        private PunHandler _autoPunPoster;
         private EditMessageHandler _editMessageHandler;
         private ReactHandler _reactHandler;
         public static string queueEightBallAnswer;
@@ -34,15 +35,44 @@ namespace BeanBot
             await LogIntoDiscord();
             await InstantiateCommandServices();
             _discordClient.Log += LogHandler.LogMessages;
-            _autoPostTimer = new PunHandler(_discordClient);
-            _autoPostTimer.StartTimer();
+            _autoPunPoster = new PunHandler(_discordClient);
+            _autoPunPoster.Start();
             _editMessageHandler = new EditMessageHandler(_discordClient);
             _editMessageHandler.InitializeEventListener();
             _newMemberHandler = new NewMemberHandler(_discordClient);
             _newMemberHandler.InitializeNewMembers();
             _reactHandler = new ReactHandler(_discordClient, new Services.RoleReactService(new Repository.RoleReactRepository()));
             await _reactHandler.InitializeReactDependentServices();
-            await Task.Delay(-1);
+
+            var cts = new CancellationTokenSource();
+            Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+            AppDomain.CurrentDomain.ProcessExit += (_, __) => cts.Cancel();
+            try
+            {
+                await Task.Delay(Timeout.Infinite, cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Warning("Shutting Down");
+            }
+            finally
+            {
+                if (_autoPunPoster is not null)
+                {
+                    await _autoPunPoster.DisposeAsync();
+                }
+
+                try
+                {
+                    await _discordClient.StopAsync();
+                    await _discordClient.LogoutAsync();
+                }
+                catch (Exception e)
+                {
+                    Log.Error(e, "Error shutting down: ");
+
+                }
+            }
         }
 
         private async Task InstantiateCommandServices()
