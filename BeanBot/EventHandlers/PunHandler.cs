@@ -83,7 +83,7 @@ namespace BeanBot.EventHandlers
                 return;
             }
 
-            await channel.SendMessageAsync("Bean Bot ~~Episode~~ Year 4: A New Vtuber Hope, Bump Gets Banned");
+            await channel.SendMessageAsync("The time has come and so have I, Bean Bot here to deliver you your daily pun(?)");
             await channel.SendMessageAsync("<:420stolfoit:675553715759087618>");
 
             try

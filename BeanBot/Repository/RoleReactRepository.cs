@@ -5,7 +5,6 @@ using MongoDB.Driver;
 using Serilog;
 using System;
 using System.Collections.Generic;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace BeanBot.Repository
@@ -51,6 +50,7 @@ namespace BeanBot.Repository
             }
             catch (Exception e)
             {
+                Log.Error($"Error retrieving recent role setting from the database: {e.Message}");
                 return null;
             }
         }

@@ -2,10 +2,9 @@
 using BeanBot.Util;
 using CsvHelper;
 using Discord;
-using Discord.Commands;
 using Discord.Addons.Interactive;
-using Discord.WebSocket;
-using Newtonsoft.Json;
+using Discord.Commands;
+using MemeApiDotNetWrapper;
 using Serilog;
 using System;
 using System.Collections.Generic;
@@ -13,9 +12,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
-using System.Threading;
 using System.Threading.Tasks;
-using System.Web;
 
 namespace BeanBot.Modules
 {
@@ -23,6 +20,7 @@ namespace BeanBot.Modules
     public class MemeModule : InteractiveBase
     {
         private static HttpClient httpClient = new HttpClient();
+        private readonly MemeMachine memeMachine = new MemeMachine();
 
         private string[] eightBallResponses = new string[8]
         {
@@ -57,15 +55,21 @@ namespace BeanBot.Modules
         {
             string userToSucc = "";
             if (input[0] == "succ")
+            {
                 input[0] = "";
+            }
             foreach (string word in input)
             {
                 userToSucc += word + " ";
             }
             if (userToSucc.Contains("Bean Bot") || userToSucc.Contains("<@!630470467261693982>"))
+            {
                 userToSucc = Context.Message.Author.Mention;
+            }
             if (userToSucc.Trim() == "")
+            {
                 userToSucc = null;
+            }
             await Task.Factory.StartNew(() => { _ = ReplyAsync($"*succ succ succ* lol you're gay {userToSucc ?? Context.Message.Author.Mention}"); });
         }
 
@@ -161,19 +165,27 @@ namespace BeanBot.Modules
         }
         private async Task InvokeMemeApi(string subreddit)
         {
-            string uri;
-            if (string.IsNullOrEmpty(subreddit)) uri = $"https://meme-api.herokuapp.com/gimme";
-            else uri = $"https://meme-api.herokuapp.com/gimme/{HttpUtility.UrlEncode(subreddit)}";
-            HttpResponseMessage response = await httpClient.GetAsync(requestUri: uri);
-            if (!response.IsSuccessStatusCode) await ReplyAsync("The meme machine is down, quick, call 911!");
+            Meme meme;
+            if (string.IsNullOrEmpty(subreddit))
+            {
+                meme = await memeMachine.GetMemeAsync();
+            }
             else
             {
-                MemeResponse meme = JsonConvert.DeserializeObject<MemeResponse>(await response.Content.ReadAsStringAsync());
+                meme = await memeMachine.GetMemeAsync(subreddit);
+            }
+
+            if (meme == null)
+            {
+                await ReplyAsync("The meme machine is down, quick, call 911!");
+            }
+            else
+            {
                 EmbedBuilder memeBuilder = new EmbedBuilder()
                 {
-                    Title = meme.title,
-                    Description = $"/r/{meme.subreddit}",
-                    ImageUrl = meme.url
+                    Title = meme.Title,
+                    Description = $"/r/{meme.SubReddit}",
+                    ImageUrl = meme.ImageUrl
                 };
                 await ReplyAsync(embed: memeBuilder.Build());
             }
@@ -272,8 +284,8 @@ namespace BeanBot.Modules
 
         private async void HandlePunMaster(string question)
         {
-            if (question.ToLower().Contains("post") && question.ToLower().Contains("succ") || 
-                question.ToLower().Contains("rigged") && !question.ToLower().Contains("not") || 
+            if (question.ToLower().Contains("post") && question.ToLower().Contains("succ") ||
+                question.ToLower().Contains("rigged") && !question.ToLower().Contains("not") ||
                 question.ToLower().Contains("ban") && question.ToLower().Contains("padoru") && !question.ToLower().Contains("not"))
             {
                 await ReplyAsync($"> {question} \nThe spirit of Texas tells me No");
