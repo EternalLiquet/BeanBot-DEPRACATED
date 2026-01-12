@@ -166,13 +166,21 @@ namespace BeanBot.Modules
         private async Task InvokeMemeApi(string subreddit)
         {
             Meme meme;
-            if (string.IsNullOrEmpty(subreddit))
+            try
             {
-                meme = await memeMachine.GetMemeAsync();
+                if (string.IsNullOrEmpty(subreddit))
+                {
+                    meme = await memeMachine.GetMemeAsync();
+                }
+                else
+                {
+                    meme = await memeMachine.GetMemeAsync(subreddit);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                meme = await memeMachine.GetMemeAsync(subreddit);
+                Log.Error(ex.Message);
+                meme = null;
             }
 
             if (meme == null)
