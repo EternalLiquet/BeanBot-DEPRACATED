@@ -1,36 +1,38 @@
 name: .NET Core Master and Deploy Checks
 
-on: 
+on:
   push:
-    branches: 
+    branches:
       - master
       - deploy
   pull_request:
-    branches: 
+    branches:
       - master
       - deploy
   release:
-    types: 
-      -created
+    types:
+      - created
+
+permissions:
+  contents: read
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Setup .NET Core
-      uses: actions/setup-dotnet@v1
-      with:
-        dotnet-version: 2.2.108
-  
-    - name: Setup .NET Core 3.1
-      uses: actions/setup-dotnet@v1
-      with:
-        dotnet-version: 3.1.101
-        
-    - name: Build with dotnet
-      run: |
-        dotnet build --configuration Release
-        dotnet test
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore BeanBot.sln
+
+      - name: Build
+        run: dotnet build BeanBot.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test BeanBot.sln --configuration Release --no-build
