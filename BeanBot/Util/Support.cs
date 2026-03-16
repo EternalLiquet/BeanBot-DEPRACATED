@@ -6,10 +6,9 @@ namespace BeanBot.Util
     {
         public static void StartupOperations()
         {
-            LogHandler.CreateLoggerConfiguration();
             DirectorySetup.MakeSureAllDirectoriesExist();
-            AppSettings.MakeSureSettingsJsonExists();
-            AppSettings.ReadSettingsFromFile();
+            LogHandler.CreateLoggerConfiguration();
+            AppSettings.LoadFromEnvironment();
             MongoDbClient.InstantiateMongoDriver();
             Log.Information("Startup Operations complete");
         }
