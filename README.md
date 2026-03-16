@@ -1,3 +1,6 @@
+[![Bean Bot Version](https://img.shields.io/github/v/release/EternalLiquet/BeanBot-DEPRACATED?display_name=tag&label=Bean%20Bot%20Version)](https://github.com/EternalLiquet/BeanBot-DEPRACATED/releases/latest)
+[![.NET Core Master and Deploy Checks](https://github.com/EternalLiquet/BeanBot-DEPRACATED/actions/workflows/dotnetaction.yml/badge.svg?branch=master)](https://github.com/EternalLiquet/BeanBot-DEPRACATED/actions/workflows/dotnetaction.yml)
+
 # Bean Bot
 
 Bean Bot is a .NET 8 Discord bot with MongoDB-backed role reaction storage and a small set of server utilities.
