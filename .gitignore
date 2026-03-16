@@ -30,3 +30,9 @@ msbuild.wrn
 
 # Visual Studio 2015
 .vs/
+
+# Local runtime configuration
+.env
+.env.*
+!.env.example
+BeanBotFiles/
