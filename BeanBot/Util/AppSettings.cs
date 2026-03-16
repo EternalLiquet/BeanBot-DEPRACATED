@@ -1,98 +1,154 @@
-﻿using Newtonsoft.Json;
 using Serilog;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text;
+using System.Linq;
 
 namespace BeanBot.Util
 {
     public static class AppSettings
     {
-        public readonly static string settingsFileDirectory = Path.Combine(DirectorySetup.botBaseDirectory, "Settings");
-        public readonly static string settingsFilePath = Path.Combine(AppSettings.settingsFileDirectory, "beanSettings.json");
+        private static readonly SettingDefinition[] SettingDefinitions =
+        {
+            new SettingDefinition("botToken", "BEANBOT_BOT_TOKEN", true),
+            new SettingDefinition("mongoConnectionString", "BEANBOT_MONGO_CONNECTION_STRING", true),
+            new SettingDefinition("generalChannelId", "BEANBOT_GENERAL_CHANNEL_ID", true),
+            new SettingDefinition("hatoeteUrl", "BEANBOT_HATOETE_URL", true),
+            new SettingDefinition("yoshimaruUrl", "BEANBOT_YOSHIMARU_URL", true),
+            new SettingDefinition("ilServerId", "BEANBOT_IL_SERVER_ID", false)
+        };
 
         public static Dictionary<string, string> Settings { get; private set; }
 
-        public static void MakeSureSettingsJsonExists()
+        public static void LoadFromEnvironment()
         {
-            if (!File.Exists(settingsFilePath))
-            {
-                Log.Error("Settings file not found");
-                Log.Error($"Settings file created automatically at: {Path.GetFullPath(settingsFilePath)}");
-                Log.Information("Starting settings file creation process");
-                string jsonStringSettings = CreateNewSettings(CreateSettingsDictionary());
-                File.WriteAllText(settingsFilePath, jsonStringSettings);
-            }
-            else
-            {
-                Log.Information($"App settings file found at: {settingsFilePath}");
-            }
-        }
+            LoadDotEnvFileIfPresent();
 
-        public static void ReadSettingsFromFile()
-        {
-            try
-            {
-                string jsonSettings = File.ReadAllText(settingsFilePath);
-                Settings = JsonConvert.DeserializeObject<Dictionary<string, string>>(jsonSettings);
-            }
-            catch (FileNotFoundException e)
-            {
-                Log.Error($"File not found at {Path.GetFullPath(settingsFilePath)}, redirecting to creation method");
-                MakeSureSettingsJsonExists();
-            }
-            catch (Exception e)
-            {
-                Log.Error($"{e.Message}");
-            }
-        }
+            var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var missingVariables = new List<string>();
 
-        public static void FixToken()
-        {
-            Console.Write("Please enter a valid bot token\n>");
-            string token = Console.ReadLine();
-            Settings["botToken"] = token;
-            string updatedJsonString = CreateNewSettings(Settings);
-            File.WriteAllText(settingsFilePath, updatedJsonString);
-        }
-
-        private static string CreateNewSettings(Dictionary<string, string> settingsDictionary)
-        {
-            return JsonConvert.SerializeObject(settingsDictionary, Formatting.Indented);
-        }
-
-        private static Dictionary<string, string> CreateSettingsDictionary()
-        {
-            bool repeat = true;
-            Dictionary<string, string> dictToJson = new Dictionary<string, string>();
-            while (repeat)
+            foreach (var definition in SettingDefinitions)
             {
-                Console.Write("Please enter the setting key, or enter \"break\" to quit\n> ");
-                string arg1 = Console.ReadLine();
-                Console.Write("Please enter the setting value\n> ");
-                string arg2 = Console.ReadLine();
-                if (!arg1.Equals("break"))
+                var value = GetEnvironmentValue(definition);
+                if (string.IsNullOrWhiteSpace(value))
                 {
-                    try
+                    if (definition.Required)
                     {
-                        dictToJson.Add(arg1, arg2);
+                        missingVariables.Add(definition.ToDisplayString());
                     }
-                    catch (ArgumentNullException e)
-                    {
-                        Log.Error($"Parameter Name Null: {e.Message}");
-                    }
-                    catch (ArgumentException e)
-                    {
-                        Log.Error($"Parameter Not Acceptable: {e.ParamName}");
-                    }
+
+                    continue;
                 }
-                else
+
+                settings[definition.LegacyKey] = value;
+            }
+
+            if (missingVariables.Count > 0)
+            {
+                var message = $"Missing required environment variables: {string.Join(", ", missingVariables)}";
+                Log.Fatal(message);
+                throw new InvalidOperationException(message);
+            }
+
+            Settings = settings;
+            Log.Information("Loaded {SettingCount} application settings from environment variables", Settings.Count);
+        }
+
+        public static string DescribeSetting(string legacyKey)
+        {
+            var definition = SettingDefinitions.FirstOrDefault(setting => setting.LegacyKey.Equals(legacyKey, StringComparison.Ordinal));
+            return definition?.ToDisplayString() ?? legacyKey;
+        }
+
+        private static string GetEnvironmentValue(SettingDefinition definition)
+        {
+            return Environment.GetEnvironmentVariable(definition.EnvironmentVariableName)
+                ?? Environment.GetEnvironmentVariable(definition.LegacyKey);
+        }
+
+        private static void LoadDotEnvFileIfPresent()
+        {
+            var candidatePaths = new[]
+            {
+                Path.Combine(Directory.GetCurrentDirectory(), ".env"),
+                Path.Combine(AppContext.BaseDirectory, ".env")
+            }.Distinct(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var candidatePath in candidatePaths)
+            {
+                if (!File.Exists(candidatePath))
                 {
-                    repeat = false;
+                    continue;
+                }
+
+                foreach (var rawLine in File.ReadAllLines(candidatePath))
+                {
+                    var line = rawLine.Trim();
+                    if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    if (line.StartsWith("export ", StringComparison.OrdinalIgnoreCase))
+                    {
+                        line = line.Substring("export ".Length).Trim();
+                    }
+
+                    var separatorIndex = line.IndexOf('=');
+                    if (separatorIndex <= 0)
+                    {
+                        continue;
+                    }
+
+                    var key = line.Substring(0, separatorIndex).Trim();
+                    var value = line.Substring(separatorIndex + 1).Trim();
+                    var existingEnvironmentValue = string.IsNullOrWhiteSpace(key)
+                        ? null
+                        : Environment.GetEnvironmentVariable(key);
+
+                    if (string.IsNullOrWhiteSpace(key) || existingEnvironmentValue is not null)
+                    {
+                        continue;
+                    }
+
+                    Environment.SetEnvironmentVariable(key, TrimMatchingQuotes(value));
+                }
+
+                Log.Information("Loaded configuration defaults from .env file at {DotEnvPath}", candidatePath);
+                return;
+            }
+        }
+
+        private static string TrimMatchingQuotes(string value)
+        {
+            if (value.Length >= 2)
+            {
+                var startsWithDoubleQuote = value[0] == '"' && value[^1] == '"';
+                var startsWithSingleQuote = value[0] == '\'' && value[^1] == '\'';
+                if (startsWithDoubleQuote || startsWithSingleQuote)
+                {
+                    return value.Substring(1, value.Length - 2);
                 }
             }
-            return dictToJson;
+
+            return value;
+        }
+
+        private sealed class SettingDefinition
+        {
+            public SettingDefinition(string legacyKey, string environmentVariableName, bool required)
+            {
+                LegacyKey = legacyKey;
+                EnvironmentVariableName = environmentVariableName;
+                Required = required;
+            }
+
+            public string LegacyKey { get; }
+            public string EnvironmentVariableName { get; }
+            public bool Required { get; }
+
+            public string ToDisplayString()
+                => $"{EnvironmentVariableName} (or legacy {LegacyKey})";
         }
     }
 }

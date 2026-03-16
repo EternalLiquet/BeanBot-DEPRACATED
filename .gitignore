@@ -27,6 +27,13 @@ bld/
 msbuild.log
 msbuild.err
 msbuild.wrn
+.artifacts/
 
 # Visual Studio 2015
 .vs/
+
+# Local runtime configuration
+.env
+.env.*
+!.env.example
+BeanBotFiles/

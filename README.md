@@ -1,42 +1,54 @@
-![Bean Bot Version 1.2.0](https://img.shields.io/badge/Bean%20Bot%20Version-1.2.0-green?style=plastic) ![.NET Core Master and Deploy Checks](https://github.com/EternalLiquet/BeanBot/workflows/.NET%20Core%20Master%20and%20Deploy%20Checks/badge.svg?branch=master)
+[![Bean Bot Version](https://img.shields.io/github/v/release/EternalLiquet/BeanBot-DEPRACATED?display_name=tag&label=Bean%20Bot%20Version)](https://github.com/EternalLiquet/BeanBot-DEPRACATED/releases/latest)
+[![.NET Core Master and Deploy Checks](https://github.com/EternalLiquet/BeanBot-DEPRACATED/actions/workflows/dotnetaction.yml/badge.svg?branch=master)](https://github.com/EternalLiquet/BeanBot-DEPRACATED/actions/workflows/dotnetaction.yml)
+
 # Bean Bot
-This is the code behind the discord bot for the Illinois Livers server
 
-One of the the primary intentions of this bot is to provide an automated way to verify new members to give them student roles.  
-The secondary intent of this bot is to provide a gacha style game based on cards on schoolido.lu's API.  
-And finally, the final (current) intent of this bot is to provide more sophistication to meetup information and RSVPing. However, this is no longer relevant as Discord has released it's own implementation of this functionality.
-  
-Discord link to the Illinois Server: https://discord.gg/a9hbx9S
+Bean Bot is a .NET 8 Discord bot with MongoDB-backed role reaction storage and a small set of server utilities.
 
-# Bean Bot Setup Instructions
+## Configuration
 
-## Necessary Installations
-To run Bean Bot, you will need the dotnet core SDK version 2.2, you can find that here: https://dotnet.microsoft.com/download/dotnet-core/2.2  
-You will also need the 3.0 version to build the unit tests, which can be found here: https://dotnet.microsoft.com/download/dotnet-core/3.0
+The app no longer creates or reads `beanSettings.json`. Configuration is now supplied through environment variables, and the bot will also load a local `.env` file automatically when present. Copy `.env.example` to `.env` and fill in the values:
 
-## Setup Steps
-First, you will need to create a bot on Discord. You can do that with the following guide: https://discord.foxbot.me/docs/guides/getting_started/first-bot.html  
-Once you have a bot token, you can invite your bot to the server. 
+```env
+BEANBOT_BOT_TOKEN=
+BEANBOT_MONGO_CONNECTION_STRING=
+BEANBOT_GENERAL_CHANNEL_ID=
+BEANBOT_HATOETE_URL=
+BEANBOT_YOSHIMARU_URL=
+```
 
-Afterwards, run the program either by:
+For backwards compatibility, the legacy variable names (`botToken`, `mongoConnectionString`, and so on) are still accepted, but the `BEANBOT_*` names are the intended format. Real environment variables take precedence over values from `.env`.
 
-     Using Visual Studio and hitting the play button
+## Local Run
 
-or
+```powershell
+dotnet build BeanBot/BeanBot.csproj
+dotnet run --project BeanBot/BeanBot.csproj
+```
 
+If a `.env` file exists in the repo root, `dotnet run` will load it automatically.
 
-    • Navigate to the folder containing the .sln in the base of the repo.  
-    • Run command `dotnet build --configuration Debug`  
-    • This will build the solution in Debug mode. Navigate to the BeanBot/bin/Debug/netcoreapp2.2 folder.   
-    • Run command `dotnet BeanBot.dll`
+## Docker
 
-Once the bot is up and running, it will prompt you to input some settings.  
-Variables that will have to be setup: 
+Build the image from the repo root:
 
-    botToken: <INSERTBOTTOKENHERE>,  
-    ilServerId: <It's named this but it can be the serverId of whatever server you are setting up>,  
-    hatoeteUrl: <Contact EternalLiquet>,  
-    yoshimaruUrl: <Contact EternalLiquet>  
+```powershell
+docker build -t beanbot .
+```
 
+Run it with your `.env` file and a persistent volume for logs and runtime files:
 
-If you have configured your settings correctly, the bot should connect to your server, enjoy!
+```powershell
+docker run -d `
+  --name beanbot `
+  --restart unless-stopped `
+  --env-file .env `
+  -v beanbot-data:/app/BeanBotFiles `
+  beanbot
+```
+
+The container uses the .NET 8 runtime image because this is a console application, not an ASP.NET app.
+
+## Note
+
+This bot is slowly being replaced by a new implementation in Python. The .NET version will remain available for the foreseeable future, but no new features will be added to it. The Python version is still in early development and may not have all the same features yet. It will be transitioned one module at a time. The .NET version will continue to receive critical bug fixes and security updates as needed, but new features and improvements will be focused on the Python version going forward.

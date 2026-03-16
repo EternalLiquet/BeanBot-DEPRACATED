@@ -1,5 +1,3 @@
-﻿using Serilog;
-
 using System.IO;
 
 namespace BeanBot.Util
@@ -7,37 +5,27 @@ namespace BeanBot.Util
     public static class DirectorySetup
     {
         public readonly static string botBaseDirectory = Path.Combine("BeanBotFiles");
+        public readonly static string logsDirectory = Path.Combine(botBaseDirectory, "Logs");
 
         public static void MakeSureAllDirectoriesExist()
         {
-            Log.Information("Making sure all necessary directories exist");
             MakeSureBaseDirectoryExists();
-            MakeSureSettingsDirectoryExists(Path.GetFullPath(AppSettings.settingsFileDirectory));
+            MakeSureLogsDirectoryExists(Path.GetFullPath(logsDirectory));
         }
 
         internal static void MakeSureBaseDirectoryExists()
         {
-            if (Directory.Exists(botBaseDirectory))
+            if (!Directory.Exists(botBaseDirectory))
             {
-                Log.Information($"Bean Bot base file directory found at {Path.GetFullPath(botBaseDirectory)}");
-            }
-            else
-            {
-                Log.Error($"Bean Bot base file directory not found, creating directory at: {Path.GetFullPath(botBaseDirectory)}");
                 Directory.CreateDirectory(Path.GetFullPath(botBaseDirectory));
             }
         }
 
-        internal static void MakeSureSettingsDirectoryExists(string settingsFileDirectory)
+        internal static void MakeSureLogsDirectoryExists(string logDirectory)
         {
-            if (Directory.Exists(settingsFileDirectory))
+            if (!Directory.Exists(logDirectory))
             {
-                Log.Information($"Bean Bot settings file directory found at {settingsFileDirectory}");
-            }
-            else
-            {
-                Log.Error($"Bean Bot settings file directory not found, creating directory at: {settingsFileDirectory}");
-                Directory.CreateDirectory(settingsFileDirectory);
+                Directory.CreateDirectory(logDirectory);
             }
         }
     }

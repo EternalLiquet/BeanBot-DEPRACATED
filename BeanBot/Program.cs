@@ -7,7 +7,6 @@ using Discord.WebSocket;
 
 using Serilog;
 using System;
-using System.IO;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
@@ -112,12 +111,14 @@ namespace BeanBot
                 }
                 catch (Discord.Net.HttpException e)
                 {
-                    Log.Error(e.ToString());
-                    Log.Error($"Bot Token was incorrect, please review the settings file in {Path.GetFullPath(AppSettings.settingsFilePath)}");
                     if (e.HttpCode == HttpStatusCode.Unauthorized)
                     {
-                        AppSettings.FixToken();
+                        Log.Fatal(e, "Discord rejected the configured bot token. Update {SettingName} and restart the process.", AppSettings.DescribeSetting("botToken"));
+                        throw;
                     }
+
+                    Log.Error(e, "Discord login failed; retrying in 30 seconds");
+                    await Task.Delay(TimeSpan.FromSeconds(30));
                 }
             }
         }
