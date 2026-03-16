@@ -48,4 +48,4 @@ The container uses the .NET 8 runtime image because this is a console applicatio
 
 ## Note
 
-This bot is slowly being replaced by a new implementation in Python. The .NET version will remain available for the foreseeable future, but no new features will be added to it. The Python version is still in early development and may not have all the same features yet. It will be transitioned one module at a time.
+This bot is slowly being replaced by a new implementation in Python. The .NET version will remain available for the foreseeable future, but no new features will be added to it. The Python version is still in early development and may not have all the same features yet. It will be transitioned one module at a time. The .NET version will continue to receive critical bug fixes and security updates as needed, but new features and improvements will be focused on the Python version going forward.
