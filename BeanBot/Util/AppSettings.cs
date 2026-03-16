@@ -102,7 +102,11 @@ namespace BeanBot.Util
 
                     var key = line.Substring(0, separatorIndex).Trim();
                     var value = line.Substring(separatorIndex + 1).Trim();
-                    if (string.IsNullOrWhiteSpace(key) || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(key)))
+                    var existingEnvironmentValue = string.IsNullOrWhiteSpace(key)
+                        ? null
+                        : Environment.GetEnvironmentVariable(key);
+
+                    if (string.IsNullOrWhiteSpace(key) || existingEnvironmentValue is not null)
                     {
                         continue;
                     }
