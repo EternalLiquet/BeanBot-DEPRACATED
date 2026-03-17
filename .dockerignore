@@ -1,6 +1,9 @@
 .git
 .github
 .vs
+.dotnet
+.scratch
+.artifacts
 **/bin
 **/obj
 BeanBotFiles
