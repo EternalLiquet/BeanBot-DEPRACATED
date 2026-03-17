@@ -7,7 +7,11 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BeanBot", "BeanBot\BeanBot.
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{1374A34B-D07F-4AC5-B198-D695033F4D09}"
 	ProjectSection(SolutionItems) = preProject
+		.env.example = .env.example
+		Directory.Packages.props = Directory.Packages.props
+		Dockerfile = Dockerfile
 		.gitignore = .gitignore
+		global.json = global.json
 		LICENSE = LICENSE
 		README.md = README.md
 	EndProjectSection
