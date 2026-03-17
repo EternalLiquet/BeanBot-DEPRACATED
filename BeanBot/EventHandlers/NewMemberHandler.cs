@@ -1,40 +1,32 @@
-﻿using BeanBot.Util;
-using Discord.WebSocket;
-using Serilog;
-using System;
-using System.Collections.Generic;
-using System.Text;
-using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using NetCord;
+using NetCord.Hosting.Gateway;
+using NetCord.Rest;
 
-namespace BeanBot.EventHandlers
+namespace BeanBot.EventHandlers;
+
+public sealed class NewMemberHandler(ILogger<NewMemberHandler> logger) : IGuildUserAddGatewayHandler
 {
-    class NewMemberHandler
+    public async ValueTask HandleAsync(GuildUser user)
     {
-        private readonly DiscordSocketClient _discordClient;
-
-        public NewMemberHandler(DiscordSocketClient client)
+        if (user.IsBot)
         {
-            this._discordClient = client;
+            return;
         }
 
-        public void InitializeNewMembers()
+        try
         {
-            _ = Task.Factory.StartNew(() => { HandleNewMember(); });
-        }
-
-        private void HandleNewMember()
-        {
-            Log.Information("Initializing New Member Handler");
-            _discordClient.UserJoined += async (u) =>
+            var dmChannel = await user.GetDMChannelAsync();
+            await dmChannel.SendMessageAsync(new MessageProperties
             {
-                Log.Information($"User {u} joined");
-                if (u.IsBot) return;
-                var userDMChannel = await u.GetOrCreateDMChannelAsync();
-                Log.Debug("Successfully created user DM channel");
-                await userDMChannel.SendMessageAsync("Please read the rules in the Eli's Charter channel. If you agree to these rules and are over the age of 17, please DM one of the moderators with the blue role \"Student Council\" (i.e discount Hatate/Makoto Kikuchi#2351) for full access to the server! (I promise it's worth it)");
-                Log.Debug("Successfully sent message");
-            };
-            _discordClient.UserJoined += LogHandler.LogNewMember;
+                Content = "Please read the rules in the Eli's Charter channel. If you agree to these rules and are over the age of 17, please DM one of the moderators with the blue role \"Student Council\" (i.e discount Hatate/Makoto Kikuchi#2351) for full access to the server! (I promise it's worth it)",
+            });
+
+            logger.LogDebug("Sent onboarding DM to user {UserId}", user.Id);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Failed to send onboarding DM to user {UserId}", user.Id);
         }
     }
 }

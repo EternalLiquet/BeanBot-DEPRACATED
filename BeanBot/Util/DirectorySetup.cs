@@ -1,32 +1,16 @@
-using System.IO;
+namespace BeanBot.Util;
 
-namespace BeanBot.Util
+public static class DirectorySetup
 {
-    public static class DirectorySetup
+    public static string BotBaseDirectory { get; } = Path.Combine(AppContext.BaseDirectory, "BeanBotFiles");
+
+    public static string LogsDirectory { get; } = Path.Combine(BotBaseDirectory, "Logs");
+
+    public static string ResourcesDirectory { get; } = Path.Combine(AppContext.BaseDirectory, "Resources");
+
+    public static void EnsureDirectoriesExist()
     {
-        public readonly static string botBaseDirectory = Path.Combine("BeanBotFiles");
-        public readonly static string logsDirectory = Path.Combine(botBaseDirectory, "Logs");
-
-        public static void MakeSureAllDirectoriesExist()
-        {
-            MakeSureBaseDirectoryExists();
-            MakeSureLogsDirectoryExists(Path.GetFullPath(logsDirectory));
-        }
-
-        internal static void MakeSureBaseDirectoryExists()
-        {
-            if (!Directory.Exists(botBaseDirectory))
-            {
-                Directory.CreateDirectory(Path.GetFullPath(botBaseDirectory));
-            }
-        }
-
-        internal static void MakeSureLogsDirectoryExists(string logDirectory)
-        {
-            if (!Directory.Exists(logDirectory))
-            {
-                Directory.CreateDirectory(logDirectory);
-            }
-        }
+        Directory.CreateDirectory(BotBaseDirectory);
+        Directory.CreateDirectory(LogsDirectory);
     }
 }

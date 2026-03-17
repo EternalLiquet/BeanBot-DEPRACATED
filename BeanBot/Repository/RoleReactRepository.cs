@@ -1,73 +1,46 @@
-﻿using BeanBot.Entities;
-using BeanBot.Util;
-using Discord;
+using BeanBot.Entities;
+using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
-using Serilog;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
 
-namespace BeanBot.Repository
+namespace BeanBot.Repository;
+
+public sealed class RoleReactRepository : IRoleReactRepository
 {
-    public class RoleReactRepository
+    private readonly IMongoCollection<RoleSettings> _roleSettingsCollection;
+    private readonly ILogger<RoleReactRepository> _logger;
+
+    public RoleReactRepository(IMongoDatabase database, ILogger<RoleReactRepository> logger)
     {
-        private readonly IMongoCollection<RoleSettings> _roleSettingsRef = MongoDbClient.beanDatabase.GetCollection<RoleSettings>("roleSettings");
-        public async Task InsertNewRoleSettings(RoleSettings roleSettings)
-        {
-            try
-            {
-                roleSettings.lastAccessed = DateTime.Now;
-                await _roleSettingsRef.InsertOneAsync(roleSettings);
-                Log.Information($"Settings successfully created");
-            }
-            catch (Exception e)
-            {
-                Log.Error($"Error inserting settings into database: {e.Message}");
-            }
-        }
+        _roleSettingsCollection = database.GetCollection<RoleSettings>("roleSettings");
+        _logger = logger;
 
-        public async Task<List<RoleSettings>> GetAllRoleSettings()
-        {
-            try
-            {
-                var results = await _roleSettingsRef.FindAsync(_ => true);
-                return await results.ToListAsync();
-            }
-            catch (Exception e)
-            {
-                Log.Error($"Error retrieving role settings from the database: {e.Message}");
-                return null;
-            }
-        }
+        _roleSettingsCollection.Indexes.CreateMany(
+        [
+            new CreateIndexModel<RoleSettings>(Builders<RoleSettings>.IndexKeys.Ascending(setting => setting.MessageId), new CreateIndexOptions { Unique = true }),
+            new CreateIndexModel<RoleSettings>(Builders<RoleSettings>.IndexKeys.Descending(setting => setting.LastAccessed)),
+        ]);
+    }
 
-        public async Task<List<RoleSettings>> GetRecentRoleSettings()
-        {
-            try
-            {
-                var filterByLastAccessedDate = Builders<RoleSettings>.Filter.Where(result => result.lastAccessed >= DateTime.Now.AddDays(-30));
-                var results = await _roleSettingsRef.FindAsync<RoleSettings>(filterByLastAccessedDate);
-                return await results.ToListAsync();
-            }
-            catch (Exception e)
-            {
-                Log.Error($"Error retrieving recent role setting from the database: {e.Message}");
-                return null;
-            }
-        }
+    public async Task InsertNewRoleSettingsAsync(RoleSettings roleSettings, CancellationToken cancellationToken = default)
+    {
+        roleSettings.LastAccessed = DateTime.UtcNow;
+        await _roleSettingsCollection.InsertOneAsync(roleSettings, cancellationToken: cancellationToken);
+        _logger.LogDebug("Persisted role settings for message {MessageId}", roleSettings.MessageId);
+    }
 
-        public async Task<RoleSettings> GetRoleSetting(IUserMessage message)
-        {
-            try
-            {
-                var filterByMessageId = Builders<RoleSettings>.Filter.Where(doc => doc.messageId == message.Id.ToString());
-                var result = await _roleSettingsRef.FindAsync<RoleSettings>(filterByMessageId);
-                return result.FirstOrDefault();
-            }
-            catch (Exception e)
-            {
-                Log.Error($"Error retrieving role settings from the database: {e.Message}");
-                return null;
-            }
-        }
+    public async Task<RoleSettings?> GetRoleSettingAsync(ulong messageId, CancellationToken cancellationToken = default)
+    {
+        var filter = Builders<RoleSettings>.Filter.Eq(setting => setting.MessageId, messageId);
+        var roleSettings = await _roleSettingsCollection.Find(filter).FirstOrDefaultAsync(cancellationToken);
+        _logger.LogDebug("Role settings lookup for message {MessageId} {Result}", messageId, roleSettings is null ? "missed" : "hit");
+        return roleSettings;
+    }
+
+    public async Task<IReadOnlyList<RoleSettings>> GetRecentRoleSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        var filter = Builders<RoleSettings>.Filter.Gte(setting => setting.LastAccessed, DateTime.UtcNow.AddDays(-30));
+        var roleSettings = await _roleSettingsCollection.Find(filter).ToListAsync(cancellationToken);
+        _logger.LogDebug("Loaded {RoleSettingsCount} recent role setting documents", roleSettings.Count);
+        return roleSettings;
     }
 }

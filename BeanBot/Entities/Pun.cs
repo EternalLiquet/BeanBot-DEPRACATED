@@ -1,7 +1,6 @@
-﻿namespace BeanBot.Entities
+namespace BeanBot.Entities;
+
+public class Pun
 {
-    public class Pun
-    {
-        public string BadPost { get; set; }
-    }
+    public string BadPost { get; set; } = string.Empty;
 }

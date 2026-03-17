@@ -1,69 +1,191 @@
-﻿using Discord;
-using Discord.Commands;
-using System.Linq;
-using System.Threading.Tasks;
+using BeanBot.Services;
+using NetCord.Rest;
+using NetCord.Services.Commands;
+using System.ComponentModel;
 
-namespace BeanBot.Modules
+namespace BeanBot.Modules;
+
+[DisplayName("General")]
+[Description("Meta commands and entry points for learning the bot.")]
+public sealed class HelpModule(HelpCatalogService helpCatalogService) : CommandModule<CommandContext>
 {
-    [Name("Command Information/Help")]
-    public class HelpModule : ModuleBase<SocketCommandContext>
+    private const int ModulesPerPage = 3;
+
+    [Command("help")]
+    [Description("Shows the module index by default. You can then drill down with a module name or command name, for example `%help administration` or `%help rolesetting`.")]
+    public Task HelpAsync([CommandParameter(Name = "page-or-topic", Remainder = true)] string? topic = null)
     {
-        private readonly CommandService _commandService;
-
-        public HelpModule(CommandService commandService)
+        if (string.IsNullOrWhiteSpace(topic))
         {
-            _commandService = commandService;
+            return SendOverviewPageAsync(1);
         }
 
-        [Command("help")]
-        [Summary("Lists all the commands that Bean Bot is able to use")]
-        public async Task HelpCommand()
+        var normalizedTopic = topic.Trim();
+        if (TryParsePageQuery(normalizedTopic, out var pageNumber))
         {
-            char charPrefix = '%';
-            string stringPrefix = "succ ";
+            return SendOverviewPageAsync(pageNumber);
+        }
 
-            EmbedBuilder helpBuilder = new EmbedBuilder()
-            {
-                Title = "Bean Bot Commands",
-                Description = $"These are the commands that are available to you\nTo use them, type {charPrefix} or {stringPrefix} followed by any of the commands below.\n Ex: %shine or succ shine",
-                Color = new Color(218, 112, 214),
-                ThumbnailUrl = "https://cdn.discordapp.com/avatars/630470467261693982/91f45a4463007f73ff73ff5178847056.png?size=256"
-            };
+        var moduleQuery = normalizedTopic.StartsWith("module ", StringComparison.OrdinalIgnoreCase)
+            ? normalizedTopic["module ".Length..].Trim()
+            : normalizedTopic;
 
-            foreach (var module in _commandService.Modules)
-            {
-                string description = null;
-                foreach (var command in module.Commands)
+        if (helpCatalogService.TryGetModule(moduleQuery, out var module))
+        {
+            return SendModuleHelpAsync(module);
+        }
+
+        if (helpCatalogService.TryGetCommand(normalizedTopic, out var command))
+        {
+            return SendCommandHelpAsync(command);
+        }
+
+        return ReplyAsync(new ReplyMessageProperties
+        {
+            Content = $"I couldn't find help for `{normalizedTopic}`. Try `%help`, `%help administration`, or `%help rolesetting`.",
+        });
+    }
+
+    private Task SendOverviewPageAsync(int requestedPage)
+    {
+        var modules = helpCatalogService.GetModules();
+        var totalPages = Math.Max(1, (int)Math.Ceiling(modules.Count / (double)ModulesPerPage));
+        var pageNumber = Math.Clamp(requestedPage, 1, totalPages);
+        var pageModules = modules
+            .Skip((pageNumber - 1) * ModulesPerPage)
+            .Take(ModulesPerPage)
+            .ToArray();
+
+        return SendAsync(new MessageProperties
+        {
+            Embeds =
+            [
+                new EmbedProperties
                 {
-                    var result = await command.CheckPreconditionsAsync(Context);
-                    if (result.IsSuccess)
-                    {
-                        description += $"**{command.Aliases.First()}**\n";
-                        if (command.Aliases.Count > 1)
+                    Title = "Bean Bot Help",
+                    Description = "Use `%`, `succ `, or mention the bot before a command. `%help` shows modules, `%help <module>` shows that module's commands, and `%help <command>` shows command details.",
+                    Fields =
+                    [
+                        .. pageModules.Select(module => new EmbedFieldProperties
                         {
-                            description += command.Aliases.Count > 2 ? $"This command can also be used by using the following aliases: \n" : $"This command can also be used by using the following alias: \n";
-                            foreach (var alias in command.Aliases)
-                            {
-                                if (alias != command.Aliases.First())
-                                    description += $"\t*{alias}*\n";
-                            }
-                        }
-                        description += "\n";
-                    }
-                }
-
-                if (!string.IsNullOrWhiteSpace(description))
-                {
-                    helpBuilder.AddField(field =>
+                            Name = module.Name,
+                            Value = string.Join(
+                                Environment.NewLine,
+                                new[]
+                                {
+                                    module.Summary,
+                                    $"Commands: {string.Join(", ", module.Commands.Select(command => $"`{command.Name}`"))}",
+                                    $"Drill down: `%help {module.Name.ToLowerInvariant()}`",
+                                }),
+                        }),
+                    ],
+                    Footer = new EmbedFooterProperties
                     {
-                        field.Name = $"**=== {module.Name} ===**";
-                        field.Value = description;
-                        field.IsInline = false;
-                    });
-                }
-            }
+                        Text = $"Page {pageNumber}/{totalPages}",
+                    },
+                },
+            ],
+        });
+    }
 
-            await ReplyAsync("", false, helpBuilder.Build());
+    private Task SendModuleHelpAsync(HelpModuleDescriptor module)
+    {
+        return SendAsync(new MessageProperties
+        {
+            Embeds =
+            [
+                new EmbedProperties
+                {
+                    Title = $"{module.Name} Module",
+                    Description = module.Summary,
+                    Fields =
+                    [
+                        .. module.Commands.Select(command => new EmbedFieldProperties
+                        {
+                            Name = command.Name,
+                            Value = $"{command.Summary}{Environment.NewLine}Usage: `{command.Usage}`{Environment.NewLine}More info: `%help {command.Name}`",
+                        }),
+                    ],
+                    Footer = new EmbedFooterProperties
+                    {
+                        Text = "Use `%help <command>` to drill down into a specific command.",
+                    },
+                },
+            ],
+        });
+    }
+
+    private Task SendCommandHelpAsync(HelpCommandDescriptor command)
+    {
+        var parameterText = command.Parameters.Count == 0
+            ? "None"
+            : string.Join(
+                Environment.NewLine,
+                command.Parameters.Select(parameter =>
+                    $"{(parameter.IsOptional ? "[" : "<")}{parameter.Name}{(parameter.IsOptional ? "]" : ">")}{(parameter.IsRemainder ? "..." : string.Empty)}"));
+
+        return SendAsync(new MessageProperties
+        {
+            Embeds =
+            [
+                new EmbedProperties
+                {
+                    Title = $"{command.Name} Command",
+                    Description = command.Summary,
+                    Fields =
+                    [
+                        new EmbedFieldProperties
+                        {
+                            Name = "Usage",
+                            Value = $"`{command.Usage}`",
+                        },
+                        new EmbedFieldProperties
+                        {
+                            Name = "Module",
+                            Value = command.ModuleName,
+                            Inline = true,
+                        },
+                        new EmbedFieldProperties
+                        {
+                            Name = "Scope",
+                            Value = command.GuildOnly ? "Guild only" : "Guilds and DMs",
+                            Inline = true,
+                        },
+                        new EmbedFieldProperties
+                        {
+                            Name = "Aliases",
+                            Value = command.Aliases.Count == 0 ? "None" : string.Join(", ", command.Aliases.Select(alias => $"`{alias}`")),
+                        },
+                        new EmbedFieldProperties
+                        {
+                            Name = "Parameters",
+                            Value = parameterText,
+                        },
+                    ],
+                    Footer = new EmbedFooterProperties
+                    {
+                        Text = $"Use `%help {command.ModuleName.ToLowerInvariant()}` to return to the module page.",
+                    },
+                },
+            ],
+        });
+    }
+
+    private static bool TryParsePageQuery(string topic, out int pageNumber)
+    {
+        if (int.TryParse(topic, out pageNumber))
+        {
+            return pageNumber > 0;
         }
+
+        const string pagePrefix = "page ";
+        if (topic.StartsWith(pagePrefix, StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(topic[pagePrefix.Length..].Trim(), out pageNumber))
+        {
+            return pageNumber > 0;
+        }
+
+        pageNumber = 0;
+        return false;
     }
 }

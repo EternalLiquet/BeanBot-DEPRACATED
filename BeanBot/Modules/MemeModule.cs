@@ -1,363 +1,313 @@
-﻿using BeanBot.Entities;
+using BeanBot.Configuration;
+using BeanBot.Services;
 using BeanBot.Util;
-using CsvHelper;
-using Discord;
-using Discord.Addons.Interactive;
-using Discord.Commands;
-using MemeApiDotNetWrapper;
-using Serilog;
-using System;
-using System.Collections.Generic;
-using System.Globalization;
-using System.IO;
-using System.Linq;
-using System.Net.Http;
-using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using NetCord.Rest;
+using NetCord.Services.Commands;
+using System.ComponentModel;
 
-namespace BeanBot.Modules
+namespace BeanBot.Modules;
+
+[DisplayName("Fun")]
+[Description("Low-stakes commands, media posts, memes, and the 8ball.")]
+public sealed class MemeModule(
+    IOptions<BeanBotOptions> options,
+    IPunCatalogService punCatalogService,
+    IMemeService memeService,
+    EightBallQueueService eightBallQueueService,
+    IHttpClientFactory httpClientFactory,
+    ILogger<MemeModule> logger) : CommandModule<CommandContext>
 {
-    [Name("Meme Commands")]
-    public class MemeModule : InteractiveBase
+    private const string ExternalMediaHttpClientName = "ExternalMedia";
+
+    private static readonly string[] EightBallResponses =
+    [
+        "Hell yeah brother",
+        "Yeehaw",
+        "Yes uwu",
+        "The spirit of Texas tells me No",
+        "No umu",
+        "The answer is yes if you let me suck your toes",
+        "It is unclear, let me succ you and try asking again",
+        "*succ succ succ* lol you're gay",
+    ];
+
+    private static readonly string[] TexasFacts =
+    [
+        "The tale of the Alamo is retold through the stars",
+        "The King Ranch in Texas is bigger than the entire state of California",
+        "Texas is the largest country in the world",
+        "Texas is the largest exporter of Freedom per capita in the world",
+        "Texas boasts the largest herd of wild padorus",
+        "Astolfo, the most famous Texan cowboy, was born in Europe",
+        "More species of cursed bean live in Texas than any other part of the world",
+        "The entire country of Texas has 5 Jollibees",
+    ];
+
+    [Command("succ", "cursedbean")]
+    [Description("Posts the classic succ response. If you do not provide a target, the bot targets you instead.")]
+    public async Task UserSuccAsync([CommandParameter(Name = "target", Remainder = true)] string? input = null)
     {
-        private static HttpClient httpClient = new HttpClient();
-        private readonly MemeMachine memeMachine = new MemeMachine();
-
-        private string[] eightBallResponses = new string[8]
+        var userToSucc = input?.Trim();
+        if (string.IsNullOrWhiteSpace(userToSucc) ||
+            userToSucc.Contains("Bean Bot", StringComparison.OrdinalIgnoreCase) ||
+            userToSucc.Contains($"<@!{Context.Client.Id}>", StringComparison.Ordinal) ||
+            userToSucc.Contains($"<@{Context.Client.Id}>", StringComparison.Ordinal))
         {
-            "Hell yeah brother",
-            "Yeehaw",
-            "Yes uwu",
-            "The spirit of Texas tells me No",
-            "No umu",
-            "The answer is yes if you let me suck your toes",
-            "It is unclear, let me succ you and try asking again",
-            "*succ succ succ* lol you're gay"
-        };
+            userToSucc = Mention(Context.User.Id);
+        }
 
-        private string[] texasFacts = new string[8]
+        logger.LogDebug("Succ command invoked by {UserId} for target {Target}", Context.User.Id, userToSucc);
+        await ReplyAsync(new ReplyMessageProperties
         {
-            "The tale of the Alamo is retold through the stars",
-            "The King Ranch in Texas is bigger than the entire state of California",
-            "Texas is the largest country in the world",
-            "Texas is the largest exporter of Freedom per capita in the world",
-            "Texas boasts the largest herd of wild padorus",
-            "Astolfo, the most famous Texan cowboy, was born in Europe",
-            "More species of cursed bean live in Texas than any other part of the world",
-            "The entire country of Texas has 5 Jollibees"
-        };
+            Content = $"*succ succ succ* lol you're gay {userToSucc}",
+        });
+    }
 
-        [Command("succ")]
-        [Summary("Astolfo will suck your dick and call you gay")]
-        [Alias("cursed bean")]
-        [Remarks("succ")]
-        [RequireBotPermission(ChannelPermission.SendMessages)]
-        public async Task UserSucc([Summary("The (optional) user to succ")] params string[] input)
+    [Command("2am", "mcdonalds")]
+    [Description("Posts the McDonald's emoji.")]
+    public Task McDonaldsAsync()
+        => ReplyAsync(new ReplyMessageProperties { Content = "<:mcdonalds:661337575704887337>" });
+
+    [Command("ochoocho", "ocho-ocho", "fancy-ocho-ocho")]
+    [Description("Posts the ocho-ocho chant.")]
+    public Task OchoOchoAsync()
+        => ReplyAsync(new ReplyMessageProperties
         {
-            string userToSucc = "";
-            if (input[0] == "succ")
+            Content = string.Join(Environment.NewLine,
+            [
+                "One plus one, equals two.",
+                "Two plus two, equals four.",
+                "Four plus four, equals eight.",
+                "Doblehin ang eight.",
+                "Tayo'y mag ocho ocho, ocho ocho, mag ocho ocho pa",
+            ]),
+        });
+
+    [Command("420", "blaze", "blazeit", "weed")]
+    [Description("Posts the 420 emoji.")]
+    public Task BlazeItAsync()
+        => ReplyAsync(new ReplyMessageProperties { Content = "<:420stolfoit:675553715759087618>" });
+
+    [Command("toes", "toe", "kaz", "toefetish")]
+    [Description("Posts the configured Hatoete image.")]
+    public Task ToesAsync()
+        => SendImageFromUrlAsync(options.Value.HatoeteUrl);
+
+    [Command("yoshimaru", "yohamaru", "canonship")]
+    [Description("Posts the configured Yoshimaru image.")]
+    public Task YoshimaruAsync()
+        => SendImageFromUrlAsync(options.Value.YoshimaruUrl);
+
+    [Command("echo", "say")]
+    [Description("Deletes the invoking message and reposts the supplied text through the bot.")]
+    public async Task EchoAsync([CommandParameter(Name = "text", Remainder = true)] string text)
+    {
+        var channel = Context.Channel;
+        if (channel is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await channel.DeleteMessageAsync(Context.Message.Id);
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(exception, "Failed to delete echo invocation message {MessageId}", Context.Message.Id);
+        }
+
+        await SendAsync(new MessageProperties
+        {
+            Content = text,
+        });
+    }
+
+    [Command("8ball", "fortune")]
+    [Description("Answers a yes-or-no question with a random response. Questions should end with a question mark.")]
+    public Task EightBallAsync([CommandParameter(Name = "question", Remainder = true)] string? question = null)
+        => ChooseRandomAnswerAsync(question);
+
+    [Command("pun")]
+    [Description("Posts a random pun from the configured pun catalog.")]
+    public Task PunAsync()
+        => ChooseRandomPunAsync();
+
+    [Command("meme")]
+    [Description("Fetches a meme, optionally from a specific subreddit.")]
+    public Task MemeAsync([CommandParameter(Name = "subreddit")] string? subreddit = null)
+        => SendMemeAsync(subreddit);
+
+    [Command("texasnationalbird", "texas-national-bird")]
+    [Description("Posts the official Texas national bird fact.")]
+    public Task TexasNationalBirdAsync()
+        => ReplyAsync(new ReplyMessageProperties { Content = "The Texas Official National Bird is the AR-15" });
+
+    [Command("texasnationalflower", "texas-national-flower")]
+    [Description("Posts the official Texas national flower fact.")]
+    public Task TexasNationalFlowerAsync()
+        => ReplyAsync(new ReplyMessageProperties { Content = "The Texas Official National Flower is the Jimmy Dean breakfast taco" });
+
+    [Command("texasfacts", "texas-facts")]
+    [Description("Posts a random Texas fact.")]
+    public Task TexasFactsAsync()
+    {
+        var fact = TexasFacts[Random.Shared.Next(TexasFacts.Length)];
+        return ReplyAsync(new ReplyMessageProperties { Content = $"Did you know: {fact}" });
+    }
+
+    private async Task SendMemeAsync(string? subreddit)
+    {
+        var meme = await memeService.GetMemeAsync(subreddit);
+        if (meme is null)
+        {
+            await ReplyAsync(new ReplyMessageProperties
             {
-                input[0] = "";
-            }
-            foreach (string word in input)
-            {
-                userToSucc += word + " ";
-            }
-            if (userToSucc.Contains("Bean Bot") || userToSucc.Contains("<@!630470467261693982>"))
-            {
-                userToSucc = Context.Message.Author.Mention;
-            }
-            if (userToSucc.Trim() == "")
-            {
-                userToSucc = null;
-            }
-            await Task.Factory.StartNew(() => { _ = ReplyAsync($"*succ succ succ* lol you're gay {userToSucc ?? Context.Message.Author.Mention}"); });
-        }
-
-        [Command("2am")]
-        [Summary("There's only one thing to do at 2 AM...")]
-        [Alias("mcdonalds")]
-        [Remarks("succ mcdonalds")]
-        [RequireBotPermission(ChannelPermission.SendMessages)]
-        public async Task McDonalds()
-        {
-            await Task.Factory.StartNew(() => { _ = ReplyAsync("<:mcdonalds:661337575704887337>"); });
-        }
-
-        [Command("fancy ocho ocho")]
-        [Summary("Everyone that went to the Music Box is banned from this server")]
-        [Remarks("succ ocho ocho")]
-        [RequireBotPermission(ChannelPermission.SendMessages)]
-        public async Task OchoOcho2()
-        {
-            await Task.Factory.StartNew(() => { _ = ReplyWithOchoOcho(); });
-        }
-
-
-        [Command("420")]
-        [Summary("Astolfour-twenty blaze it")]
-        [Alias("blaze", "blaze it", "weed")]
-        [RequireBotPermission(ChannelPermission.SendMessages)]
-        public async Task BlazeIt()
-        {
-            await Task.Factory.StartNew(() => { _ = ReplyAsync("<:420stolfoit:675553715759087618>"); });
-        }
-
-        [Command("toes")]
-        [Summary("You've doomed yourself, Hatate")]
-        [Alias("toe", "kaz", "the toe fetish is just a joke")]
-        [RequireBotPermission(ChannelPermission.SendMessages)]
-        [RequireBotPermission(ChannelPermission.AttachFiles)]
-        public async Task Toes()
-        {
-            await Task.Factory.StartNew(() => { _ = sendImageFromUrl(AppSettings.Settings["hatoeteUrl"]); });
-        }
-
-        [Command("yoshimaru")]
-        [Summary("The superior ship")]
-        [Alias("yohamaru", "canon ship")]
-        [RequireBotPermission(ChannelPermission.SendMessages)]
-        [RequireBotPermission(ChannelPermission.AttachFiles)]
-        public async Task YoshiMaru()
-        {
-            await Task.Factory.StartNew(() => { _ = sendImageFromUrl(AppSettings.Settings["yoshimaruUrl"]); });
-        }
-
-        [Command("echo")]
-        [Summary("Gives the bot braincells")]
-        [Alias("say")]
-        [RequireBotPermission(ChannelPermission.SendMessages)]
-        public async Task Echo([Remainder] string text)
-        {
-            await Task.Factory.StartNew(() =>
-            {
-                _ = Context.Message.DeleteAsync();
-                _ = ReplyAsync(text);
+                Content = "The meme machine is down, quick, call 911!",
             });
+            return;
         }
 
-        [Command("8ball")]
-        [Summary("Let me predict your future.. for a price")]
-        [Alias("fortune")]
-        [RequireBotPermission(ChannelPermission.SendMessages)]
-        public async Task EightBall([Remainder] string question)
+        await SendAsync(new MessageProperties
         {
-            await Task.Factory.StartNew(() => { _ = ChooseRandomAnswer(question); });
-        }
-
-        [Command("pun")]
-        [Summary("I will give you one PunMaster™ branded pun")]
-        [RequireBotPermission(ChannelPermission.SendMessages)]
-        public async Task Pun()
-        {
-            await Task.Factory.StartNew(() =>
-            {
-                _ = ChooseRandomPun();
-            });
-        }
-
-        [Command("meme")]
-        [Summary("Will give you a random meme from reddit")]
-        [Remarks("meme")]
-        [RequireBotPermission(ChannelPermission.SendMessages)]
-        public async Task Meme(string subreddit = "")
-        {
-            await Task.Factory.StartNew(() => { _ = InvokeMemeApi(subreddit); });
-        }
-        private async Task InvokeMemeApi(string subreddit)
-        {
-            Meme meme;
-            try
-            {
-                if (string.IsNullOrEmpty(subreddit))
-                {
-                    meme = await memeMachine.GetMemeAsync();
-                }
-                else
-                {
-                    meme = await memeMachine.GetMemeAsync(subreddit);
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex.Message);
-                meme = null;
-            }
-
-            if (meme == null)
-            {
-                await ReplyAsync("The meme machine is down, quick, call 911!");
-            }
-            else
-            {
-                EmbedBuilder memeBuilder = new EmbedBuilder()
+            Embeds =
+            [
+                new EmbedProperties
                 {
                     Title = meme.Title,
                     Description = $"/r/{meme.SubReddit}",
-                    ImageUrl = meme.ImageUrl
-                };
-                await ReplyAsync(embed: memeBuilder.Build());
-            }
-        }
-
-        [Command("texasnationalbird")]
-        [Summary("I will educate you on Texas' official national bird")]
-        [Remarks("texasnationalbird")]
-        [RequireBotPermission(ChannelPermission.SendMessages)]
-        public async Task NationalBird()
-        {
-            await ReplyAsync("The Texas Offical National Bird is the AR-15");
-        }
-
-        [Command("texasnationalflower")]
-        [Summary("I will educate you on the Texas' official national flower")]
-        [Remarks("texasnationalflower")]
-        public async Task NationalFlower()
-        {
-            await ReplyAsync("The Texas Official National Flower is the Jimmy Dean breakfast taco");
-        }
-
-        [Command("texasfacts")]
-        [Summary("I will give you a random Texas fact")]
-        [Remarks("texasfacts")]
-        public async Task TexasFacts()
-        {
-            Random random = new Random();
-            var fact = texasFacts[random.Next(0, texasFacts.Length)];
-            await ReplyAsync($"Did you know: {fact}");
-        }
-
-
-        private async Task ChooseRandomPun()
-        {
-            using (var reader = new StreamReader("Resources/puns.csv"))
-            using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
-            {
-                var records = csv.GetRecords<Pun>();
-                List<string> punArray = new List<string>();
-                foreach (var record in records)
-                {
-                    punArray.Add(record.BadPost);
-                }
-                var random = new Random();
-                var index = random.Next(punArray.Count());
-                await ReplyAsync(punArray.ElementAt(index));
-            }
-        }
-
-        private async Task ChooseRandomAnswer(string question)
-        {
-            if (IsQuestion(question))
-            {
-                if (IsPunMaster())
-                {
-                    HandlePunMaster(question);
-                }
-                else
-                {
-                    Console.WriteLine($"{Program.queueEightBallAnswer}, {Program.queueRecipient}");
-                    if (Program.queueEightBallAnswer != null && Context.Message.Author.Id == Program.queueRecipient)
-                    {
-                        Console.WriteLine("In queue 8ball for: " + Program.queueEightBallAnswer);
-                        if (Program.queueEightBallAnswer == "positive")
-                        {
-                            Console.WriteLine("positive");
-                            Random random = new Random();
-                            var answer = eightBallResponses[random.Next(0, 3)];
-                            await ReplyAsync($"> {question} \n{answer}");
-                        }
-                        else
-                        {
-                            Console.WriteLine("negative");
-                            Random random = new Random();
-                            var answer = eightBallResponses[random.Next(3, 5)];
-                            await ReplyAsync($"> {question} \n{answer}");
-                        }
-                        Program.queueEightBallAnswer = null;
-                    }
-                    else
-                    {
-                        Random random = new Random();
-                        var answer = eightBallResponses[random.Next(0, eightBallResponses.Length)];
-                        await ReplyAsync($"> {question} \n{answer}");
-                    }
-                }
-            }
-            else
-            {
-                Random random = new Random();
-                var gordonGif = random.Next(1, 9);
-                await Context.Channel.SendFileAsync($"Resources/gordon{gordonGif}.gif", $"> {question} \nThat is not a question");
-            }
-        }
-
-        private async void HandlePunMaster(string question)
-        {
-            if (question.ToLower().Contains("post") && question.ToLower().Contains("succ") ||
-                question.ToLower().Contains("rigged") && !question.ToLower().Contains("not") ||
-                question.ToLower().Contains("ban") && question.ToLower().Contains("padoru") && !question.ToLower().Contains("not"))
-            {
-                await ReplyAsync($"> {question} \nThe spirit of Texas tells me No");
-            }
-            else
-            {
-                Random random = new Random();
-                var chance = random.Next(1, 101);
-                if (chance >= 1 && chance <= 10)
-                {
-                    var positiveAns = eightBallResponses[random.Next(0, 3)];
-                    await ReplyAsync($"> {question} \n{positiveAns}");
-                }
-                else if (chance > 10 && chance <= 40)
-                {
-                    var negativeAns = eightBallResponses[random.Next(3, 5)];
-                    await ReplyAsync($"> {question} \n{negativeAns}");
-                }
-                else
-                {
-                    var succAns = eightBallResponses[random.Next(5, 8)];
-                    await ReplyAsync($"> {question} \n{succAns}");
-                }
-            }
-        }
-
-        private bool IsPunMaster()
-        {
-            return (Context.Message.Author.Id == 262010462323998720);
-        }
-
-        private bool IsQuestion(string question)
-        {
-            return question.EndsWith('?');
-        }
-
-        private async Task sendImageFromUrl(string url)
-        {
-            try
-            {
-                var webClient = new HttpClient();
-                var response = await webClient.GetAsync(url);
-                Stream image = await response.Content.ReadAsStreamAsync();
-                await Context.Channel.SendFileAsync(image, "image.png");
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex.Message);
-            }
-        }
-
-        private async Task ReplyWithOchoOcho()
-        {
-            var pages = new[] { "One plus one, equals two.", "Two plus two, equals four.", "Four plus four, equals eight.", "Doblehin ang eight.", "Tayo'y mag ocho ocho, ocho ocho, mag ocho ocho pa" };
-            await PagedReplyAsync(pages);
-        }
+                    Image = new EmbedImageProperties(meme.ImageUrl),
+                },
+            ],
+        });
     }
-    public class MemeResponse
+
+    private async Task ChooseRandomPunAsync()
     {
-        public string postLink { get; set; }
-        public string subreddit { get; set; }
-        public string title { get; set; }
-        public string url { get; set; }
-        public bool nsfw { get; set; }
-        public bool spoiler { get; set; }
+        var puns = await punCatalogService.GetPunsAsync();
+        if (puns.Count == 0)
+        {
+            await ReplyAsync(new ReplyMessageProperties
+            {
+                Content = "I couldn't find any puns to post right now.",
+            });
+            return;
+        }
+
+        await ReplyAsync(new ReplyMessageProperties
+        {
+            Content = puns[Random.Shared.Next(puns.Count)],
+        });
     }
+
+    private async Task ChooseRandomAnswerAsync(string? question)
+    {
+        if (string.IsNullOrWhiteSpace(question))
+        {
+            await ReplyAsync(new ReplyMessageProperties
+            {
+                Content = "That is not a question.",
+            });
+            return;
+        }
+
+        if (!IsQuestion(question))
+        {
+            var gifNumber = Random.Shared.Next(1, 9);
+            var gifPath = Path.Combine(DirectorySetup.ResourcesDirectory, $"gordon{gifNumber}.gif");
+
+            await using var gifStream = File.OpenRead(gifPath);
+            await SendAsync(new MessageProperties
+            {
+                Content = $"> {question}{Environment.NewLine}That is not a question.",
+                Attachments =
+                [
+                    new AttachmentProperties($"gordon{gifNumber}.gif", gifStream),
+                ],
+            });
+
+            return;
+        }
+
+        if (Context.User.Id == 262010462323998720)
+        {
+            await HandlePunMasterAsync(question);
+            return;
+        }
+
+        var queuedAnswer = eightBallQueueService.TryDequeue(Context.User.Id);
+        var response = queuedAnswer switch
+        {
+            "positive" => EightBallResponses[Random.Shared.Next(0, 3)],
+            "negative" => EightBallResponses[Random.Shared.Next(3, 5)],
+            _ => EightBallResponses[Random.Shared.Next(EightBallResponses.Length)],
+        };
+
+        await ReplyAsync(new ReplyMessageProperties
+        {
+            Content = $"> {question}{Environment.NewLine}{response}",
+        });
+    }
+
+    private async Task HandlePunMasterAsync(string question)
+    {
+        var lowerQuestion = question.ToLowerInvariant();
+        if (lowerQuestion.Contains("post") && lowerQuestion.Contains("succ") ||
+            lowerQuestion.Contains("rigged") && !lowerQuestion.Contains("not") ||
+            lowerQuestion.Contains("ban") && lowerQuestion.Contains("padoru") && !lowerQuestion.Contains("not"))
+        {
+            await ReplyAsync(new ReplyMessageProperties
+            {
+                Content = $"> {question}{Environment.NewLine}The spirit of Texas tells me No",
+            });
+            return;
+        }
+
+        var roll = Random.Shared.Next(1, 101);
+        var response = roll switch
+        {
+            <= 10 => EightBallResponses[Random.Shared.Next(0, 3)],
+            <= 40 => EightBallResponses[Random.Shared.Next(3, 5)],
+            _ => EightBallResponses[Random.Shared.Next(5, 8)],
+        };
+
+        await ReplyAsync(new ReplyMessageProperties
+        {
+            Content = $"> {question}{Environment.NewLine}{response}",
+        });
+    }
+
+    private async Task SendImageFromUrlAsync(string url)
+    {
+        try
+        {
+            using var response = await httpClientFactory.CreateClient(ExternalMediaHttpClientName).GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+
+            await using var imageStream = await response.Content.ReadAsStreamAsync();
+            await SendAsync(new MessageProperties
+            {
+                Attachments =
+                [
+                    new AttachmentProperties("image.png", imageStream),
+                ],
+            });
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Failed to send image from {Url}", url);
+            await ReplyAsync(new ReplyMessageProperties
+            {
+                Content = "I couldn't fetch that image right now.",
+            });
+        }
+    }
+
+    private static bool IsQuestion(string question)
+        => question.TrimEnd().EndsWith("?", StringComparison.Ordinal);
+
+    private static string Mention(ulong userId)
+        => $"<@{userId}>";
 }

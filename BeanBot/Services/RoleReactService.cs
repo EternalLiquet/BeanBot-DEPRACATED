@@ -1,155 +1,137 @@
-﻿using BeanBot.Entities;
+using BeanBot.Entities;
 using BeanBot.Repository;
-using Discord;
-using Discord.WebSocket;
-using Serilog;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
+using BeanBot.Util;
+using Microsoft.Extensions.Logging;
 
-namespace BeanBot.Services
+namespace BeanBot.Services;
+
+public sealed class RoleReactService(IRoleReactRepository roleReactRepository, ILogger<RoleReactService> logger)
 {
-    public class RoleReactService
+    private readonly SemaphoreSlim _cacheLock = new(1, 1);
+    private readonly Dictionary<ulong, RoleSettings> _cachedSettings = [];
+    private bool _cacheInitialized;
+
+    public async Task SaveRoleSettingsAsync(IEnumerable<RoleEmotePair> roleEmotePairs, ulong guildId, ulong channelId, ulong messageId, CancellationToken cancellationToken = default)
     {
-        private readonly RoleReactRepository _roleReactRepository;
-        private readonly DiscordSocketClient _client;
-        private List<RoleSettings> roleSettings;
+        var normalizedRoleEmotePairs = roleEmotePairs
+            .Select(roleEmotePair =>
+            {
+                roleEmotePair.EmojiKey = roleEmotePair.ResolveEmojiKey();
+                return roleEmotePair;
+            })
+            .ToList();
 
-        public RoleReactService(RoleReactRepository roleReactRepository)
+        var roleSettings = new RoleSettings(normalizedRoleEmotePairs, guildId, channelId, messageId);
+        await roleReactRepository.InsertNewRoleSettingsAsync(roleSettings, cancellationToken);
+
+        await _cacheLock.WaitAsync(cancellationToken);
+        try
         {
-            this._roleReactRepository = roleReactRepository;
-            roleSettings = this.GetAllRecentRoleSettings().Result;
+            _cachedSettings[messageId] = roleSettings;
+            _cacheInitialized = true;
+        }
+        finally
+        {
+            _cacheLock.Release();
+        }
+    }
+
+    public async Task<ulong?> TryResolveRoleIdAsync(ulong messageId, ulong? emojiId, string? emojiName, CancellationToken cancellationToken = default)
+    {
+        var emojiKey = ReactionEmojiKey.Create(emojiId, emojiName);
+        if (string.IsNullOrWhiteSpace(emojiKey))
+        {
+            logger.LogDebug("Unable to resolve role mapping for message {MessageId} because the emoji payload did not contain a usable ID or name", messageId);
+            return null;
         }
 
-        public RoleReactService(RoleReactRepository roleReactRepository, DiscordSocketClient client)
+        var roleSettings = await GetRoleSettingsAsync(messageId, cancellationToken);
+        var roleId = roleSettings?.RoleEmotePairs
+            .FirstOrDefault(roleEmotePair => string.Equals(roleEmotePair.ResolveEmojiKey(), emojiKey, StringComparison.Ordinal))?.RoleId;
+
+        logger.LogDebug(
+            "Resolved role mapping for message {MessageId} and emoji key {EmojiKey} (emojiId: {EmojiId}, emojiName: {EmojiName}): {RoleId}",
+            messageId,
+            emojiKey,
+            emojiId,
+            emojiName,
+            roleId);
+        return roleId;
+    }
+
+    private async Task<RoleSettings?> GetRoleSettingsAsync(ulong messageId, CancellationToken cancellationToken)
+    {
+        await EnsureCacheLoadedAsync(cancellationToken);
+
+        await _cacheLock.WaitAsync(cancellationToken);
+        try
         {
-            this._roleReactRepository = roleReactRepository;
-            this._client = client;
-            roleSettings = this.GetAllRecentRoleSettings().Result;
-        }
-
-        public async Task HandleReact(Cacheable<IUserMessage, ulong> message, ISocketMessageChannel channel, SocketReaction reaction)
-        {
-            try
+            if (_cachedSettings.TryGetValue(messageId, out var cachedSettings))
             {
-
-                var cachedMessage = await message.GetOrDownloadAsync();
-                Console.WriteLine(_client.CurrentUser.Id);
-                Console.WriteLine(cachedMessage.Author.Id);
-                Console.WriteLine(cachedMessage.Author.Id == reaction.UserId);
-                if (cachedMessage.Author.Id != _client.CurrentUser.Id)
-                {
-                    return; //If it isn't Bean Bot's message then we don't care about it.
-                }
-
-                if (cachedMessage.Author.Id == reaction.UserId)
-                {
-                    return; //If the bot is the one reacting, we ignore this too
-                }
-
-                if (roleSettings == null || roleSettings.Count == 0)
-                {
-                    roleSettings = await this.GetAllRoleSettings();
-                    Console.WriteLine(roleSettings.FirstOrDefault().ToString());
-                    if (roleSettings.Count == 0)
-                    {
-                        return;
-                    }
-                }
-                var roleSetting = roleSettings.Find(setting => setting.messageId == message.Id.ToString()) ?? await this.GetRoleSetting(cachedMessage);
-                if (roleSetting == null)
-                {
-                    return;
-                }
-
-                var guild = (channel as SocketTextChannel).Guild as IGuild;
-                var user = await guild.GetUserAsync(reaction.UserId, CacheMode.AllowDownload);
-                var emojiId = (reaction.Emote as Emote).Id;
-                var roleId = roleSetting.roleEmotePair.Find(pair => pair.emojiId == emojiId.ToString()).roleId;
-                var role = guild.Roles.Where(guildRoles => guildRoles.Id.ToString() == roleId).FirstOrDefault();
-                Console.WriteLine("I've reached here, no issues");
-                await user.AddRoleAsync(role);
-            }
-            catch (Exception e)
-            {
-                Log.Error(e.StackTrace);
-                Log.Error(e.Message);
+                return cachedSettings;
             }
         }
-
-        public async Task HandleRemoveReact(Cacheable<IUserMessage, ulong> message, ISocketMessageChannel channel, SocketReaction reaction)
+        finally
         {
-            try
+            _cacheLock.Release();
+        }
+
+        var roleSettings = await roleReactRepository.GetRoleSettingAsync(messageId, cancellationToken);
+        if (roleSettings is null)
+        {
+            return null;
+        }
+
+        NormalizeRoleSettings(roleSettings);
+
+        await _cacheLock.WaitAsync(cancellationToken);
+        try
+        {
+            _cachedSettings[messageId] = roleSettings;
+        }
+        finally
+        {
+            _cacheLock.Release();
+        }
+
+        return roleSettings;
+    }
+
+    private async Task EnsureCacheLoadedAsync(CancellationToken cancellationToken)
+    {
+        if (_cacheInitialized)
+        {
+            return;
+        }
+
+        await _cacheLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_cacheInitialized)
             {
-                var cachedMessage = await message.GetOrDownloadAsync();
-                if (cachedMessage.Author.Id != _client.CurrentUser.Id)
-                {
-                    return; //If it isn't Bean Bot's message then we don't care about it.
-                }
-
-                if (cachedMessage.Author.Id == reaction.UserId)
-                {
-                    return; //If the bot is the one reacting, we ignore this too
-                }
-
-                if (roleSettings == null || roleSettings.Count == 0)
-                {
-                    roleSettings = await this.GetAllRoleSettings();
-                    if (roleSettings.Count == 0)
-                    {
-                        return;
-                    }
-                }
-                var roleSetting = roleSettings.Find(setting => setting.messageId == message.Id.ToString()) ?? await this.GetRoleSetting(cachedMessage);
-                if (roleSetting == null)
-                {
-                    return;
-                }
-
-                var guild = (channel as SocketTextChannel).Guild as IGuild;
-                var user = await guild.GetUserAsync(reaction.UserId, CacheMode.AllowDownload);
-                var emojiId = (reaction.Emote as Emote).Id;
-                var roleId = roleSetting.roleEmotePair.Find(pair => pair.emojiId == emojiId.ToString()).roleId;
-                var role = guild.Roles.Where(guildRoles => guildRoles.Id.ToString() == roleId).FirstOrDefault();
-                ulong? userRole = user.RoleIds.First(userRoleId => userRoleId.ToString() == roleId);
-                Console.WriteLine("Haha" + userRole);
-                if (userRole != null)
-                {
-                    await user.RemoveRoleAsync(role);
-                }
+                return;
             }
-            catch (Exception e)
+
+            var roleSettings = await roleReactRepository.GetRecentRoleSettingsAsync(cancellationToken);
+            foreach (var setting in roleSettings)
             {
-                Log.Error(e.StackTrace);
-                Log.Error(e.Message);
+                NormalizeRoleSettings(setting);
+                _cachedSettings[setting.MessageId] = setting;
             }
-        }
 
-        public async Task SaveRoleSettings(List<RoleEmotePair> roleEmotePair, IMessage messageToListen)
-        {
-            RoleSettings roleSettings = new RoleSettings(
-                roleEmotePair,
-                (messageToListen.Channel as SocketTextChannel).Guild.Id.ToString(),
-                messageToListen.Channel.Id.ToString(),
-                messageToListen.Id.ToString()
-                );
-            await _roleReactRepository.InsertNewRoleSettings(roleSettings);
+            _cacheInitialized = true;
         }
-
-        public async Task<List<RoleSettings>> GetAllRoleSettings()
+        finally
         {
-            return await _roleReactRepository.GetAllRoleSettings();
+            _cacheLock.Release();
         }
+    }
 
-        public async Task<List<RoleSettings>> GetAllRecentRoleSettings()
+    private static void NormalizeRoleSettings(RoleSettings roleSettings)
+    {
+        foreach (var roleEmotePair in roleSettings.RoleEmotePairs)
         {
-            return await _roleReactRepository.GetRecentRoleSettings();
-        }
-
-        public async Task<RoleSettings> GetRoleSetting(IUserMessage message)
-        {
-            return await _roleReactRepository.GetRoleSetting(message);
+            roleEmotePair.EmojiKey = roleEmotePair.ResolveEmojiKey();
         }
     }
 }

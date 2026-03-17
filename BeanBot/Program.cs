@@ -1,137 +1,141 @@
-﻿using BeanBot.EventHandlers;
+using BeanBot.Configuration;
+using BeanBot.Repository;
+using BeanBot.Services;
 using BeanBot.Util;
-
-using Discord;
-using Discord.Commands;
-using Discord.WebSocket;
-
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
+using MongoDB.Driver;
+using NetCord;
+using NetCord.Gateway;
+using NetCord.Hosting.Gateway;
+using NetCord.Hosting.Services.Commands;
+using NetCord.Services.Commands;
 using Serilog;
-using System;
-using System.Net;
-using System.Threading;
-using System.Threading.Tasks;
+using Serilog.Events;
+using System.Reflection;
 
-namespace BeanBot
+namespace BeanBot;
+
+public static class Program
 {
-    class Program
+    private const string ExternalMediaHttpClientName = "ExternalMedia";
+    private static readonly Uri MemeApiBaseAddress = new("https://meme-api.com/");
+
+    public static async Task<int> Main(string[] args)
     {
-        private DiscordSocketClient _discordClient;
-        private CommandService _commandService;
-        private CommandHandler _commandHandler;
-        private NewMemberHandler _newMemberHandler;
-        private PunHandler _autoPunPoster;
-        private EditMessageHandler _editMessageHandler;
-        private ReactHandler _reactHandler;
-        public static string queueEightBallAnswer;
-        public static ulong queueRecipient;
-
-        static void Main(string[] args)
-            => new Program().StartAsync().GetAwaiter().GetResult();
-
-        public async Task StartAsync()
+        try
         {
-            Support.StartupOperations();
-            await LogIntoDiscord();
-            await InstantiateCommandServices();
-            _discordClient.Log += LogHandler.LogMessages;
-            _autoPunPoster = new PunHandler(_discordClient);
-            _autoPunPoster.Start();
-            _editMessageHandler = new EditMessageHandler(_discordClient);
-            _editMessageHandler.InitializeEventListener();
-            _newMemberHandler = new NewMemberHandler(_discordClient);
-            _newMemberHandler.InitializeNewMembers();
-            _reactHandler = new ReactHandler(_discordClient, new Services.RoleReactService(new Repository.RoleReactRepository()));
-            await _reactHandler.InitializeReactDependentServices();
+            DotEnvLoader.LoadIfPresent();
+            DirectorySetup.EnsureDirectoriesExist();
 
-            var cts = new CancellationTokenSource();
-            Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
-            AppDomain.CurrentDomain.ProcessExit += (_, __) => cts.Cancel();
-            try
+            var builder = Host.CreateApplicationBuilder(args);
+            builder.Configuration.AddEnvironmentVariables();
+
+            builder.Services.AddSingleton<IConfigureOptions<BeanBotOptions>, BeanBotOptionsSetup>();
+            builder.Services.AddSingleton<IValidateOptions<BeanBotOptions>, BeanBotOptionsValidator>();
+            builder.Services.AddOptions<BeanBotOptions>().ValidateOnStart();
+
+            builder.Services.AddSerilog((_, loggerConfiguration) =>
             {
-                await Task.Delay(Timeout.Infinite, cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                Log.Warning("Shutting Down");
-            }
-            finally
-            {
-                if (_autoPunPoster is not null)
-                {
-                    await _autoPunPoster.DisposeAsync();
-                }
+                var configuredLogLevel = builder.Configuration["BEANBOT_LOG_LEVEL"]
+                    ?? builder.Configuration["logLevel"]
+                    ?? "Information";
+                var minimumLevel = ResolveLogLevel(configuredLogLevel);
 
-                try
-                {
-                    await _discordClient.StopAsync();
-                    await _discordClient.LogoutAsync();
-                }
-                catch (Exception e)
-                {
-                    Log.Error(e, "Error shutting down: ");
-
-                }
-            }
-        }
-
-        private async Task InstantiateCommandServices()
-        {
-            Log.Information("Instantiating Command Services");
-            CreateCommandServiceWithOptions(ref _commandService);
-            _commandHandler = new CommandHandler(_discordClient, _commandService);
-            await _commandHandler.InitializeCommandsAsync();
-        }
-
-        private void CreateCommandServiceWithOptions(ref CommandService _commandService)
-        {
-            _commandService = new CommandService(new CommandServiceConfig
-            {
-                LogLevel = LogSeverity.Verbose,
-                CaseSensitiveCommands = false,
+                loggerConfiguration
+                    .MinimumLevel.Is(minimumLevel)
+                    .Enrich.FromLogContext()
+                    .WriteTo.Console()
+                    .WriteTo.Async(sink => sink.File(Path.Combine(DirectorySetup.LogsDirectory, "BeanBotLogs-.txt"), rollingInterval: RollingInterval.Day));
             });
-        }
 
-        private async Task LogIntoDiscord()
-        {
-            CreateNewDiscordSocketClientWithConfigurations();
-            bool loggedIn = false;
-            while (loggedIn == false)
+            builder.Services.AddHttpClient(ExternalMediaHttpClientName, client =>
             {
-                try
-                {
-                    await _discordClient.LoginAsync(TokenType.Bot, AppSettings.Settings["botToken"]);
-                    await _discordClient.StartAsync();
-                    await _discordClient.SetGameAsync("My purpose is to bully Hatate and succ the world dry", null, ActivityType.Playing);
-                    _discordClient.Ready += () =>
-                    {
-                        Log.Information("Bean Bot successfully connected");
-                        return Task.CompletedTask;
-                    };
-                    loggedIn = true;
-                }
-                catch (Discord.Net.HttpException e)
-                {
-                    if (e.HttpCode == HttpStatusCode.Unauthorized)
-                    {
-                        Log.Fatal(e, "Discord rejected the configured bot token. Update {SettingName} and restart the process.", AppSettings.DescribeSetting("botToken"));
-                        throw;
-                    }
-
-                    Log.Error(e, "Discord login failed; retrying in 30 seconds");
-                    await Task.Delay(TimeSpan.FromSeconds(30));
-                }
-            }
-        }
-
-        private void CreateNewDiscordSocketClientWithConfigurations()
-        {
-            _discordClient = new DiscordSocketClient(new DiscordSocketConfig
-            {
-                LogLevel = LogSeverity.Verbose,
-                MessageCacheSize = 50,
-                ExclusiveBulkDelete = true,
-                AlwaysDownloadUsers = true
+                client.Timeout = TimeSpan.FromSeconds(30);
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("BeanBot/2.0");
             });
+            builder.Services.AddHttpClient<IMemeService, MemeService>(client =>
+            {
+                client.BaseAddress = MemeApiBaseAddress;
+                client.Timeout = TimeSpan.FromSeconds(10);
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("BeanBot/2.0");
+            });
+            builder.Services.AddSingleton<IMongoClient>(serviceProvider =>
+            {
+                var options = serviceProvider.GetRequiredService<IOptions<BeanBotOptions>>().Value;
+                return new MongoClient(MongoUrl.Create(options.MongoConnectionString));
+            });
+            builder.Services.AddSingleton(serviceProvider =>
+            {
+                var options = serviceProvider.GetRequiredService<IOptions<BeanBotOptions>>().Value;
+                var mongoUrl = MongoUrl.Create(options.MongoConnectionString);
+                var databaseName = string.IsNullOrWhiteSpace(mongoUrl.DatabaseName) ? "BeanBotDB" : mongoUrl.DatabaseName;
+                return serviceProvider.GetRequiredService<IMongoClient>().GetDatabase(databaseName);
+            });
+
+            builder.Services.AddSingleton<DiscordReadySignal>();
+            builder.Services.AddSingleton<GuildUserResolverService>();
+            builder.Services.AddSingleton<HelpCatalogService>();
+            builder.Services.AddSingleton<MessagePromptService>();
+            builder.Services.AddSingleton<EightBallQueueService>();
+            builder.Services.AddSingleton<GuildRoleManagementService>();
+            builder.Services.AddSingleton<IPunCatalogService, PunCatalogService>();
+            builder.Services.AddSingleton<IRoleReactRepository, RoleReactRepository>();
+            builder.Services.AddSingleton<RoleReactService>();
+            builder.Services.AddHostedService<EventHandlers.PunHandler>();
+
+            builder.Services.AddDiscordGateway((options, serviceProvider) =>
+            {
+                var botOptions = serviceProvider.GetRequiredService<IOptions<BeanBotOptions>>().Value;
+
+                options.Token = botOptions.BotToken;
+                options.Intents = GatewayIntents.Guilds
+                    | GatewayIntents.GuildUsers
+                    | GatewayIntents.GuildMessages
+                    | GatewayIntents.GuildMessageReactions
+                    | GatewayIntents.DirectMessages
+                    | GatewayIntents.MessageContent;
+                options.Presence = new PresenceProperties(UserStatusType.Online)
+                {
+                    Activities =
+                    [
+                        new UserActivityProperties("My purpose is to bully Hatate and succ the world dry", UserActivityType.Playing),
+                    ],
+                };
+            });
+
+            builder.Services.AddGatewayHandlers(Assembly.GetExecutingAssembly());
+            builder.Services.AddCommands(options =>
+            {
+                options.GetCommandTextAsync = static (_, _, _) => new ValueTask<ReadOnlyMemory<char>?>(result: null);
+            });
+
+            using var host = builder.Build();
+            var commandService = host.Services.GetRequiredService<CommandService<CommandContext>>();
+            commandService.AddModules(Assembly.GetExecutingAssembly());
+
+            await host.RunAsync();
+            return 0;
+        }
+        catch (OptionsValidationException exception)
+        {
+            Console.Error.WriteLine("BeanBot configuration is invalid:");
+            foreach (var failure in exception.Failures)
+            {
+                Console.Error.WriteLine($"- {failure}");
+            }
+
+            return 1;
         }
     }
+
+    private static LogEventLevel ResolveLogLevel(string configuredLogLevel)
+    {
+        return Enum.TryParse(configuredLogLevel, true, out LogEventLevel level)
+            ? level
+            : LogEventLevel.Information;
+    }
 }
+

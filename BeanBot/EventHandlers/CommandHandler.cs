@@ -1,98 +1,123 @@
-﻿using BeanBot.Util;
+using BeanBot.Services;
+using Microsoft.Extensions.Logging;
+using NetCord.Gateway;
+using NetCord.Hosting.Gateway;
+using NetCord.Services;
+using NetCord.Services.Commands;
 
-using Discord.Addons.Interactive;
-using Discord.Commands;
-using Discord.WebSocket;
+namespace BeanBot.EventHandlers;
 
-using Microsoft.Extensions.DependencyInjection;
-
-using Serilog;
-using System;
-using System.Reflection;
-using System.Threading.Tasks;
-
-namespace BeanBot.EventHandlers
+public sealed class CommandHandler(
+    GatewayClient client,
+    CommandService<CommandContext> commandService,
+    IServiceProvider serviceProvider,
+    MessagePromptService messagePromptService,
+    EightBallQueueService eightBallQueueService,
+    ILogger<CommandHandler> logger) : IMessageCreateGatewayHandler
 {
-    public class CommandHandler
+    public async ValueTask HandleAsync(Message message)
     {
-        private readonly DiscordSocketClient _discordClient;
-        private readonly CommandService _commandService;
-        private readonly IServiceProvider _services;
+        messagePromptService.PublishMessage(message);
 
-        public CommandHandler(DiscordSocketClient discordClient, CommandService commandService)
+        if (message.Author is null || message.Author.IsBot)
         {
-            Log.Information("Instantiating Command Handler");
-            this._discordClient = discordClient;
-            this._commandService = commandService;
-            _services = new ServiceCollection()
-                .AddSingleton(_discordClient)
-                .AddSingleton(_commandService)
-                .AddSingleton(new InteractiveService(_discordClient))
-                .BuildServiceProvider();
+            return;
         }
 
-        public async Task InitializeCommandsAsync()
+        HandleQueuedEightBallOverride(message);
+
+        var prefixLength = GetPrefixLength(message.Content);
+        if (prefixLength is null)
         {
-            Log.Information("Installing Commands");
-            _discordClient.MessageReceived += HandleCommandAsync;
-            _commandService.CommandExecuted += LogHandler.LogCommands;
-            await _commandService.AddModulesAsync(assembly: Assembly.GetEntryAssembly(),
-                                                  services: _services);
+            return;
         }
 
-        internal async Task HandleCommandAsync(SocketMessage messageEvent)
+        var context = new CommandContext(message, client);
+        var result = await commandService.ExecuteAsync(prefixLength.Value, context, serviceProvider);
+        await HandleCommandResultAsync(message, result);
+    }
+
+    private void HandleQueuedEightBallOverride(Message message)
+    {
+        if (message.Author.Id != 114559039731531781 ||
+            !message.Content.Contains("queue8", StringComparison.OrdinalIgnoreCase))
         {
-            var discordMessage = messageEvent as SocketUserMessage;
-            if (MessageIsSystemMessage(discordMessage))
-            {
-                return; //Return and ignore if the message is a discord system message
-            }
-
-            int argPos = 0;
-            if (discordMessage.Author.Id == 114559039731531781 && discordMessage.Content.Contains("queue8"))
-            {
-                Console.WriteLine("hello????");
-                if (discordMessage.Content.Contains("yes"))
-                {
-                    Program.queueEightBallAnswer = "positive";
-                    Program.queueRecipient = discordMessage.Author.Id;
-                }
-                else
-                {
-                    Program.queueEightBallAnswer = "negative";
-                    Program.queueRecipient = discordMessage.Author.Id;
-                }
-            }
-            if (!MessageHasCommandPrefix(discordMessage, ref argPos) ||
-                messageEvent.Author.IsBot)
-            {
-                return; //Return and ignore if the discord message does not have the command prefixes or if the author of the message is a bot
-            }
-
-            var context = new SocketCommandContext(_discordClient, discordMessage);
-            await _commandService.ExecuteAsync(
-                context: context,
-                argPos: argPos,
-                services: _services);
+            return;
         }
 
-        internal bool MessageHasCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
+        var queuedAnswer = message.Content.Contains("yes", StringComparison.OrdinalIgnoreCase)
+            ? "positive"
+            : "negative";
+
+        eightBallQueueService.Queue(queuedAnswer, message.Author.Id);
+        logger.LogDebug("Queued 8ball override {QueuedAnswer} for user {UserId}", queuedAnswer, message.Author.Id);
+    }
+
+    private int? GetPrefixLength(string content)
+    {
+        if (content.StartsWith('%'))
         {
-            return (discordMessage.HasStringPrefix("succ ", ref argPos, StringComparison.OrdinalIgnoreCase) ||
-                            discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos) ||
-                            discordMessage.HasCharPrefix('%', ref argPos));
+            return 1;
         }
 
-        internal bool MessageIsSystemMessage(SocketUserMessage discordMessage)
+        const string succPrefix = "succ ";
+        if (content.StartsWith(succPrefix, StringComparison.OrdinalIgnoreCase))
         {
-            if (discordMessage == null)
+            return succPrefix.Length;
+        }
+
+        var mentionPrefixes = new[]
+        {
+            $"<@{client.Id}>",
+            $"<@!{client.Id}>",
+        };
+
+        foreach (var mentionPrefix in mentionPrefixes)
+        {
+            if (!content.StartsWith(mentionPrefix, StringComparison.Ordinal))
             {
-                return true;
+                continue;
             }
-            else
+
+            var prefixLength = mentionPrefix.Length;
+            if (content.Length > prefixLength && content[prefixLength] == ' ')
             {
-                return false;
+                prefixLength++;
             }
+
+            return prefixLength;
+        }
+
+        return null;
+    }
+
+    private async ValueTask HandleCommandResultAsync(Message message, IExecutionResult result)
+    {
+        var resultTypeName = result.GetType().Name;
+        if (resultTypeName == "SuccessResult" || resultTypeName == "NotFoundResult")
+        {
+            logger.LogDebug("Command execution for message {MessageId} completed with result {ResultType}", message.Id, resultTypeName);
+            return;
+        }
+
+        var resultMessage = result.GetType().GetProperty("Message")?.GetValue(result) as string;
+        var exception = result.GetType().GetProperty("Exception")?.GetValue(result) as Exception;
+
+        if (exception is not null)
+        {
+            logger.LogError(exception, "Command execution for message {MessageId} failed with result {ResultType}: {ResultMessage}", message.Id, resultTypeName, resultMessage);
+        }
+        else
+        {
+            logger.LogWarning("Command execution for message {MessageId} failed with result {ResultType}: {ResultMessage}", message.Id, resultTypeName, resultMessage);
+        }
+
+        if (!string.IsNullOrWhiteSpace(resultMessage) && message.Channel is not null)
+        {
+            await message.Channel.SendMessageAsync(new NetCord.Rest.MessageProperties
+            {
+                Content = resultMessage,
+            });
         }
     }
 }
