@@ -1,42 +1,106 @@
 [![Bean Bot Version](https://img.shields.io/github/v/release/EternalLiquet/BeanBot-DEPRACATED?display_name=tag&label=Bean%20Bot%20Version)](https://github.com/EternalLiquet/BeanBot-DEPRACATED/releases/latest)
-[![.NET Core Master and Deploy Checks](https://github.com/EternalLiquet/BeanBot-DEPRACATED/actions/workflows/dotnetaction.yml/badge.svg?branch=master)](https://github.com/EternalLiquet/BeanBot-DEPRACATED/actions/workflows/dotnetaction.yml)
+[![.NET Build](https://github.com/EternalLiquet/BeanBot-DEPRACATED/actions/workflows/dotnetaction.yml/badge.svg?branch=master)](https://github.com/EternalLiquet/BeanBot-DEPRACATED/actions/workflows/dotnetaction.yml)
 
 # Bean Bot
 
-Bean Bot is a .NET 8 Discord bot with MongoDB-backed role reaction storage and a small set of server utilities.
+Bean Bot is a `.NET 10` Discord bot built on `NetCord`, with MongoDB-backed reaction-role storage, Serilog logging, and Docker support.
+
+## Runtime Stack
+
+- `.NET 10` console application
+- `NetCord` gateway and command hosting
+- `MongoDB.Driver` for persistent role reaction settings
+- `Serilog` for structured logging
+- direct `meme-api.com` HTTP integration for meme fetches
 
 ## Configuration
 
-The app no longer creates or reads `beanSettings.json`. Configuration is now supplied through environment variables, and the bot will also load a local `.env` file automatically when present. Copy `.env.example` to `.env` and fill in the values:
+The bot no longer creates or reads `beanSettings.json`. Configuration comes from environment variables, and a local `.env` file is loaded automatically when present.
+
+Copy [`.env.example`](/n:/Personal/DotNet/BeanBot-DEPRACATED/.env.example) to `.env` and fill in the values:
 
 ```env
 BEANBOT_BOT_TOKEN=
-BEANBOT_MONGO_CONNECTION_STRING=
+BEANBOT_MONGO_CONNECTION_STRING=mongodb://mongo:27017
 BEANBOT_GENERAL_CHANNEL_ID=
 BEANBOT_HATOETE_URL=
 BEANBOT_YOSHIMARU_URL=
+BEANBOT_LOG_LEVEL=Information
+BEANBOT_IL_SERVER_ID=
 ```
 
-For backwards compatibility, the legacy variable names (`botToken`, `mongoConnectionString`, and so on) are still accepted, but the `BEANBOT_*` names are the intended format. Real environment variables take precedence over values from `.env`.
+`BEANBOT_LOG_LEVEL` controls the minimum Serilog level. Typical values are `Debug`, `Information`, `Warning`, and `Error`.
+
+Real environment variables take precedence over `.env` values.
 
 ## Local Run
 
 ```powershell
-dotnet build BeanBot/BeanBot.csproj
+dotnet restore BeanBot.sln
+dotnet build BeanBot.sln -c Release
 dotnet run --project BeanBot/BeanBot.csproj
 ```
 
-If a `.env` file exists in the repo root, `dotnet run` will load it automatically.
+The repo includes [`global.json`](/n:/Personal/DotNet/BeanBot-DEPRACATED/global.json), so the intended SDK line is pinned automatically.
+
+## Role Setup
+
+Reaction-role setup is now batch-oriented and documented so you do not have to walk people through it manually.
+
+Run `%rolesetting` inside a guild text channel where:
+
+- the invoking user has `Manage Roles`
+- the bot has `Send Messages`, `Embed Links`, `Add Reactions`, and `Manage Messages`
+- the target roles are below the bot's highest role
+
+The flow is:
+
+1. Run `%rolesetting`.
+2. Send the label for the role menu, or type `skip` to use `Role Selection`.
+3. Send every mapping in a single message, one per line, using:
+
+```text
+<emoji> <role mention or exact role name>
+```
+
+Examples:
+
+```text
+❤️ @Announcements
+🔥 Raid Team
+<:party:123456789012345678> @Events
+```
+
+Notes:
+
+- Standard emoji should be sent as the actual emoji character, such as `❤️`.
+- Custom guild emoji can be sent as a real emoji mention like `<:party:123456789012345678>` or by exact guild emoji name.
+- Shortcodes like `:heart:` are not expanded by the setup parser.
+- The published role message stays up permanently; only the setup conversation is cleaned up.
+
+Existing custom-emoji role menus remain compatible. Legacy Mongo documents that only stored `emojiId` are still resolved, and new role menus simply store an additional normalized emoji key so Unicode emoji can work too.
+
+## In-Bot Help
+
+The help command now supports module and command drill-down:
+
+```text
+%help
+%help administration
+%help rolesetting
+```
+
+`%help` shows all modules and their descriptions. From there, `%help <module>` shows the commands in that module, and `%help <command>` drills down into the specific command's usage, aliases, scope, and parameter shape.
 
 ## Docker
 
-Build the image from the repo root:
+Build from the repo root:
 
 ```powershell
 docker build -t beanbot .
 ```
 
-Run it with your `.env` file and a persistent volume for logs and runtime files:
+Run it with your `.env` file and a persistent runtime volume:
 
 ```powershell
 docker run -d `
@@ -47,8 +111,9 @@ docker run -d `
   beanbot
 ```
 
-The container uses the .NET 8 runtime image because this is a console application, not an ASP.NET app.
+The container uses the `.NET 10` runtime image because this is a console bot, not an ASP.NET app.
 
-## Note
+## Notes
 
-This bot is slowly being replaced by a new implementation in Python. The .NET version will remain available for the foreseeable future, but no new features will be added to it. The Python version is still in early development and may not have all the same features yet. It will be transitioned one module at a time. The .NET version will continue to receive critical bug fixes and security updates as needed, but new features and improvements will be focused on the Python version going forward.
+- The meme command now talks directly to the documented `meme-api.com/gimme` API instead of going through a third-party NuGet wrapper.
+- The repo uses central package management through [`Directory.Packages.props`](/n:/Personal/DotNet/BeanBot-DEPRACATED/Directory.Packages.props).
