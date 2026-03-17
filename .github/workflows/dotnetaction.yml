@@ -1,4 +1,4 @@
-name: .NET Core Master and Deploy Checks
+name: .NET Build
 
 on:
   push:
@@ -9,9 +9,6 @@ on:
     branches:
       - master
       - deploy
-  release:
-    types:
-      - created
 
 permissions:
   contents: read
@@ -21,12 +18,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup .NET SDK
+      - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 10.0.x
 
       - name: Restore
         run: dotnet restore BeanBot.sln
@@ -34,5 +32,8 @@ jobs:
       - name: Build
         run: dotnet build BeanBot.sln --configuration Release --no-restore
 
-      - name: Test
-        run: dotnet test BeanBot.sln --configuration Release --no-build
+      - name: Publish
+        run: dotnet publish BeanBot/BeanBot.csproj --configuration Release --no-build --output ./artifacts/publish
+
+      - name: Vulnerability Audit
+        run: dotnet list BeanBot/BeanBot.csproj package --vulnerable --include-transitive
