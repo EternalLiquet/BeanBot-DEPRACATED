@@ -15,7 +15,11 @@ namespace BeanBot.Util
             new SettingDefinition("generalChannelId", "BEANBOT_GENERAL_CHANNEL_ID", true),
             new SettingDefinition("hatoeteUrl", "BEANBOT_HATOETE_URL", true),
             new SettingDefinition("yoshimaruUrl", "BEANBOT_YOSHIMARU_URL", true),
-            new SettingDefinition("ilServerId", "BEANBOT_IL_SERVER_ID", false)
+            new SettingDefinition("ilServerId", "BEANBOT_IL_SERVER_ID", false),
+            new SettingDefinition("healthCheckPort", "BEANBOT_HEALTHCHECK_PORT", false),
+            new SettingDefinition("healthCheckBindAddress", "BEANBOT_HEALTHCHECK_BIND_ADDRESS", false),
+            new SettingDefinition("healthCheckBearerToken", "BEANBOT_HEALTHCHECK_BEARER_TOKEN", false),
+            new SettingDefinition("healthCheckRateLimitSeconds", "BEANBOT_HEALTHCHECK_RATE_LIMIT_SECONDS", false)
         };
 
         public static Dictionary<string, string> Settings { get; private set; }

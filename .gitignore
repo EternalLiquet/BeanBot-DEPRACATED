@@ -37,3 +37,6 @@ msbuild.wrn
 .env.*
 !.env.example
 BeanBotFiles/
+.dotnet/
+.dotnet-home/
+.scratch/

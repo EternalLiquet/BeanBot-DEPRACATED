@@ -1,4 +1,5 @@
-﻿using BeanBot.EventHandlers;
+using BeanBot.EventHandlers;
+using BeanBot.Services;
 using BeanBot.Util;
 
 using Discord;
@@ -6,6 +7,7 @@ using Discord.Commands;
 using Discord.WebSocket;
 
 using Serilog;
+
 using System;
 using System.Net;
 using System.Threading;
@@ -16,12 +18,14 @@ namespace BeanBot
     class Program
     {
         private DiscordSocketClient _discordClient;
+        private DiscordConnectionHealth _discordConnectionHealth;
         private CommandService _commandService;
         private CommandHandler _commandHandler;
         private NewMemberHandler _newMemberHandler;
         private PunHandler _autoPunPoster;
         private EditMessageHandler _editMessageHandler;
         private ReactHandler _reactHandler;
+        private HealthCheckServer _healthCheckServer;
         public static string queueEightBallAnswer;
         public static ulong queueRecipient;
 
@@ -31,6 +35,12 @@ namespace BeanBot
         public async Task StartAsync()
         {
             Support.StartupOperations();
+            _discordConnectionHealth = new DiscordConnectionHealth();
+            CreateNewDiscordSocketClientWithConfigurations();
+            InitializeDiscordLifecycleTracking();
+            _healthCheckServer = HealthCheckServer.CreateFromSettings(_discordClient, _discordConnectionHealth);
+            _healthCheckServer?.Start();
+
             await LogIntoDiscord();
             await InstantiateCommandServices();
             _discordClient.Log += LogHandler.LogMessages;
@@ -61,6 +71,11 @@ namespace BeanBot
                     await _autoPunPoster.DisposeAsync();
                 }
 
+                if (_healthCheckServer is not null)
+                {
+                    await _healthCheckServer.DisposeAsync();
+                }
+
                 try
                 {
                     await _discordClient.StopAsync();
@@ -69,7 +84,6 @@ namespace BeanBot
                 catch (Exception e)
                 {
                     Log.Error(e, "Error shutting down: ");
-
                 }
             }
         }
@@ -93,7 +107,6 @@ namespace BeanBot
 
         private async Task LogIntoDiscord()
         {
-            CreateNewDiscordSocketClientWithConfigurations();
             bool loggedIn = false;
             while (loggedIn == false)
             {
@@ -102,11 +115,6 @@ namespace BeanBot
                     await _discordClient.LoginAsync(TokenType.Bot, AppSettings.Settings["botToken"]);
                     await _discordClient.StartAsync();
                     await _discordClient.SetGameAsync("My purpose is to bully Hatate and succ the world dry", null, ActivityType.Playing);
-                    _discordClient.Ready += () =>
-                    {
-                        Log.Information("Bean Bot successfully connected");
-                        return Task.CompletedTask;
-                    };
                     loggedIn = true;
                 }
                 catch (Discord.Net.HttpException e)
@@ -132,6 +140,34 @@ namespace BeanBot
                 ExclusiveBulkDelete = true,
                 AlwaysDownloadUsers = true
             });
+        }
+
+        private void InitializeDiscordLifecycleTracking()
+        {
+            _discordClient.Ready += OnDiscordReadyAsync;
+            _discordClient.Disconnected += OnDiscordDisconnectedAsync;
+        }
+
+        private Task OnDiscordReadyAsync()
+        {
+            _discordConnectionHealth.MarkReady();
+            Log.Information("Bean Bot successfully connected");
+            return Task.CompletedTask;
+        }
+
+        private Task OnDiscordDisconnectedAsync(Exception exception)
+        {
+            _discordConnectionHealth.MarkDisconnected(exception);
+            if (exception is null)
+            {
+                Log.Warning("Bean Bot disconnected from Discord");
+            }
+            else
+            {
+                Log.Warning(exception, "Bean Bot disconnected from Discord");
+            }
+
+            return Task.CompletedTask;
         }
     }
 }
