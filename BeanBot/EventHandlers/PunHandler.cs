@@ -1,5 +1,5 @@
 ﻿using BeanBot.Entities;
-using BeanBot.Util;
+using BeanBot.Configuration;
 using CsvHelper;
 using Discord.WebSocket;
 using Serilog;
@@ -22,11 +22,11 @@ namespace BeanBot.EventHandlers
 
         private static readonly TimeSpan PostTimeLocal = new TimeSpan(16, 20, 0);
 
-        public PunHandler(DiscordSocketClient discordSocketClient)
+        public PunHandler(DiscordSocketClient discordSocketClient, BeanBotOptions options)
         {
             Log.Information("Initializing Daily Pun Posting Service");
             _discordClient = discordSocketClient ?? throw new ArgumentNullException(nameof(discordSocketClient));
-            _generalChannelId = ulong.Parse(AppSettings.Settings["generalChannelId"]);
+            _generalChannelId = (options ?? throw new ArgumentNullException(nameof(options))).GeneralChannelId;
         }
 
         public void Start()

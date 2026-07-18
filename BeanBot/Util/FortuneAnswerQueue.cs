@@ -1,8 +1,8 @@
 namespace BeanBot.Util
 {
-    internal readonly record struct FortuneAnswerReservation(ulong RecipientId, string Answer, long Version);
+    public readonly record struct FortuneAnswerReservation(ulong RecipientId, string Answer, long Version);
 
-    internal sealed class FortuneAnswerQueue
+    public sealed class FortuneAnswerQueue
     {
         private readonly object _sync = new object();
         private string _answer;

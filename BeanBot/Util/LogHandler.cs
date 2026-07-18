@@ -10,13 +10,13 @@ namespace BeanBot.Util
 {
     public static class LogHandler
     {
-        public static void CreateLoggerConfiguration()
+        internal static void CreateLoggerConfiguration(IOwnerErrorNotifier ownerErrorNotifier)
         {
             Log.Logger = new LoggerConfiguration()
                 .MinimumLevel.Verbose()
                 .WriteTo.Console()
                 .WriteTo.Async(a => a.File(Path.Combine(DirectorySetup.botBaseDirectory, "Logs", "BeanBotLogs.txt"), rollingInterval: RollingInterval.Day))
-                .WriteTo.Sink(new DiscordOwnerErrorSink())
+                .WriteTo.Sink(new DiscordOwnerErrorSink(ownerErrorNotifier))
                 .CreateLogger();
             Log.Information("Logger Configuration complete");
         }

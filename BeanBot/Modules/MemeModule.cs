@@ -1,4 +1,5 @@
 ﻿using BeanBot.Entities;
+using BeanBot.Configuration;
 using BeanBot.Util;
 using CsvHelper;
 using Discord;
@@ -20,7 +21,15 @@ namespace BeanBot.Modules
     public class MemeModule : InteractiveBase
     {
         private static readonly HttpClient HttpClient = new HttpClient();
-        private readonly MemeMachine memeMachine = new MemeMachine();
+        private readonly MemeMachine _memeMachine = new MemeMachine();
+        private readonly BeanBotOptions _options;
+        private readonly FortuneAnswerQueue _fortuneAnswers;
+
+        public MemeModule(BeanBotOptions options, FortuneAnswerQueue fortuneAnswers)
+        {
+            _options = options ?? throw new ArgumentNullException(nameof(options));
+            _fortuneAnswers = fortuneAnswers ?? throw new ArgumentNullException(nameof(fortuneAnswers));
+        }
 
         private static readonly string[] EightBallResponses = new string[8]
         {
@@ -93,7 +102,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.AttachFiles)]
         public async Task Toes()
         {
-            await SendImageFromUrl(AppSettings.Settings["hatoeteUrl"]);
+            await SendImageFromUrl(_options.HatoeteImageUrl);
         }
 
         [Command("yoshimaru")]
@@ -103,7 +112,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.AttachFiles)]
         public async Task YoshiMaru()
         {
-            await SendImageFromUrl(AppSettings.Settings["yoshimaruUrl"]);
+            await SendImageFromUrl(_options.YoshimaruImageUrl);
         }
 
         [Command("echo")]
@@ -155,11 +164,11 @@ namespace BeanBot.Modules
             {
                 if (string.IsNullOrEmpty(subreddit))
                 {
-                    meme = await memeMachine.GetMemeAsync();
+                    meme = await _memeMachine.GetMemeAsync();
                 }
                 else
                 {
-                    meme = await memeMachine.GetMemeAsync(subreddit);
+                    meme = await _memeMachine.GetMemeAsync(subreddit);
                 }
             }
             catch (Exception ex)
@@ -237,11 +246,11 @@ namespace BeanBot.Modules
             var responseOverride = FortuneResponseOverrides.GetResponse(question);
             if (responseOverride != null)
             {
-                var hasQueuedAnswer = Program.FortuneAnswers.TryReserve(Context.Message.Author.Id, out var reservation);
+                var hasQueuedAnswer = _fortuneAnswers.TryReserve(Context.Message.Author.Id, out var reservation);
                 await ReplyAsync($"> {question} \n{responseOverride}");
                 if (hasQueuedAnswer)
                 {
-                    Program.FortuneAnswers.Consume(reservation);
+                    _fortuneAnswers.Consume(reservation);
                 }
             }
             else if (QuestionValidator.IsQuestion(question))
@@ -252,7 +261,7 @@ namespace BeanBot.Modules
                 }
                 else
                 {
-                    if (Program.FortuneAnswers.TryReserve(Context.Message.Author.Id, out var reservation))
+                    if (_fortuneAnswers.TryReserve(Context.Message.Author.Id, out var reservation))
                     {
                         if (reservation.Answer == "positive")
                         {
@@ -264,7 +273,7 @@ namespace BeanBot.Modules
                             var answer = EightBallResponses[Random.Shared.Next(3, 5)];
                             await ReplyAsync($"> {question} \n{answer}");
                         }
-                        Program.FortuneAnswers.Consume(reservation);
+                        _fortuneAnswers.Consume(reservation);
                     }
                     else
                     {
@@ -323,7 +332,7 @@ namespace BeanBot.Modules
             return (Context.Message.Author.Id == 262010462323998720);
         }
 
-        private async Task SendImageFromUrl(string url)
+        private async Task SendImageFromUrl(Uri url)
         {
             try
             {

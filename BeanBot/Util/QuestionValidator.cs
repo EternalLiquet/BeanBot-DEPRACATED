@@ -251,7 +251,9 @@ namespace BeanBot.Util
             {
                 if (words.Count == 1)
                 {
-                    return true;
+                    // A question word by itself (for example, "why?") does not
+                    // provide enough of a proposition for the fortune command.
+                    return false;
                 }
 
                 var secondWord = NormalizeWord(words[1].Value);

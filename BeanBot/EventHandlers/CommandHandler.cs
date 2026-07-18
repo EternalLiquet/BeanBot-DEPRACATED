@@ -1,6 +1,5 @@
 ﻿using BeanBot.Util;
 
-using Discord.Addons.Interactive;
 using Discord.Commands;
 using Discord.WebSocket;
 
@@ -18,18 +17,19 @@ namespace BeanBot.EventHandlers
         private readonly DiscordSocketClient _discordClient;
         private readonly CommandService _commandService;
         private readonly IServiceProvider _services;
+        private readonly FortuneAnswerQueue _fortuneAnswers;
         private bool _initialized;
 
-        public CommandHandler(DiscordSocketClient discordClient, CommandService commandService)
+        public CommandHandler(
+            DiscordSocketClient discordClient,
+            CommandService commandService,
+            IServiceProvider services)
         {
             Log.Information("Instantiating Command Handler");
             _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
             _commandService = commandService ?? throw new ArgumentNullException(nameof(commandService));
-            _services = new ServiceCollection()
-                .AddSingleton(_discordClient)
-                .AddSingleton(_commandService)
-                .AddSingleton(new InteractiveService(_discordClient))
-                .BuildServiceProvider();
+            _services = services ?? throw new ArgumentNullException(nameof(services));
+            _fortuneAnswers = _services.GetRequiredService<FortuneAnswerQueue>();
         }
 
         public async Task InitializeCommandsAsync()
@@ -56,7 +56,6 @@ namespace BeanBot.EventHandlers
                 _initialized = false;
             }
 
-            (_services as IDisposable)?.Dispose();
         }
 
         internal async Task HandleCommandAsync(SocketMessage messageEvent)
@@ -71,7 +70,7 @@ namespace BeanBot.EventHandlers
             if (discordMessage.Author.Id == BotOwner.DiscordUserId &&
                 discordMessage.Content.Contains("queue8", StringComparison.OrdinalIgnoreCase))
             {
-                Program.FortuneAnswers.Queue(
+                _fortuneAnswers.Queue(
                     discordMessage.Author.Id,
                     discordMessage.Content.Contains("yes", StringComparison.OrdinalIgnoreCase));
             }
@@ -97,5 +96,6 @@ namespace BeanBot.EventHandlers
 
         internal bool MessageIsSystemMessage(SocketUserMessage discordMessage)
             => discordMessage == null;
+
     }
 }

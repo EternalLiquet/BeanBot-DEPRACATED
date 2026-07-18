@@ -9,13 +9,30 @@ using System.Threading.Tasks;
 
 namespace BeanBot.Util
 {
+    internal interface IOwnerErrorNotifier
+    {
+        void Enqueue(string alert);
+    }
+
+    internal interface IOwnerAlertDelivery
+    {
+        Task DeliverAsync(string alert, CancellationToken cancellationToken);
+    }
+
     internal sealed class DiscordOwnerErrorSink : ILogEventSink
     {
+        private readonly IOwnerErrorNotifier _notifier;
+
+        public DiscordOwnerErrorSink(IOwnerErrorNotifier notifier)
+        {
+            _notifier = notifier ?? throw new ArgumentNullException(nameof(notifier));
+        }
+
         public void Emit(LogEvent logEvent)
         {
-            if (logEvent.Level >= LogEventLevel.Error || logEvent.Exception != null)
+            if (logEvent.Level >= LogEventLevel.Error)
             {
-                DiscordOwnerErrorNotifier.Enqueue(FormatAlert(logEvent));
+                _notifier.Enqueue(FormatAlert(logEvent));
             }
         }
 
@@ -30,136 +47,156 @@ namespace BeanBot.Util
         }
     }
 
-    internal static class DiscordOwnerErrorNotifier
+    internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDisposable
     {
-        private static readonly Channel<string> Alerts = Channel.CreateBounded<string>(new BoundedChannelOptions(100)
-        {
-            FullMode = BoundedChannelFullMode.DropOldest,
-            SingleReader = true,
-            SingleWriter = false
-        });
-        private static readonly CancellationTokenSource Shutdown = new CancellationTokenSource();
-        private static readonly object Sync = new object();
-        private static DiscordSocketClient _discordClient;
-        private static Task _worker;
-        private static int _disposed;
-        private static int _sendInProgress;
+        internal const int DefaultMaximumAttempts = 3;
+        private readonly Channel<string> _alerts;
+        private readonly IOwnerAlertDelivery _delivery;
+        private readonly Func<int, TimeSpan> _retryDelay;
+        private readonly TimeSpan _shutdownFlushTimeout;
+        private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
+        private readonly Task _worker;
+        private int _sendInProgress;
+        private int _disposed;
 
-        public static void Initialize(DiscordSocketClient discordClient)
+        public DiscordOwnerErrorNotifier(DiscordSocketClient discordClient)
+            : this(new DiscordOwnerAlertDelivery(discordClient))
         {
-            if (discordClient == null)
-            {
-                throw new ArgumentNullException(nameof(discordClient));
-            }
+        }
 
-            lock (Sync)
+        internal DiscordOwnerErrorNotifier(
+            IOwnerAlertDelivery delivery,
+            Func<int, TimeSpan> retryDelay = null,
+            TimeSpan? shutdownFlushTimeout = null)
+        {
+            _delivery = delivery ?? throw new ArgumentNullException(nameof(delivery));
+            _retryDelay = retryDelay ?? (attempt => TimeSpan.FromSeconds(attempt));
+            _shutdownFlushTimeout = shutdownFlushTimeout ?? TimeSpan.FromSeconds(3);
+            _alerts = Channel.CreateBounded<string>(new BoundedChannelOptions(100)
             {
-                _discordClient = discordClient;
-                _worker ??= Task.Run(() => ProcessAlertsAsync(Shutdown.Token));
+                FullMode = BoundedChannelFullMode.DropOldest,
+                SingleReader = true,
+                SingleWriter = false
+            });
+            _worker = Task.Run(() => ProcessAlertsAsync(_shutdown.Token));
+        }
+
+        public void Enqueue(string alert)
+        {
+            if (Volatile.Read(ref _disposed) == 0)
+            {
+                _alerts.Writer.TryWrite(alert);
             }
         }
 
-        public static void Enqueue(string alert)
-        {
-            Alerts.Writer.TryWrite(alert);
-        }
-
-        public static async Task FlushAsync(TimeSpan timeout)
+        public async Task FlushAsync(TimeSpan timeout)
         {
             var deadline = DateTimeOffset.UtcNow.Add(timeout);
-            while ((Alerts.Reader.Count > 0 || Volatile.Read(ref _sendInProgress) != 0) &&
+            while ((_alerts.Reader.Count > 0 || Volatile.Read(ref _sendInProgress) != 0) &&
                    DateTimeOffset.UtcNow < deadline)
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(50));
+                await Task.Delay(TimeSpan.FromMilliseconds(25));
             }
         }
 
-        public static async ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0)
             {
                 return;
             }
 
-            Alerts.Writer.TryComplete();
-            Task worker;
-            lock (Sync)
+            _alerts.Writer.TryComplete();
+            await FlushAsync(_shutdownFlushTimeout);
+            _shutdown.Cancel();
+
+            try
             {
-                worker = _worker;
+                await _worker;
+            }
+            catch (OperationCanceledException)
+            {
             }
 
-            if (worker != null)
-            {
-                var completed = await Task.WhenAny(worker, Task.Delay(TimeSpan.FromSeconds(3)));
-                if (completed != worker)
-                {
-                    Shutdown.Cancel();
-                    completed = await Task.WhenAny(worker, Task.Delay(TimeSpan.FromSeconds(1)));
-                }
-
-                if (completed == worker)
-                {
-                    try
-                    {
-                        await worker;
-                    }
-                    catch (OperationCanceledException)
-                    {
-                    }
-                }
-            }
-
-            if (worker?.IsCompleted != false)
-            {
-                Shutdown.Dispose();
-            }
+            _shutdown.Dispose();
         }
 
-        private static async Task ProcessAlertsAsync(CancellationToken cancellationToken)
+        private async Task ProcessAlertsAsync(CancellationToken cancellationToken)
         {
-            await foreach (var alert in Alerts.Reader.ReadAllAsync(cancellationToken))
+            await foreach (var alert in _alerts.Reader.ReadAllAsync(cancellationToken))
             {
                 Interlocked.Exchange(ref _sendInProgress, 1);
                 try
                 {
-                    while (!cancellationToken.IsCancellationRequested)
-                    {
-                        try
-                        {
-                            if (_discordClient?.LoginState != LoginState.LoggedIn)
-                            {
-                                await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
-                                continue;
-                            }
-
-                            var owner = _discordClient.GetUser(BotOwner.DiscordUserId) ??
-                                await ((IDiscordClient)_discordClient).GetUserAsync(BotOwner.DiscordUserId, CacheMode.AllowDownload);
-                            if (owner == null)
-                            {
-                                throw new InvalidOperationException($"Discord user {BotOwner.DiscordUserId} could not be found.");
-                            }
-
-                            var directMessageChannel = await owner.GetOrCreateDMChannelAsync();
-                            await directMessageChannel.SendMessageAsync(alert);
-                            break;
-                        }
-                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                        {
-                            throw;
-                        }
-                        catch (Exception exception)
-                        {
-                            // Never log from here: doing so would enqueue another alert recursively.
-                            Console.Error.WriteLine($"Could not DM BeanBot error to its owner: {exception.Message}");
-                            await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
-                        }
-                    }
+                    await DeliverWithRetryAsync(alert, cancellationToken);
                 }
                 finally
                 {
                     Interlocked.Exchange(ref _sendInProgress, 0);
                 }
             }
+        }
+
+        private async Task DeliverWithRetryAsync(string alert, CancellationToken cancellationToken)
+        {
+            for (var attempt = 1; attempt <= DefaultMaximumAttempts; attempt++)
+            {
+                try
+                {
+                    // Discord.Net does not expose cancellation on every DM operation.
+                    // WaitAsync still guarantees the notifier worker and application
+                    // shutdown are not held hostage by a stalled network task.
+                    await _delivery.DeliverAsync(alert, cancellationToken).WaitAsync(cancellationToken);
+                    return;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    if (attempt == DefaultMaximumAttempts)
+                    {
+                        // Never use Serilog here: that would recursively enqueue another owner alert.
+                        Console.Error.WriteLine(
+                            $"Could not DM BeanBot error to its owner after {attempt} attempts: {exception.Message}");
+                        return;
+                    }
+
+                    await Task.Delay(_retryDelay(attempt), cancellationToken);
+                }
+            }
+        }
+    }
+
+    internal sealed class DiscordOwnerAlertDelivery : IOwnerAlertDelivery
+    {
+        private readonly DiscordSocketClient _discordClient;
+
+        public DiscordOwnerAlertDelivery(DiscordSocketClient discordClient)
+        {
+            _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
+        }
+
+        public async Task DeliverAsync(string alert, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_discordClient.LoginState != LoginState.LoggedIn)
+            {
+                throw new InvalidOperationException("Discord is not logged in, so the owner alert cannot be delivered yet.");
+            }
+
+            var owner = _discordClient.GetUser(BotOwner.DiscordUserId) ??
+                await ((IDiscordClient)_discordClient).GetUserAsync(BotOwner.DiscordUserId, CacheMode.AllowDownload);
+            if (owner == null)
+            {
+                throw new InvalidOperationException($"Discord user {BotOwner.DiscordUserId} could not be found.");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var directMessageChannel = await owner.GetOrCreateDMChannelAsync();
+            cancellationToken.ThrowIfCancellationRequested();
+            await directMessageChannel.SendMessageAsync(alert);
         }
     }
 }

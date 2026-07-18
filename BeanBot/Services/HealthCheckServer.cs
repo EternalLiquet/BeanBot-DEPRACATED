@@ -1,4 +1,4 @@
-using BeanBot.Util;
+using BeanBot.Configuration;
 
 using Discord.WebSocket;
 
@@ -21,38 +21,44 @@ namespace BeanBot.Services
 {
     public sealed class HealthCheckServer : IAsyncDisposable
     {
-        private const int MaxRequestLineLength = 2048;
-        private const int MaxHeaderCount = 100;
-        private const int MaxHeaderCharacters = 32 * 1024;
-        private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(5);
+        internal const int MaxRequestLineLength = 2048;
+        internal const int MaxHeaderLineLength = 8 * 1024;
+        internal const int MaxHeaderCount = 100;
+        internal const int MaxHeaderCharacters = 32 * 1024;
+        private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(5);
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         };
 
-        private readonly HealthCheckServerOptions _options;
+        private readonly HealthCheckOptions _options;
         private readonly DiscordSocketClient _discordClient;
         private readonly DiscordConnectionHealth _discordConnectionHealth;
+        private readonly TimeSpan _requestTimeout;
         private readonly ConcurrentDictionary<string, DateTimeOffset> _lastRequestByClient = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<int, Task> _clientTasks = new();
         private readonly CancellationTokenSource _shutdown = new();
+        private int _nextClientTaskId;
         private TcpListener _listener;
         private Task _listenerLoop;
 
         public HealthCheckServer(
-            HealthCheckServerOptions options,
+            HealthCheckOptions options,
             DiscordSocketClient discordClient,
-            DiscordConnectionHealth discordConnectionHealth)
+            DiscordConnectionHealth discordConnectionHealth,
+            TimeSpan? requestTimeout = null)
         {
-            _options = options;
-            _discordClient = discordClient;
-            _discordConnectionHealth = discordConnectionHealth;
+            _options = options ?? throw new ArgumentNullException(nameof(options));
+            _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
+            _discordConnectionHealth = discordConnectionHealth ?? throw new ArgumentNullException(nameof(discordConnectionHealth));
+            _requestTimeout = requestTimeout ?? DefaultRequestTimeout;
         }
 
-        public static HealthCheckServer CreateFromSettings(
+        public static HealthCheckServer Create(
+            HealthCheckOptions options,
             DiscordSocketClient discordClient,
             DiscordConnectionHealth discordConnectionHealth)
         {
-            var options = HealthCheckServerOptions.FromAppSettings();
             return options.Enabled
                 ? new HealthCheckServer(options, discordClient, discordConnectionHealth)
                 : null;
@@ -93,6 +99,8 @@ namespace BeanBot.Services
             }
         }
 
+        internal int BoundPort => (_listener?.LocalEndpoint as IPEndPoint)?.Port ?? 0;
+
         public async ValueTask DisposeAsync()
         {
             if (_listener is null)
@@ -118,6 +126,8 @@ namespace BeanBot.Services
                 }
             }
 
+            await Task.WhenAll(_clientTasks.Values);
+
             _shutdown.Dispose();
         }
 
@@ -128,8 +138,11 @@ namespace BeanBot.Services
                 TcpClient client = null;
                 try
                 {
-                    client = await _listener.AcceptTcpClientAsync().WaitAsync(cancellationToken);
-                    _ = Task.Run(() => HandleClientAsync(client, cancellationToken));
+                    client = await _listener.AcceptTcpClientAsync(cancellationToken);
+                    var taskId = Interlocked.Increment(ref _nextClientTaskId);
+                    _clientTasks[taskId] = HandleClientAsync(client, cancellationToken);
+                    RemoveCompletedClientTasks();
+                    client = null;
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -156,14 +169,25 @@ namespace BeanBot.Services
             }
         }
 
+        private void RemoveCompletedClientTasks()
+        {
+            foreach (var clientTask in _clientTasks)
+            {
+                if (clientTask.Value.IsCompleted)
+                {
+                    _clientTasks.TryRemove(clientTask.Key, out _);
+                }
+            }
+        }
+
         private async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)
         {
             using (client)
             {
                 await using var stream = client.GetStream();
-                using var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, leaveOpen: true);
+                var reader = new BoundedLineReader(stream);
                 using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                requestTimeout.CancelAfter(RequestTimeout);
+                requestTimeout.CancelAfter(_requestTimeout);
                 var requestToken = requestTimeout.Token;
 
                 try
@@ -171,14 +195,19 @@ namespace BeanBot.Services
                     client.ReceiveTimeout = 5000;
                     client.SendTimeout = 5000;
 
-                    var requestLine = await reader.ReadLineAsync().WaitAsync(requestToken);
-                    if (string.IsNullOrWhiteSpace(requestLine))
+                    string requestLine;
+                    try
                     {
-                        return;
+                        requestLine = await reader.ReadLineAsync(MaxRequestLineLength, requestToken);
                     }
-                    if (requestLine.Length > MaxRequestLineLength)
+                    catch (HttpLineTooLongException)
                     {
                         await WritePlainTextResponseAsync(stream, 414, "URI Too Long", "Request line is too long.", false, requestToken);
+                        return;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(requestLine))
+                    {
                         return;
                     }
 
@@ -187,9 +216,14 @@ namespace BeanBot.Services
                     {
                         headers = await ReadHeadersAsync(reader, requestToken);
                     }
-                    catch (InvalidDataException)
+                    catch (HttpHeadersTooLargeException)
                     {
                         await WritePlainTextResponseAsync(stream, 431, "Request Header Fields Too Large", "Request headers are too large.", false, requestToken);
+                        return;
+                    }
+                    catch (MalformedHttpHeaderException)
+                    {
+                        await WritePlainTextResponseAsync(stream, 400, "Bad Request", "Malformed HTTP request headers.", false, requestToken);
                         return;
                     }
                     if (!TryParseRequestLine(requestLine, out var method, out var target))
@@ -275,7 +309,8 @@ namespace BeanBot.Services
                 }
                 catch (OperationCanceledException)
                 {
-                    Log.Debug("Health check client exceeded the {TimeoutSeconds}s request timeout", RequestTimeout.TotalSeconds);
+                    Log.Debug("Health check client exceeded the {TimeoutSeconds}s request timeout", _requestTimeout.TotalSeconds);
+                    await TryWriteRequestTimeoutAsync(stream, cancellationToken);
                 }
                 catch (IOException)
                 {
@@ -341,33 +376,71 @@ namespace BeanBot.Services
             }
         }
 
-        private static async Task<Dictionary<string, string>> ReadHeadersAsync(StreamReader reader, CancellationToken cancellationToken)
+        private static async Task<Dictionary<string, string>> ReadHeadersAsync(BoundedLineReader reader, CancellationToken cancellationToken)
         {
             var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var totalCharacters = 0;
+            var headerCount = 0;
             while (true)
             {
-                var headerLine = await reader.ReadLineAsync().WaitAsync(cancellationToken);
-                if (string.IsNullOrEmpty(headerLine))
+                string headerLine;
+                try
+                {
+                    headerLine = await reader.ReadLineAsync(MaxHeaderLineLength, cancellationToken);
+                }
+                catch (HttpLineTooLongException exception)
+                {
+                    throw new HttpHeadersTooLargeException("An HTTP header line exceeded the configured limit.", exception);
+                }
+
+                if (headerLine == null)
+                {
+                    throw new MalformedHttpHeaderException("HTTP headers ended before the terminating blank line.");
+                }
+
+                if (headerLine.Length == 0)
                 {
                     return headers;
                 }
 
                 totalCharacters += headerLine.Length;
-                if (headers.Count >= MaxHeaderCount || totalCharacters > MaxHeaderCharacters)
+                headerCount++;
+                if (headerCount > MaxHeaderCount || totalCharacters > MaxHeaderCharacters)
                 {
-                    throw new InvalidDataException("HTTP request headers exceeded the configured limit.");
+                    throw new HttpHeadersTooLargeException("HTTP request headers exceeded the configured limit.");
                 }
 
                 var separatorIndex = headerLine.IndexOf(':');
                 if (separatorIndex <= 0)
                 {
-                    continue;
+                    throw new MalformedHttpHeaderException("An HTTP header was missing its name or separator.");
                 }
 
                 var headerName = headerLine.Substring(0, separatorIndex).Trim();
                 var headerValue = headerLine.Substring(separatorIndex + 1).Trim();
                 headers[headerName] = headerValue;
+            }
+        }
+
+        private static async Task TryWriteRequestTimeoutAsync(NetworkStream stream, CancellationToken shutdownToken)
+        {
+            using var responseTimeout = CancellationTokenSource.CreateLinkedTokenSource(shutdownToken);
+            responseTimeout.CancelAfter(TimeSpan.FromSeconds(1));
+            try
+            {
+                await WritePlainTextResponseAsync(
+                    stream,
+                    408,
+                    "Request Timeout",
+                    "The health request timed out.",
+                    false,
+                    responseTimeout.Token);
+            }
+            catch (Exception exception) when (
+                exception is IOException ||
+                exception is ObjectDisposedException ||
+                exception is OperationCanceledException)
+            {
             }
         }
 
@@ -468,64 +541,4 @@ namespace BeanBot.Services
         }
     }
 
-    public sealed class HealthCheckServerOptions
-    {
-        public bool Enabled { get; init; }
-        public IPAddress BindAddress { get; init; }
-        public int Port { get; init; }
-        public string Path { get; init; } = "/healthz";
-        public string BearerToken { get; init; }
-        public TimeSpan MinimumPollInterval { get; init; }
-
-        public static HealthCheckServerOptions FromAppSettings()
-        {
-            if (!AppSettings.Settings.TryGetValue("healthCheckPort", out var portValue))
-            {
-                return new HealthCheckServerOptions
-                {
-                    Enabled = false
-                };
-            }
-
-            if (!int.TryParse(portValue, NumberStyles.None, CultureInfo.InvariantCulture, out var port)
-                || port < IPEndPoint.MinPort
-                || port > IPEndPoint.MaxPort)
-            {
-                throw new InvalidOperationException(
-                    $"Invalid value for {AppSettings.DescribeSetting("healthCheckPort")}: '{portValue}'. Expected a TCP port between {IPEndPoint.MinPort} and {IPEndPoint.MaxPort}.");
-            }
-
-            var bindAddress = IPAddress.Any;
-            if (AppSettings.Settings.TryGetValue("healthCheckBindAddress", out var bindAddressValue)
-                && !IPAddress.TryParse(bindAddressValue, out bindAddress))
-            {
-                throw new InvalidOperationException(
-                    $"Invalid value for {AppSettings.DescribeSetting("healthCheckBindAddress")}: '{bindAddressValue}'. Expected an IP address such as 0.0.0.0 or 127.0.0.1.");
-            }
-
-            var minimumPollInterval = TimeSpan.FromSeconds(90);
-            if (AppSettings.Settings.TryGetValue("healthCheckRateLimitSeconds", out var rateLimitValue))
-            {
-                if (!int.TryParse(rateLimitValue, NumberStyles.None, CultureInfo.InvariantCulture, out var rateLimitSeconds)
-                    || rateLimitSeconds <= 0)
-                {
-                    throw new InvalidOperationException(
-                        $"Invalid value for {AppSettings.DescribeSetting("healthCheckRateLimitSeconds")}: '{rateLimitValue}'. Expected a positive number of seconds.");
-                }
-
-                minimumPollInterval = TimeSpan.FromSeconds(rateLimitSeconds);
-            }
-
-            AppSettings.Settings.TryGetValue("healthCheckBearerToken", out var bearerToken);
-
-            return new HealthCheckServerOptions
-            {
-                Enabled = true,
-                BindAddress = bindAddress,
-                Port = port,
-                BearerToken = bearerToken,
-                MinimumPollInterval = minimumPollInterval
-            };
-        }
-    }
 }

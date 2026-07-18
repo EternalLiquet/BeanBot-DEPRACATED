@@ -148,6 +148,7 @@ namespace BeanBot.Services
                 messageToListen.Channel.Id.ToString(),
                 messageToListen.Id.ToString());
             await _roleReactRepository.InsertNewRoleSettings(settings);
+            _roleSettings[settings.messageId] = settings;
         }
     }
 }

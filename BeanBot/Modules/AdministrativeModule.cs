@@ -1,6 +1,5 @@
 using BeanBot.Attributes;
 using BeanBot.Entities;
-using BeanBot.Repository;
 using BeanBot.Services;
 using Discord;
 using Discord.Addons.Interactive;
@@ -19,7 +18,16 @@ namespace BeanBot.Modules
     {
         private const int MaximumRolesPerGroup = 25;
         private static readonly TimeSpan InteractionTimeout = TimeSpan.FromSeconds(60);
-        private readonly RoleReactService _roleReactService = new RoleReactService(new RoleReactRepository());
+        private readonly RoleReactService _roleReactService;
+        private readonly DiscordMessageCleanupService _messageCleanupService;
+
+        public AdministrativeModule(
+            RoleReactService roleReactService,
+            DiscordMessageCleanupService messageCleanupService)
+        {
+            _roleReactService = roleReactService ?? throw new ArgumentNullException(nameof(roleReactService));
+            _messageCleanupService = messageCleanupService ?? throw new ArgumentNullException(nameof(messageCleanupService));
+        }
 
         [Command("role setting", RunMode = RunMode.Async)]
         [Summary("Will create a message for auto-role based on reactions")]
@@ -80,8 +88,17 @@ namespace BeanBot.Modules
                 }
 
                 messagesInInteraction.Add(labelMessage);
-                var messageToListen = await CreateMessageToListenAsync(roleEmotePairs, labelMessage.Content);
-                await _roleReactService.SaveRoleSettings(roleEmotePairs, messageToListen);
+                await ReactionRoleSetupTransaction.ExecuteAsync(
+                    () => CreateRoleMessageAsync(roleEmotePairs, labelMessage.Content),
+                    async messageToListen =>
+                    {
+                        await AddRoleReactionsAsync(messageToListen, roleEmotePairs);
+                        await _roleReactService.SaveRoleSettings(roleEmotePairs, messageToListen);
+                    },
+                    messageToListen => messageToListen.DeleteAsync(),
+                    exception => Log.Warning(
+                        exception,
+                        "Could not delete incomplete reaction-role message after setup failed"));
             }
             finally
             {
@@ -89,7 +106,7 @@ namespace BeanBot.Modules
             }
         }
 
-        private async Task<IMessage> CreateMessageToListenAsync(IEnumerable<RoleEmotePair> roleEmotePairs, string roleGroupLabel)
+        private async Task<IUserMessage> CreateRoleMessageAsync(IEnumerable<RoleEmotePair> roleEmotePairs, string roleGroupLabel)
         {
             var pairs = roleEmotePairs.ToList();
             var roleEmbed = new EmbedBuilder();
@@ -100,15 +117,18 @@ namespace BeanBot.Modules
             }
 
             roleEmbed.WithFooter(footer => footer.Text = $"Role Group: {roleGroupLabel}");
-            var messageToListen = await ReplyAsync(embed: roleEmbed.Build());
+            return await ReplyAsync(embed: roleEmbed.Build());
+        }
+
+        private async Task AddRoleReactionsAsync(IUserMessage messageToListen, IEnumerable<RoleEmotePair> roleEmotePairs)
+        {
+            var pairs = roleEmotePairs.ToList();
             foreach (var pair in pairs)
             {
                 var emote = Context.Guild.Emotes.First(candidate => candidate.Id.ToString() == pair.emojiId);
                 await messageToListen.AddReactionAsync(emote);
                 await Task.Delay(TimeSpan.FromMilliseconds(250));
             }
-
-            return messageToListen;
         }
 
         private async Task<(bool Success, int RoleCount)> GetRoleCountAsync(List<IMessage> messages, SocketMessage response)
@@ -179,7 +199,7 @@ namespace BeanBot.Modules
 
             try
             {
-                await textChannel.DeleteMessagesAsync(messages);
+                await _messageCleanupService.DeleteAsync(textChannel, messages);
             }
             catch (Exception exception)
             {
