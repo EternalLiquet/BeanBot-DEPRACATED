@@ -26,17 +26,34 @@ namespace BeanBot
         private EditMessageHandler _editMessageHandler;
         private ReactHandler _reactHandler;
         private HealthCheckServer _healthCheckServer;
-        public static string queueEightBallAnswer;
-        public static ulong queueRecipient;
+        internal static FortuneAnswerQueue FortuneAnswers { get; } = new FortuneAnswerQueue();
 
         static void Main(string[] args)
-            => new Program().StartAsync().GetAwaiter().GetResult();
+        {
+            try
+            {
+                new Program().StartAsync().GetAwaiter().GetResult();
+            }
+            catch (Exception exception)
+            {
+                Log.Fatal(exception, "BeanBot terminated because of an unhandled exception");
+                Environment.ExitCode = 1;
+            }
+            finally
+            {
+                DiscordOwnerErrorNotifier.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                Log.CloseAndFlush();
+            }
+        }
 
         public async Task StartAsync()
         {
             Support.StartupOperations();
+            AppDomain.CurrentDomain.UnhandledException += HandleUnhandledException;
+            TaskScheduler.UnobservedTaskException += HandleUnobservedTaskException;
             _discordConnectionHealth = new DiscordConnectionHealth();
             CreateNewDiscordSocketClientWithConfigurations();
+            DiscordOwnerErrorNotifier.Initialize(_discordClient);
             InitializeDiscordLifecycleTracking();
             _healthCheckServer = HealthCheckServer.CreateFromSettings(_discordClient, _discordConnectionHealth);
             _healthCheckServer?.Start();
@@ -50,12 +67,20 @@ namespace BeanBot
             _editMessageHandler.InitializeEventListener();
             _newMemberHandler = new NewMemberHandler(_discordClient);
             _newMemberHandler.InitializeNewMembers();
-            _reactHandler = new ReactHandler(_discordClient, new Services.RoleReactService(new Repository.RoleReactRepository()));
-            await _reactHandler.InitializeReactDependentServices();
+            _reactHandler = new ReactHandler(
+                _discordClient,
+                new RoleReactService(new Repository.RoleReactRepository(), _discordClient));
+            _reactHandler.InitializeReactDependentServices();
 
-            var cts = new CancellationTokenSource();
-            Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
-            AppDomain.CurrentDomain.ProcessExit += (_, __) => cts.Cancel();
+            using var cts = new CancellationTokenSource();
+            ConsoleCancelEventHandler cancelKeyPressHandler = (_, eventArgs) =>
+            {
+                eventArgs.Cancel = true;
+                cts.Cancel();
+            };
+            EventHandler processExitHandler = (_, __) => cts.Cancel();
+            Console.CancelKeyPress += cancelKeyPressHandler;
+            AppDomain.CurrentDomain.ProcessExit += processExitHandler;
             try
             {
                 await Task.Delay(Timeout.Infinite, cts.Token);
@@ -66,6 +91,16 @@ namespace BeanBot
             }
             finally
             {
+                Console.CancelKeyPress -= cancelKeyPressHandler;
+                AppDomain.CurrentDomain.ProcessExit -= processExitHandler;
+                _reactHandler?.Dispose();
+                _newMemberHandler?.Dispose();
+                _editMessageHandler?.Dispose();
+                _commandHandler?.Dispose();
+                _discordClient.Log -= LogHandler.LogMessages;
+                _discordClient.Ready -= OnDiscordReadyAsync;
+                _discordClient.Disconnected -= OnDiscordDisconnectedAsync;
+
                 if (_autoPunPoster is not null)
                 {
                     await _autoPunPoster.DisposeAsync();
@@ -76,6 +111,7 @@ namespace BeanBot
                     await _healthCheckServer.DisposeAsync();
                 }
 
+                await DiscordOwnerErrorNotifier.FlushAsync(TimeSpan.FromSeconds(3));
                 try
                 {
                     await _discordClient.StopAsync();
@@ -85,18 +121,23 @@ namespace BeanBot
                 {
                     Log.Error(e, "Error shutting down: ");
                 }
+
+                await DiscordOwnerErrorNotifier.FlushAsync(TimeSpan.FromSeconds(3));
+                _discordClient.Dispose();
+                AppDomain.CurrentDomain.UnhandledException -= HandleUnhandledException;
+                TaskScheduler.UnobservedTaskException -= HandleUnobservedTaskException;
             }
         }
 
         private async Task InstantiateCommandServices()
         {
             Log.Information("Instantiating Command Services");
-            CreateCommandServiceWithOptions(ref _commandService);
+            CreateCommandServiceWithOptions();
             _commandHandler = new CommandHandler(_discordClient, _commandService);
             await _commandHandler.InitializeCommandsAsync();
         }
 
-        private void CreateCommandServiceWithOptions(ref CommandService _commandService)
+        private void CreateCommandServiceWithOptions()
         {
             _commandService = new CommandService(new CommandServiceConfig
             {
@@ -138,7 +179,7 @@ namespace BeanBot
                 LogLevel = LogSeverity.Verbose,
                 MessageCacheSize = 50,
                 ExclusiveBulkDelete = true,
-                AlwaysDownloadUsers = true
+                AlwaysDownloadUsers = false
             });
         }
 
@@ -168,6 +209,24 @@ namespace BeanBot
             }
 
             return Task.CompletedTask;
+        }
+
+        private static void HandleUnhandledException(object sender, UnhandledExceptionEventArgs eventArgs)
+        {
+            if (eventArgs.ExceptionObject is Exception exception)
+            {
+                Log.Fatal(exception, "An unhandled application exception occurred");
+            }
+            else
+            {
+                Log.Fatal("An unhandled non-Exception error occurred: {Error}", eventArgs.ExceptionObject);
+            }
+        }
+
+        private static void HandleUnobservedTaskException(object sender, UnobservedTaskExceptionEventArgs eventArgs)
+        {
+            Log.Error(eventArgs.Exception, "An unobserved task exception occurred");
+            eventArgs.SetObserved();
         }
     }
 }

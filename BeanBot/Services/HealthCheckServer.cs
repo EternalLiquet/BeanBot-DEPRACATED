@@ -21,6 +21,10 @@ namespace BeanBot.Services
 {
     public sealed class HealthCheckServer : IAsyncDisposable
     {
+        private const int MaxRequestLineLength = 2048;
+        private const int MaxHeaderCount = 100;
+        private const int MaxHeaderCharacters = 32 * 1024;
+        private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(5);
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -59,6 +63,11 @@ namespace BeanBot.Services
             if (!_options.Enabled)
             {
                 return;
+            }
+
+            if (_listener is not null)
+            {
+                throw new InvalidOperationException("The health check server has already been started.");
             }
 
             _listener = new TcpListener(_options.BindAddress, _options.Port);
@@ -153,22 +162,39 @@ namespace BeanBot.Services
             {
                 await using var stream = client.GetStream();
                 using var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, leaveOpen: true);
+                using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                requestTimeout.CancelAfter(RequestTimeout);
+                var requestToken = requestTimeout.Token;
 
                 try
                 {
                     client.ReceiveTimeout = 5000;
                     client.SendTimeout = 5000;
 
-                    var requestLine = await reader.ReadLineAsync().WaitAsync(cancellationToken);
+                    var requestLine = await reader.ReadLineAsync().WaitAsync(requestToken);
                     if (string.IsNullOrWhiteSpace(requestLine))
                     {
                         return;
                     }
+                    if (requestLine.Length > MaxRequestLineLength)
+                    {
+                        await WritePlainTextResponseAsync(stream, 414, "URI Too Long", "Request line is too long.", false, requestToken);
+                        return;
+                    }
 
-                    var headers = await ReadHeadersAsync(reader, cancellationToken);
+                    Dictionary<string, string> headers;
+                    try
+                    {
+                        headers = await ReadHeadersAsync(reader, requestToken);
+                    }
+                    catch (InvalidDataException)
+                    {
+                        await WritePlainTextResponseAsync(stream, 431, "Request Header Fields Too Large", "Request headers are too large.", false, requestToken);
+                        return;
+                    }
                     if (!TryParseRequestLine(requestLine, out var method, out var target))
                     {
-                        await WritePlainTextResponseAsync(stream, 400, "Bad Request", "Malformed HTTP request.", false, cancellationToken);
+                        await WritePlainTextResponseAsync(stream, 400, "Bad Request", "Malformed HTTP request.", false, requestToken);
                         return;
                     }
 
@@ -182,14 +208,14 @@ namespace BeanBot.Services
                             "Method Not Allowed",
                             "Only GET and HEAD are supported.",
                             false,
-                            cancellationToken,
+                            requestToken,
                             ("Allow", "GET, HEAD"));
                         return;
                     }
 
                     if (!string.Equals(path, _options.Path, StringComparison.OrdinalIgnoreCase))
                     {
-                        await WritePlainTextResponseAsync(stream, 404, "Not Found", "Not Found", isHeadRequest, cancellationToken);
+                        await WritePlainTextResponseAsync(stream, 404, "Not Found", "Not Found", isHeadRequest, requestToken);
                         return;
                     }
 
@@ -201,7 +227,7 @@ namespace BeanBot.Services
                             "Unauthorized",
                             "Missing or invalid bearer token.",
                             isHeadRequest,
-                            cancellationToken,
+                            requestToken,
                             ("WWW-Authenticate", "Bearer"));
                         return;
                     }
@@ -220,7 +246,7 @@ namespace BeanBot.Services
                                 retryAfterSeconds = retryAfter
                             },
                             isHeadRequest,
-                            cancellationToken,
+                            requestToken,
                             ("Retry-After", retryAfter.ToString(CultureInfo.InvariantCulture)));
                         return;
                     }
@@ -242,10 +268,14 @@ namespace BeanBot.Services
                             lastDisconnectReason = healthSnapshot.LastDisconnectReason
                         },
                         isHeadRequest,
-                        cancellationToken);
+                        requestToken);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
+                }
+                catch (OperationCanceledException)
+                {
+                    Log.Debug("Health check client exceeded the {TimeoutSeconds}s request timeout", RequestTimeout.TotalSeconds);
                 }
                 catch (IOException)
                 {
@@ -314,12 +344,19 @@ namespace BeanBot.Services
         private static async Task<Dictionary<string, string>> ReadHeadersAsync(StreamReader reader, CancellationToken cancellationToken)
         {
             var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var totalCharacters = 0;
             while (true)
             {
                 var headerLine = await reader.ReadLineAsync().WaitAsync(cancellationToken);
                 if (string.IsNullOrEmpty(headerLine))
                 {
                     return headers;
+                }
+
+                totalCharacters += headerLine.Length;
+                if (headers.Count >= MaxHeaderCount || totalCharacters > MaxHeaderCharacters)
+                {
+                    throw new InvalidDataException("HTTP request headers exceeded the configured limit.");
                 }
 
                 var separatorIndex = headerLine.IndexOf(':');
@@ -334,13 +371,15 @@ namespace BeanBot.Services
             }
         }
 
-        private static bool TryParseRequestLine(string requestLine, out string method, out string target)
+        internal static bool TryParseRequestLine(string requestLine, out string method, out string target)
         {
             method = null;
             target = null;
 
             var parts = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length < 2)
+            if (parts.Length != 3 ||
+                (!string.Equals(parts[2], "HTTP/1.1", StringComparison.OrdinalIgnoreCase) &&
+                 !string.Equals(parts[2], "HTTP/1.0", StringComparison.OrdinalIgnoreCase)))
             {
                 return false;
             }
@@ -350,7 +389,7 @@ namespace BeanBot.Services
             return true;
         }
 
-        private static string ExtractPath(string requestTarget)
+        internal static string ExtractPath(string requestTarget)
         {
             var path = requestTarget;
             var queryIndex = path.IndexOf('?');
@@ -404,8 +443,7 @@ namespace BeanBot.Services
             CancellationToken cancellationToken,
             params (string Name, string Value)[] extraHeaders)
         {
-            var bodyText = suppressBody ? string.Empty : body ?? string.Empty;
-            var bodyBytes = Encoding.UTF8.GetBytes(bodyText);
+            var bodyBytes = Encoding.UTF8.GetBytes(body ?? string.Empty);
             var responseBuilder = new StringBuilder()
                 .Append("HTTP/1.1 ").Append(statusCode).Append(' ').Append(reasonPhrase).Append("\r\n")
                 .Append("Content-Type: ").Append(contentType).Append("\r\n")
@@ -421,7 +459,7 @@ namespace BeanBot.Services
 
             var headerBytes = Encoding.ASCII.GetBytes(responseBuilder.ToString());
             await stream.WriteAsync(headerBytes.AsMemory(), cancellationToken);
-            if (bodyBytes.Length > 0)
+            if (!suppressBody && bodyBytes.Length > 0)
             {
                 await stream.WriteAsync(bodyBytes.AsMemory(), cancellationToken);
             }

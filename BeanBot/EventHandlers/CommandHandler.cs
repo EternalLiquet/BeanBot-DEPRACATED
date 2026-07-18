@@ -13,17 +13,18 @@ using System.Threading.Tasks;
 
 namespace BeanBot.EventHandlers
 {
-    public class CommandHandler
+    public sealed class CommandHandler : IDisposable
     {
         private readonly DiscordSocketClient _discordClient;
         private readonly CommandService _commandService;
         private readonly IServiceProvider _services;
+        private bool _initialized;
 
         public CommandHandler(DiscordSocketClient discordClient, CommandService commandService)
         {
             Log.Information("Instantiating Command Handler");
-            this._discordClient = discordClient;
-            this._commandService = commandService;
+            _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
+            _commandService = commandService ?? throw new ArgumentNullException(nameof(commandService));
             _services = new ServiceCollection()
                 .AddSingleton(_discordClient)
                 .AddSingleton(_commandService)
@@ -33,11 +34,29 @@ namespace BeanBot.EventHandlers
 
         public async Task InitializeCommandsAsync()
         {
+            if (_initialized)
+            {
+                return;
+            }
+
             Log.Information("Installing Commands");
             _discordClient.MessageReceived += HandleCommandAsync;
             _commandService.CommandExecuted += LogHandler.LogCommands;
-            await _commandService.AddModulesAsync(assembly: Assembly.GetEntryAssembly(),
+            await _commandService.AddModulesAsync(assembly: Assembly.GetEntryAssembly() ?? typeof(CommandHandler).Assembly,
                                                   services: _services);
+            _initialized = true;
+        }
+
+        public void Dispose()
+        {
+            if (_initialized)
+            {
+                _discordClient.MessageReceived -= HandleCommandAsync;
+                _commandService.CommandExecuted -= LogHandler.LogCommands;
+                _initialized = false;
+            }
+
+            (_services as IDisposable)?.Dispose();
         }
 
         internal async Task HandleCommandAsync(SocketMessage messageEvent)
@@ -49,19 +68,12 @@ namespace BeanBot.EventHandlers
             }
 
             int argPos = 0;
-            if (discordMessage.Author.Id == 114559039731531781 && discordMessage.Content.Contains("queue8"))
+            if (discordMessage.Author.Id == BotOwner.DiscordUserId &&
+                discordMessage.Content.Contains("queue8", StringComparison.OrdinalIgnoreCase))
             {
-                Console.WriteLine("hello????");
-                if (discordMessage.Content.Contains("yes"))
-                {
-                    Program.queueEightBallAnswer = "positive";
-                    Program.queueRecipient = discordMessage.Author.Id;
-                }
-                else
-                {
-                    Program.queueEightBallAnswer = "negative";
-                    Program.queueRecipient = discordMessage.Author.Id;
-                }
+                Program.FortuneAnswers.Queue(
+                    discordMessage.Author.Id,
+                    discordMessage.Content.Contains("yes", StringComparison.OrdinalIgnoreCase));
             }
             if (!MessageHasCommandPrefix(discordMessage, ref argPos) ||
                 messageEvent.Author.IsBot)
@@ -84,15 +96,6 @@ namespace BeanBot.EventHandlers
         }
 
         internal bool MessageIsSystemMessage(SocketUserMessage discordMessage)
-        {
-            if (discordMessage == null)
-            {
-                return true;
-            }
-            else
-            {
-                return false;
-            }
-        }
+            => discordMessage == null;
     }
 }

@@ -18,7 +18,7 @@ namespace BeanBot.EventHandlers
         private readonly DiscordSocketClient _discordClient;
         private readonly ulong _generalChannelId;
         private readonly CancellationTokenSource _tokenSource = new();
-        private Task? _runner;
+        private Task _runner;
 
         private static readonly TimeSpan PostTimeLocal = new TimeSpan(16, 20, 0);
 
@@ -31,6 +31,11 @@ namespace BeanBot.EventHandlers
 
         public void Start()
         {
+            if (_runner is not null)
+            {
+                throw new InvalidOperationException("The daily pun service has already been started.");
+            }
+
             _runner = Task.Run(() => RunAsync(_tokenSource.Token));
         }
 
