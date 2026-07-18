@@ -25,6 +25,8 @@ namespace BeanBot.Services
         internal const int MaxHeaderLineLength = 8 * 1024;
         internal const int MaxHeaderCount = 100;
         internal const int MaxHeaderCharacters = 32 * 1024;
+        internal const int DefaultMaximumConcurrentClients = 64;
+        internal const int DefaultMaximumTrackedRateLimitClients = 4096;
         private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(5);
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
@@ -35,10 +37,14 @@ namespace BeanBot.Services
         private readonly DiscordSocketClient _discordClient;
         private readonly DiscordConnectionHealth _discordConnectionHealth;
         private readonly TimeSpan _requestTimeout;
-        private readonly ConcurrentDictionary<string, DateTimeOffset> _lastRequestByClient = new(StringComparer.Ordinal);
+        private readonly BoundedClientRateLimiter _rateLimiter;
+        private readonly SemaphoreSlim _clientCapacity;
         private readonly ConcurrentDictionary<int, Task> _clientTasks = new();
         private readonly CancellationTokenSource _shutdown = new();
         private int _nextClientTaskId;
+        private int _activeClientHandlers;
+        private int _peakActiveClientHandlers;
+        private int _disposed;
         private TcpListener _listener;
         private Task _listenerLoop;
 
@@ -46,12 +52,21 @@ namespace BeanBot.Services
             HealthCheckOptions options,
             DiscordSocketClient discordClient,
             DiscordConnectionHealth discordConnectionHealth,
-            TimeSpan? requestTimeout = null)
+            TimeSpan? requestTimeout = null,
+            int maximumConcurrentClients = DefaultMaximumConcurrentClients,
+            int maximumTrackedRateLimitClients = DefaultMaximumTrackedRateLimitClients)
         {
+            if (maximumConcurrentClients <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(maximumConcurrentClients));
+            }
+
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
             _discordConnectionHealth = discordConnectionHealth ?? throw new ArgumentNullException(nameof(discordConnectionHealth));
             _requestTimeout = requestTimeout ?? DefaultRequestTimeout;
+            _rateLimiter = new BoundedClientRateLimiter(options.MinimumPollInterval, maximumTrackedRateLimitClients);
+            _clientCapacity = new SemaphoreSlim(maximumConcurrentClients, maximumConcurrentClients);
         }
 
         public static HealthCheckServer Create(
@@ -69,6 +84,11 @@ namespace BeanBot.Services
             if (!_options.Enabled)
             {
                 return;
+            }
+
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                throw new ObjectDisposedException(nameof(HealthCheckServer));
             }
 
             if (_listener is not null)
@@ -100,11 +120,20 @@ namespace BeanBot.Services
         }
 
         internal int BoundPort => (_listener?.LocalEndpoint as IPEndPoint)?.Port ?? 0;
+        internal int ActiveClientTaskCount => _clientTasks.Count;
+        internal int ActiveClientHandlerCount => Volatile.Read(ref _activeClientHandlers);
+        internal int PeakActiveClientHandlers => Volatile.Read(ref _peakActiveClientHandlers);
 
         public async ValueTask DisposeAsync()
         {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                return;
+            }
+
             if (_listener is null)
             {
+                _clientCapacity.Dispose();
                 _shutdown.Dispose();
                 return;
             }
@@ -126,9 +155,22 @@ namespace BeanBot.Services
                 }
             }
 
-            await Task.WhenAll(_clientTasks.Values);
-
-            _shutdown.Dispose();
+            try
+            {
+                await Task.WhenAll(_clientTasks.Values);
+            }
+            catch (Exception exception)
+            {
+                // Client handlers normally absorb connection failures. A task escaping
+                // faulted indicates an implementation failure and should remain visible.
+                Log.Error(exception, "A health check client task failed during shutdown.");
+            }
+            finally
+            {
+                RemoveCompletedClientTasks(logFaults: false);
+                _clientCapacity.Dispose();
+                _shutdown.Dispose();
+            }
         }
 
         private async Task AcceptLoopAsync(CancellationToken cancellationToken)
@@ -139,8 +181,19 @@ namespace BeanBot.Services
                 try
                 {
                     client = await _listener.AcceptTcpClientAsync(cancellationToken);
+                    RemoveCompletedClientTasks();
+
+                    if (!_clientCapacity.Wait(0))
+                    {
+                        // Capacity is enforced before a handler task is created. Closing
+                        // here bounds sockets, tasks, and queued work during connection bursts.
+                        client.Dispose();
+                        client = null;
+                        continue;
+                    }
+
                     var taskId = Interlocked.Increment(ref _nextClientTaskId);
-                    _clientTasks[taskId] = HandleClientAsync(client, cancellationToken);
+                    _clientTasks[taskId] = HandleClientWithCapacityAsync(client, cancellationToken);
                     RemoveCompletedClientTasks();
                     client = null;
                 }
@@ -169,13 +222,52 @@ namespace BeanBot.Services
             }
         }
 
-        private void RemoveCompletedClientTasks()
+        private async Task HandleClientWithCapacityAsync(TcpClient client, CancellationToken cancellationToken)
+        {
+            var activeHandlers = Interlocked.Increment(ref _activeClientHandlers);
+            UpdatePeakActiveClientHandlers(activeHandlers);
+            try
+            {
+                await HandleClientAsync(client, cancellationToken);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _activeClientHandlers);
+                _clientCapacity.Release();
+            }
+        }
+
+        private void UpdatePeakActiveClientHandlers(int activeHandlers)
+        {
+            var observedPeak = Volatile.Read(ref _peakActiveClientHandlers);
+            while (activeHandlers > observedPeak)
+            {
+                var priorPeak = Interlocked.CompareExchange(
+                    ref _peakActiveClientHandlers,
+                    activeHandlers,
+                    observedPeak);
+                if (priorPeak == observedPeak)
+                {
+                    return;
+                }
+
+                observedPeak = priorPeak;
+            }
+        }
+
+        private void RemoveCompletedClientTasks(bool logFaults = true)
         {
             foreach (var clientTask in _clientTasks)
             {
-                if (clientTask.Value.IsCompleted)
+                if (clientTask.Value.IsCompleted && _clientTasks.TryRemove(clientTask.Key, out var completedTask))
                 {
-                    _clientTasks.TryRemove(clientTask.Key, out _);
+                    if (logFaults && completedTask.IsFaulted)
+                    {
+                        // Reading Exception observes the fault before the task leaves the
+                        // active collection. Routine connection errors are handled inside
+                        // HandleClientAsync and never arrive here.
+                        Log.Error(completedTask.Exception, "A health check client task failed unexpectedly.");
+                    }
                 }
             }
         }
@@ -232,7 +324,12 @@ namespace BeanBot.Services
                         return;
                     }
 
-                    var path = ExtractPath(target);
+                    if (!TryExtractPath(target, out var path))
+                    {
+                        await WritePlainTextResponseAsync(stream, 400, "Bad Request", "Malformed request target.", false, requestToken);
+                        return;
+                    }
+
                     var isHeadRequest = string.Equals(method, "HEAD", StringComparison.OrdinalIgnoreCase);
                     if (!string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) && !isHeadRequest)
                     {
@@ -344,37 +441,7 @@ namespace BeanBot.Services
         }
 
         private bool IsRateLimited(string clientIdentifier, out int retryAfterSeconds)
-        {
-            while (true)
-            {
-                var now = DateTimeOffset.UtcNow;
-                if (!_lastRequestByClient.TryGetValue(clientIdentifier, out var lastRequestAt))
-                {
-                    if (_lastRequestByClient.TryAdd(clientIdentifier, now))
-                    {
-                        retryAfterSeconds = 0;
-                        return false;
-                    }
-
-                    continue;
-                }
-
-                var nextAllowedAt = lastRequestAt.Add(_options.MinimumPollInterval);
-                if (now >= nextAllowedAt)
-                {
-                    if (_lastRequestByClient.TryUpdate(clientIdentifier, now, lastRequestAt))
-                    {
-                        retryAfterSeconds = 0;
-                        return false;
-                    }
-
-                    continue;
-                }
-
-                retryAfterSeconds = (int)Math.Ceiling((nextAllowedAt - now).TotalSeconds);
-                return true;
-            }
-        }
+            => _rateLimiter.IsRateLimited(clientIdentifier, out retryAfterSeconds);
 
         private static async Task<Dictionary<string, string>> ReadHeadersAsync(BoundedLineReader reader, CancellationToken cancellationToken)
         {
@@ -462,18 +529,49 @@ namespace BeanBot.Services
             return true;
         }
 
-        internal static string ExtractPath(string requestTarget)
+        internal static bool TryExtractPath(string requestTarget, out string path)
         {
-            var path = requestTarget;
-            var queryIndex = path.IndexOf('?');
-            if (queryIndex >= 0)
+            path = null;
+            if (requestTarget == null)
             {
-                path = path.Substring(0, queryIndex);
+                return false;
             }
 
-            return string.IsNullOrWhiteSpace(path)
-                ? "/"
-                : Uri.UnescapeDataString(path);
+            var encodedPath = requestTarget;
+            var queryIndex = encodedPath.IndexOf('?');
+            if (queryIndex >= 0)
+            {
+                encodedPath = encodedPath.Substring(0, queryIndex);
+            }
+
+            for (var index = 0; index < encodedPath.Length; index++)
+            {
+                if (encodedPath[index] != '%')
+                {
+                    continue;
+                }
+
+                if (index + 2 >= encodedPath.Length ||
+                    !Uri.IsHexDigit(encodedPath[index + 1]) ||
+                    !Uri.IsHexDigit(encodedPath[index + 2]))
+                {
+                    return false;
+                }
+
+                index += 2;
+            }
+
+            try
+            {
+                path = string.IsNullOrWhiteSpace(encodedPath)
+                    ? "/"
+                    : Uri.UnescapeDataString(encodedPath);
+                return true;
+            }
+            catch (UriFormatException)
+            {
+                return false;
+            }
         }
 
         private static string GetClientIdentifier(TcpClient client)
