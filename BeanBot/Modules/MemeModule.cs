@@ -141,7 +141,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task EightBall([Remainder] string question)
         {
-            await Task.Factory.StartNew(() => { _ = ChooseRandomAnswer(question); });
+            await ChooseRandomAnswer(question);
         }
 
         [Command("pun")]
@@ -246,11 +246,26 @@ namespace BeanBot.Modules
 
         private async Task ChooseRandomAnswer(string question)
         {
-            if (IsQuestion(question))
+            var responseOverride = FortuneResponseOverrides.GetResponse(question);
+            if (responseOverride != null)
+            {
+                var queuedAnswerToConsume = Context.Message.Author.Id == Program.queueRecipient
+                    ? Program.queueEightBallAnswer
+                    : null;
+                await ReplyAsync($"> {question} \n{responseOverride}");
+
+                if (queuedAnswerToConsume != null &&
+                    Program.queueEightBallAnswer == queuedAnswerToConsume &&
+                    Context.Message.Author.Id == Program.queueRecipient)
+                {
+                    Program.queueEightBallAnswer = null;
+                }
+            }
+            else if (QuestionValidator.IsQuestion(question))
             {
                 if (IsPunMaster())
                 {
-                    HandlePunMaster(question);
+                    await HandlePunMaster(question);
                 }
                 else
                 {
@@ -290,7 +305,7 @@ namespace BeanBot.Modules
             }
         }
 
-        private async void HandlePunMaster(string question)
+        private async Task HandlePunMaster(string question)
         {
             if (question.ToLower().Contains("post") && question.ToLower().Contains("succ") ||
                 question.ToLower().Contains("rigged") && !question.ToLower().Contains("not") ||
@@ -323,11 +338,6 @@ namespace BeanBot.Modules
         private bool IsPunMaster()
         {
             return (Context.Message.Author.Id == 262010462323998720);
-        }
-
-        private bool IsQuestion(string question)
-        {
-            return question.EndsWith('?');
         }
 
         private async Task sendImageFromUrl(string url)
