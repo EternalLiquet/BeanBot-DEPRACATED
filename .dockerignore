@@ -1,7 +1,13 @@
 .git
 .github
+.agents
+.artifacts
+.dotnet
+.dotnet-home
+.scratch
 .vs
 **/bin
 **/obj
 BeanBotFiles
+BeanBot.Tests
 .env

@@ -3,7 +3,6 @@ using Discord.Commands;
 using Discord.WebSocket;
 using Serilog;
 
-using System;
 using System.IO;
 using System.Threading.Tasks;
 
@@ -11,67 +10,90 @@ namespace BeanBot.Util
 {
     public static class LogHandler
     {
-        public static void CreateLoggerConfiguration()
+        internal static void CreateLoggerConfiguration(IOwnerErrorNotifier ownerErrorNotifier)
         {
             Log.Logger = new LoggerConfiguration()
                 .MinimumLevel.Verbose()
                 .WriteTo.Console()
                 .WriteTo.Async(a => a.File(Path.Combine(DirectorySetup.botBaseDirectory, "Logs", "BeanBotLogs.txt"), rollingInterval: RollingInterval.Day))
+                .WriteTo.Sink(new DiscordOwnerErrorSink(ownerErrorNotifier))
                 .CreateLogger();
             Log.Information("Logger Configuration complete");
         }
 
         public static Task LogMessages(LogMessage messages)
         {
-            if (messages.Source != null && messages.Message != null)
+            var formattedMessage = string.IsNullOrWhiteSpace(messages.Source)
+                ? messages.Message ?? messages.ToString()
+                : $"Discord:\t{messages.Source}\t{messages.Message}";
+
+            switch (messages.Severity)
             {
-                string formattedMessage = (messages.Source != null && messages.Message != null) ? 
-                    $"Discord:\t{messages.Source.ToString()}\t{messages.Message.ToString()}" :
-                    $"Discord:\t{messages.ToString()}";
-                switch (messages.Severity)
-                {
-                    case LogSeverity.Critical:
-                        Log.Fatal(formattedMessage);
-                        break;
-                    case LogSeverity.Error:
-                        Log.Error(formattedMessage);
-                        break;
-                    case LogSeverity.Warning:
-                        Log.Warning(formattedMessage);
-                        break;
-                    case LogSeverity.Info:
-                        Log.Information(formattedMessage);
-                        break;
-                    case LogSeverity.Verbose:
-                        Log.Verbose(formattedMessage);
-                        break;
-                    default:
-                        Log.Information($"Log Severity: {messages.Severity}");
-                        Log.Information(formattedMessage);
-                        break;
-                }
+                case LogSeverity.Critical:
+                    Log.Fatal(messages.Exception, "{DiscordMessage}", formattedMessage);
+                    break;
+                case LogSeverity.Error:
+                    Log.Error(messages.Exception, "{DiscordMessage}", formattedMessage);
+                    break;
+                case LogSeverity.Warning:
+                    Log.Warning(messages.Exception, "{DiscordMessage}", formattedMessage);
+                    break;
+                case LogSeverity.Info:
+                    Log.Information(messages.Exception, "{DiscordMessage}", formattedMessage);
+                    break;
+                case LogSeverity.Verbose:
+                    Log.Verbose(messages.Exception, "{DiscordMessage}", formattedMessage);
+                    break;
+                case LogSeverity.Debug:
+                    Log.Debug(messages.Exception, "{DiscordMessage}", formattedMessage);
+                    break;
+                default:
+                    Log.Information(messages.Exception, "Discord log ({Severity}): {DiscordMessage}", messages.Severity, formattedMessage);
+                    break;
             }
+
             return Task.CompletedTask;
         }
 
-        public async static Task LogNewMember(SocketGuildUser newUser)
+        public static Task LogNewMember(SocketGuildUser newUser)
         {
-            string formattedMessage = $"Discord:\t{newUser.Username} has joined {newUser.Guild} on {DateTime.UtcNow}";
-            Log.Information(formattedMessage);
+            Log.Information("Discord user {Username} ({UserId}) joined {Guild}", newUser.Username, newUser.Id, newUser.Guild);
+            return Task.CompletedTask;
         }
 
         public static Task LogCommands(Optional<CommandInfo> command, ICommandContext context, IResult result)
         {
             var commandName = command.IsSpecified ? command.Value.Name : "Unspecified Command";
-            string formattedMessage = $"Discord:\t{commandName} was executed at {DateTime.UtcNow}";
             if (result.IsSuccess)
             {
-                Log.Information(formattedMessage);
+                Log.Information("Discord command {CommandName} was executed", commandName);
             }
             else
             {
-                Log.Error($"{formattedMessage}\n\t\t\tInput: {context.Message}");
-                Log.Error($"{result.Error}, {result.ErrorReason}");
+                var isExpectedUserError = result.Error == CommandError.UnknownCommand ||
+                    result.Error == CommandError.ParseFailed ||
+                    result.Error == CommandError.BadArgCount ||
+                    result.Error == CommandError.ObjectNotFound ||
+                    result.Error == CommandError.MultipleMatches ||
+                    result.Error == CommandError.UnmetPrecondition;
+                if (isExpectedUserError)
+                {
+                    Log.Warning(
+                        "Discord command {CommandName} was rejected with {Error}: {Reason}. Input: {Input}",
+                        commandName,
+                        result.Error,
+                        result.ErrorReason,
+                        context.Message);
+                }
+                else
+                {
+                    Log.Error(
+                        "Discord command {CommandName} failed with {Error}: {Reason}. Input: {Input}",
+                        commandName,
+                        result.Error,
+                        result.ErrorReason,
+                        context.Message);
+                }
             }
             return Task.CompletedTask;
         }

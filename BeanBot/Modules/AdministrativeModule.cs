@@ -1,15 +1,14 @@
-﻿using BeanBot.Attributes;
+using BeanBot.Attributes;
 using BeanBot.Entities;
-using BeanBot.Repository;
 using BeanBot.Services;
 using Discord;
 using Discord.Addons.Interactive;
 using Discord.Commands;
 using Discord.WebSocket;
+using Serilog;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace BeanBot.Modules
@@ -17,7 +16,18 @@ namespace BeanBot.Modules
     [Name("Administrative Commands")]
     public class AdministrativeModule : InteractiveBase
     {
-        private readonly RoleReactService roleReactService = new RoleReactService(new RoleReactRepository());
+        private const int MaximumRolesPerGroup = 25;
+        private static readonly TimeSpan InteractionTimeout = TimeSpan.FromSeconds(60);
+        private readonly RoleReactService _roleReactService;
+        private readonly DiscordMessageCleanupService _messageCleanupService;
+
+        public AdministrativeModule(
+            RoleReactService roleReactService,
+            DiscordMessageCleanupService messageCleanupService)
+        {
+            _roleReactService = roleReactService ?? throw new ArgumentNullException(nameof(roleReactService));
+            _messageCleanupService = messageCleanupService ?? throw new ArgumentNullException(nameof(messageCleanupService));
+        }
 
         [Command("role setting", RunMode = RunMode.Async)]
         [Summary("Will create a message for auto-role based on reactions")]
@@ -26,183 +36,175 @@ namespace BeanBot.Modules
         [RequireGuild]
         [RequireUserPermission(GuildPermission.ManageRoles)]
         [RequireBotPermission(GuildPermission.EmbedLinks)]
-        public async Task RoleSetting()
-        {
-            await Task.Factory.StartNew(() => { _ = InvokeRoleSettingsAsync(); });
-        }
+        public Task RoleSetting() => InvokeRoleSettingsAsync();
 
-        public async Task InvokeRoleSettingsAsync()
+        internal async Task InvokeRoleSettingsAsync()
         {
-
-            List<IMessage> messagesInInteraction = new List<IMessage>();
+            var messagesInInteraction = new List<IMessage> { Context.Message };
             try
             {
-
-                messagesInInteraction.Add(Context.Message);
-                List<RoleEmotePair> roleEmotePair = new List<RoleEmotePair>();
-                messagesInInteraction.Add(await ReplyAsync("How many roles do you wish to configure?"));
-                var amountOfRoles = await NextMessageAsync(timeout: TimeSpan.FromSeconds(60));
-                if (!await IsNumberOfRolesNotNullAndValid(messagesInInteraction, amountOfRoles))
+                var roleEmotePairs = new List<RoleEmotePair>();
+                messagesInInteraction.Add(await ReplyAsync($"How many roles do you wish to configure? (1-{MaximumRolesPerGroup})"));
+                var amountMessage = await NextMessageAsync(timeout: InteractionTimeout);
+                var roleCountResult = await GetRoleCountAsync(messagesInInteraction, amountMessage);
+                if (!roleCountResult.Success)
                 {
                     return;
                 }
 
-                for (int i = 0; i < int.Parse(amountOfRoles.Content); i++)
+                for (var index = 0; index < roleCountResult.RoleCount; index++)
                 {
                     messagesInInteraction.Add(await ReplyAsync("Which role would you like to set up?"));
-                    var roleToSetup = await NextMessageAsync(timeout: TimeSpan.FromSeconds(60));
-                    var roleToAdd = (roleToSetup.Channel as SocketTextChannel).Guild.Roles.First(role => roleToSetup.Content.ToString().ToLower().Trim() == role.Name.ToString().ToLower().Trim());
-                    if (!await IsRoleNotNullAndValid(messagesInInteraction, roleToSetup, roleToAdd))
+                    var roleMessage = await NextMessageAsync(timeout: InteractionTimeout);
+                    var role = await GetRoleAsync(messagesInInteraction, roleMessage);
+                    if (role == null)
                     {
                         return;
                     }
 
-                    messagesInInteraction.Add(await ReplyAsync($"Which emote would you like to set up with the role {roleToSetup.Content}"));
-                    var emoteToSetup = await NextMessageAsync(timeout: TimeSpan.FromSeconds(60));
-                    var emoteToAdd = (emoteToSetup.Channel as SocketTextChannel).Guild.Emotes.FirstOrDefault(emote => emoteToSetup.Content.Contains(emote.Name));
-                    if (!await IsEmoteNotNullAndValid(messagesInInteraction, emoteToSetup, emoteToAdd))
+                    messagesInInteraction.Add(await ReplyAsync($"Which emote would you like to set up with the role {role.Name}?"));
+                    var emoteMessage = await NextMessageAsync(timeout: InteractionTimeout);
+                    var emote = await GetEmoteAsync(messagesInInteraction, emoteMessage);
+                    if (emote == null)
                     {
                         return;
                     }
 
-                    if (roleEmotePair.Find(role => role.roleId == roleToAdd.Id.ToString()) != null || roleEmotePair.Find(emote => emote.emojiId == emoteToAdd.Id.ToString()) != null)
+                    if (roleEmotePairs.Any(pair => pair.roleId == role.Id.ToString() || pair.emojiId == emote.Id.ToString()))
                     {
-                        messagesInInteraction.Add(await ReplyAsync("You seem to have entered a role or emote that is already being setup, please try again"));
+                        messagesInInteraction.Add(await ReplyAsync("That role or emote is already being configured. Please start again."));
                         return;
                     }
-                    else
-                    {
-                        roleEmotePair.Add(new RoleEmotePair(roleToAdd.Id.ToString(), emoteToAdd.Id.ToString()));
-                    }
+
+                    roleEmotePairs.Add(new RoleEmotePair(role.Id.ToString(), emote.Id.ToString()));
                 }
-                messagesInInteraction.Add(await ReplyAsync("Please label this group of roles (i.e Games, Position, NSFW, etc)"));
-                var roleGroupLabel = await NextMessageAsync();
-                if (!await IsRoleGroupLabelNotNull(messagesInInteraction, roleGroupLabel))
+
+                messagesInInteraction.Add(await ReplyAsync("Please label this group of roles (i.e. Games, Position, NSFW, etc)."));
+                var labelMessage = await NextMessageAsync(timeout: InteractionTimeout);
+                if (labelMessage == null)
                 {
+                    messagesInInteraction.Add(await ReplyAsync("Time has expired, please try again."));
                     return;
                 }
 
-                var messageToListen = await CreateMessageToListen(roleEmotePair, roleGroupLabel.Content);
-                await roleReactService.SaveRoleSettings(roleEmotePair, messageToListen);
+                messagesInInteraction.Add(labelMessage);
+                await ReactionRoleSetupTransaction.ExecuteAsync(
+                    () => CreateRoleMessageAsync(roleEmotePairs, labelMessage.Content),
+                    async messageToListen =>
+                    {
+                        await AddRoleReactionsAsync(messageToListen, roleEmotePairs);
+                        await _roleReactService.SaveRoleSettings(roleEmotePairs, messageToListen);
+                    },
+                    messageToListen => messageToListen.DeleteAsync(),
+                    exception => Log.Warning(
+                        exception,
+                        "Could not delete incomplete reaction-role message after setup failed"));
             }
             finally
             {
-                await CleanUpMessagesAfterFiveSeconds(messagesInInteraction);
+                await CleanUpMessagesAsync(messagesInInteraction);
             }
         }
 
-        /*[Command("delete messages")]
-        public async Task DeleteMessages(int amountOfMessages)
+        private async Task<IUserMessage> CreateRoleMessageAsync(IEnumerable<RoleEmotePair> roleEmotePairs, string roleGroupLabel)
         {
-            var messages = await Context.Channel.GetMessagesAsync(amountOfMessages + 1).FlattenAsync();
-            await (Context.Channel as ITextChannel).DeleteMessagesAsync(messages);
-
-        }*/
-
-        private async Task<bool> IsRoleGroupLabelNotNull(List<IMessage> messagesInInteraction, SocketMessage roleGroupLabel)
-        {
-            if (roleGroupLabel != null)
+            var pairs = roleEmotePairs.ToList();
+            var roleEmbed = new EmbedBuilder();
+            foreach (var pair in pairs)
             {
-                messagesInInteraction.Add(roleGroupLabel);
-                return true;
+                var emote = Context.Guild.Emotes.First(candidate => candidate.Id.ToString() == pair.emojiId);
+                roleEmbed.AddField(emote.ToString(), $"<@&{pair.roleId}>", inline: true);
             }
-            else
-            {
-                messagesInInteraction.Add(await ReplyAsync("Time has expired, please try again"));
-                return false;
-            }
-        }
 
-        private async Task<IMessage> CreateMessageToListen(List<RoleEmotePair> roleEmotePair, string roleGroupLabel)
-        {
-            EmbedBuilder roleEmbed = new EmbedBuilder();
-            foreach (var pair in roleEmotePair)
-            {
-                var emote = Context.Guild.Emotes.FirstOrDefault(e => e.Id.ToString() == pair.emojiId);
-                roleEmbed.AddField(field =>
-                {
-                    field.Name = $"{emote}";
-                    field.Value = $"<@&{pair.roleId}>";
-                    field.IsInline = true;
-                });
-            }
             roleEmbed.WithFooter(footer => footer.Text = $"Role Group: {roleGroupLabel}");
-            var finishedEmbed = roleEmbed.Build();
-            var messageToListen = await ReplyAsync(embed: finishedEmbed);
-            foreach (var pair in roleEmotePair)
+            return await ReplyAsync(embed: roleEmbed.Build());
+        }
+
+        private async Task AddRoleReactionsAsync(IUserMessage messageToListen, IEnumerable<RoleEmotePair> roleEmotePairs)
+        {
+            var pairs = roleEmotePairs.ToList();
+            foreach (var pair in pairs)
             {
-                var emote = Context.Guild.Emotes.FirstOrDefault(e => e.Id.ToString() == pair.emojiId);
+                var emote = Context.Guild.Emotes.First(candidate => candidate.Id.ToString() == pair.emojiId);
                 await messageToListen.AddReactionAsync(emote);
-                Thread.Sleep(2000);
-            }
-            return messageToListen;
-        }
-
-        private async Task<bool> IsEmoteNotNullAndValid(List<IMessage> messagesInInteraction, SocketMessage emoteToSetup, Emote emote)
-        {
-            if (emoteToSetup != null && emote != null)
-            {
-                messagesInInteraction.Add(emoteToSetup);
-                return true;
-            }
-            else if (emoteToSetup != null && emote == null)
-            {
-                messagesInInteraction.Add(await ReplyAsync($"The emote {emoteToSetup.Content} does not exist, please try again"));
-                messagesInInteraction.Add(emoteToSetup);
-                return false;
-            }
-            else
-            {
-                messagesInInteraction.Add(await ReplyAsync("Time has expired, please try again"));
-                return false;
+                await Task.Delay(TimeSpan.FromMilliseconds(250));
             }
         }
 
-        private async Task<bool> IsRoleNotNullAndValid(List<IMessage> messagesInInteraction, SocketMessage roleToSetup, SocketRole role)
+        private async Task<(bool Success, int RoleCount)> GetRoleCountAsync(List<IMessage> messages, SocketMessage response)
         {
-            if (roleToSetup != null && role != null)
+            if (response == null)
             {
-                messagesInInteraction.Add(roleToSetup);
-                return true;
+                messages.Add(await ReplyAsync("Time has expired, please try again."));
+                return (false, 0);
             }
-            else if (roleToSetup != null && role == null)
+
+            messages.Add(response);
+            if (!int.TryParse(response.Content, out var roleCount) || roleCount < 1 || roleCount > MaximumRolesPerGroup)
             {
-                messagesInInteraction.Add(await ReplyAsync($"The role {roleToSetup.Content} does not exist, please try again"));
-                messagesInInteraction.Add(roleToSetup);
-                return false;
+                messages.Add(await ReplyAsync($"Please enter a whole number from 1 to {MaximumRolesPerGroup}."));
+                return (false, 0);
             }
-            else
-            {
-                messagesInInteraction.Add(await ReplyAsync("Time has expired, please try again"));
-                return false;
-            }
+
+            return (true, roleCount);
         }
 
-        private async Task<bool> IsNumberOfRolesNotNullAndValid(List<IMessage> messagesInInteraction, SocketMessage amountOfRoles)
+        private async Task<SocketRole> GetRoleAsync(List<IMessage> messages, SocketMessage response)
         {
-            if (amountOfRoles != null && int.TryParse(amountOfRoles.Content, out _))
+            if (response == null)
             {
-                messagesInInteraction.Add(amountOfRoles);
-                return true;
+                messages.Add(await ReplyAsync("Time has expired, please try again."));
+                return null;
             }
-            else if (amountOfRoles != null && !int.TryParse(amountOfRoles.Content, out _))
+
+            messages.Add(response);
+            var role = Context.Guild.Roles.FirstOrDefault(candidate =>
+                string.Equals(response.Content.Trim(), candidate.Name.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (role == null)
             {
-                messagesInInteraction.Add(await ReplyAsync($"{amountOfRoles.Content} is not a number"));
-                messagesInInteraction.Add(amountOfRoles);
-                return false;
+                messages.Add(await ReplyAsync($"The role {response.Content} does not exist. Please start again."));
+                return null;
             }
-            else
-            {
-                messagesInInteraction.Add(await ReplyAsync("Time has expired, please try again"));
-                return false;
-            }
+
+            return role;
         }
 
-        private async Task CleanUpMessagesAfterFiveSeconds(List<IMessage> messagesInInteraction)
+        private async Task<Emote> GetEmoteAsync(List<IMessage> messages, SocketMessage response)
         {
-            Thread.Sleep(5000);
-            IEnumerable<IMessage> filteredMessages = messagesInInteraction;
-            await (Context.Channel as ITextChannel).DeleteMessagesAsync(filteredMessages);
+            if (response == null)
+            {
+                messages.Add(await ReplyAsync("Time has expired, please try again."));
+                return null;
+            }
+
+            messages.Add(response);
+            var emote = Context.Guild.Emotes.FirstOrDefault(candidate =>
+                response.Content.Contains(candidate.Name, StringComparison.OrdinalIgnoreCase));
+            if (emote == null)
+            {
+                messages.Add(await ReplyAsync($"The emote {response.Content} does not exist. Please start again."));
+                return null;
+            }
+
+            return emote;
+        }
+
+        private async Task CleanUpMessagesAsync(IReadOnlyCollection<IMessage> messages)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(5));
+            if (Context.Channel is not ITextChannel textChannel || messages.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                await _messageCleanupService.DeleteAsync(textChannel, messages);
+            }
+            catch (Exception exception)
+            {
+                Log.Warning(exception, "Could not clean up the reaction-role setup messages");
+            }
         }
     }
 }

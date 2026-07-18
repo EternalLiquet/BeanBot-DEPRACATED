@@ -1,4 +1,5 @@
 ﻿using BeanBot.Entities;
+using BeanBot.Configuration;
 using BeanBot.Util;
 using CsvHelper;
 using Discord;
@@ -19,10 +20,18 @@ namespace BeanBot.Modules
     [Name("Meme Commands")]
     public class MemeModule : InteractiveBase
     {
-        private static HttpClient httpClient = new HttpClient();
-        private readonly MemeMachine memeMachine = new MemeMachine();
+        private static readonly HttpClient HttpClient = new HttpClient();
+        private readonly MemeMachine _memeMachine = new MemeMachine();
+        private readonly BeanBotOptions _options;
+        private readonly FortuneAnswerQueue _fortuneAnswers;
 
-        private string[] eightBallResponses = new string[8]
+        public MemeModule(BeanBotOptions options, FortuneAnswerQueue fortuneAnswers)
+        {
+            _options = options ?? throw new ArgumentNullException(nameof(options));
+            _fortuneAnswers = fortuneAnswers ?? throw new ArgumentNullException(nameof(fortuneAnswers));
+        }
+
+        private static readonly string[] EightBallResponses = new string[8]
         {
             "Hell yeah brother",
             "Yeehaw",
@@ -34,7 +43,7 @@ namespace BeanBot.Modules
             "*succ succ succ* lol you're gay"
         };
 
-        private string[] texasFacts = new string[8]
+        private static readonly string[] TexasFactResponses = new string[8]
         {
             "The tale of the Alamo is retold through the stars",
             "The King Ranch in Texas is bigger than the entire state of California",
@@ -53,24 +62,8 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task UserSucc([Summary("The (optional) user to succ")] params string[] input)
         {
-            string userToSucc = "";
-            if (input[0] == "succ")
-            {
-                input[0] = "";
-            }
-            foreach (string word in input)
-            {
-                userToSucc += word + " ";
-            }
-            if (userToSucc.Contains("Bean Bot") || userToSucc.Contains("<@!630470467261693982>"))
-            {
-                userToSucc = Context.Message.Author.Mention;
-            }
-            if (userToSucc.Trim() == "")
-            {
-                userToSucc = null;
-            }
-            await Task.Factory.StartNew(() => { _ = ReplyAsync($"*succ succ succ* lol you're gay {userToSucc ?? Context.Message.Author.Mention}"); });
+            var userToSucc = NormalizeSuccTarget(input, Context.Message.Author.Mention);
+            await ReplyAsync($"*succ succ succ* lol you're gay {userToSucc}");
         }
 
         [Command("2am")]
@@ -80,7 +73,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task McDonalds()
         {
-            await Task.Factory.StartNew(() => { _ = ReplyAsync("<:mcdonalds:661337575704887337>"); });
+            await ReplyAsync("<:mcdonalds:661337575704887337>");
         }
 
         [Command("fancy ocho ocho")]
@@ -89,7 +82,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task OchoOcho2()
         {
-            await Task.Factory.StartNew(() => { _ = ReplyWithOchoOcho(); });
+            await ReplyWithOchoOcho();
         }
 
 
@@ -99,7 +92,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task BlazeIt()
         {
-            await Task.Factory.StartNew(() => { _ = ReplyAsync("<:420stolfoit:675553715759087618>"); });
+            await ReplyAsync("<:420stolfoit:675553715759087618>");
         }
 
         [Command("toes")]
@@ -109,7 +102,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.AttachFiles)]
         public async Task Toes()
         {
-            await Task.Factory.StartNew(() => { _ = sendImageFromUrl(AppSettings.Settings["hatoeteUrl"]); });
+            await SendImageFromUrl(_options.HatoeteImageUrl);
         }
 
         [Command("yoshimaru")]
@@ -119,7 +112,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.AttachFiles)]
         public async Task YoshiMaru()
         {
-            await Task.Factory.StartNew(() => { _ = sendImageFromUrl(AppSettings.Settings["yoshimaruUrl"]); });
+            await SendImageFromUrl(_options.YoshimaruImageUrl);
         }
 
         [Command("echo")]
@@ -128,11 +121,15 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task Echo([Remainder] string text)
         {
-            await Task.Factory.StartNew(() =>
+            try
             {
-                _ = Context.Message.DeleteAsync();
-                _ = ReplyAsync(text);
-            });
+                await Context.Message.DeleteAsync();
+            }
+            catch (Exception exception)
+            {
+                Log.Warning(exception, "Could not delete the source message for echo command {MessageId}", Context.Message.Id);
+            }
+            await ReplyAsync(text);
         }
 
         [Command("8ball")]
@@ -149,10 +146,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task Pun()
         {
-            await Task.Factory.StartNew(() =>
-            {
-                _ = ChooseRandomPun();
-            });
+            await ChooseRandomPun();
         }
 
         [Command("meme")]
@@ -161,7 +155,7 @@ namespace BeanBot.Modules
         [RequireBotPermission(ChannelPermission.SendMessages)]
         public async Task Meme(string subreddit = "")
         {
-            await Task.Factory.StartNew(() => { _ = InvokeMemeApi(subreddit); });
+            await InvokeMemeApi(subreddit);
         }
         private async Task InvokeMemeApi(string subreddit)
         {
@@ -170,16 +164,16 @@ namespace BeanBot.Modules
             {
                 if (string.IsNullOrEmpty(subreddit))
                 {
-                    meme = await memeMachine.GetMemeAsync();
+                    meme = await _memeMachine.GetMemeAsync();
                 }
                 else
                 {
-                    meme = await memeMachine.GetMemeAsync(subreddit);
+                    meme = await _memeMachine.GetMemeAsync(subreddit);
                 }
             }
             catch (Exception ex)
             {
-                Log.Error(ex.Message);
+                Log.Error(ex, "The meme API request failed");
                 meme = null;
             }
 
@@ -221,8 +215,7 @@ namespace BeanBot.Modules
         [Remarks("texasfacts")]
         public async Task TexasFacts()
         {
-            Random random = new Random();
-            var fact = texasFacts[random.Next(0, texasFacts.Length)];
+            var fact = TexasFactResponses[Random.Shared.Next(TexasFactResponses.Length)];
             await ReplyAsync($"Did you know: {fact}");
         }
 
@@ -232,15 +225,19 @@ namespace BeanBot.Modules
             using (var reader = new StreamReader("Resources/puns.csv"))
             using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
             {
-                var records = csv.GetRecords<Pun>();
-                List<string> punArray = new List<string>();
-                foreach (var record in records)
+                var puns = csv.GetRecords<Pun>()
+                    .Select(record => record.BadPost)
+                    .Where(pun => !string.IsNullOrWhiteSpace(pun))
+                    .ToList();
+
+                if (puns.Count == 0)
                 {
-                    punArray.Add(record.BadPost);
+                    Log.Warning("No usable puns were found in Resources/puns.csv");
+                    await ReplyAsync("The PunMaster is temporarily out of material.");
+                    return;
                 }
-                var random = new Random();
-                var index = random.Next(punArray.Count());
-                await ReplyAsync(punArray.ElementAt(index));
+
+                await ReplyAsync(puns[Random.Shared.Next(puns.Count)]);
             }
         }
 
@@ -249,16 +246,11 @@ namespace BeanBot.Modules
             var responseOverride = FortuneResponseOverrides.GetResponse(question);
             if (responseOverride != null)
             {
-                var queuedAnswerToConsume = Context.Message.Author.Id == Program.queueRecipient
-                    ? Program.queueEightBallAnswer
-                    : null;
+                var hasQueuedAnswer = _fortuneAnswers.TryReserve(Context.Message.Author.Id, out var reservation);
                 await ReplyAsync($"> {question} \n{responseOverride}");
-
-                if (queuedAnswerToConsume != null &&
-                    Program.queueEightBallAnswer == queuedAnswerToConsume &&
-                    Context.Message.Author.Id == Program.queueRecipient)
+                if (hasQueuedAnswer)
                 {
-                    Program.queueEightBallAnswer = null;
+                    _fortuneAnswers.Consume(reservation);
                 }
             }
             else if (QuestionValidator.IsQuestion(question))
@@ -269,67 +261,67 @@ namespace BeanBot.Modules
                 }
                 else
                 {
-                    Console.WriteLine($"{Program.queueEightBallAnswer}, {Program.queueRecipient}");
-                    if (Program.queueEightBallAnswer != null && Context.Message.Author.Id == Program.queueRecipient)
+                    if (_fortuneAnswers.TryReserve(Context.Message.Author.Id, out var reservation))
                     {
-                        Console.WriteLine("In queue 8ball for: " + Program.queueEightBallAnswer);
-                        if (Program.queueEightBallAnswer == "positive")
+                        if (reservation.Answer == "positive")
                         {
-                            Console.WriteLine("positive");
-                            Random random = new Random();
-                            var answer = eightBallResponses[random.Next(0, 3)];
+                            var answer = EightBallResponses[Random.Shared.Next(0, 3)];
                             await ReplyAsync($"> {question} \n{answer}");
                         }
                         else
                         {
-                            Console.WriteLine("negative");
-                            Random random = new Random();
-                            var answer = eightBallResponses[random.Next(3, 5)];
+                            var answer = EightBallResponses[Random.Shared.Next(3, 5)];
                             await ReplyAsync($"> {question} \n{answer}");
                         }
-                        Program.queueEightBallAnswer = null;
+                        _fortuneAnswers.Consume(reservation);
                     }
                     else
                     {
-                        Random random = new Random();
-                        var answer = eightBallResponses[random.Next(0, eightBallResponses.Length)];
+                        var answer = EightBallResponses[Random.Shared.Next(EightBallResponses.Length)];
                         await ReplyAsync($"> {question} \n{answer}");
                     }
                 }
             }
             else
             {
-                Random random = new Random();
-                var gordonGif = random.Next(1, 9);
-                await Context.Channel.SendFileAsync($"Resources/gordon{gordonGif}.gif", $"> {question} \nThat is not a question");
+                var gordonGif = Random.Shared.Next(1, 9);
+                var rejection = $"> {question} \nThat is not a question";
+                try
+                {
+                    await Context.Channel.SendFileAsync($"Resources/gordon{gordonGif}.gif", rejection);
+                }
+                catch (Exception exception)
+                {
+                    Log.Warning(exception, "Could not attach the invalid-question Gordon GIF");
+                    await ReplyAsync(rejection);
+                }
             }
         }
 
         private async Task HandlePunMaster(string question)
         {
-            if (question.ToLower().Contains("post") && question.ToLower().Contains("succ") ||
-                question.ToLower().Contains("rigged") && !question.ToLower().Contains("not") ||
-                question.ToLower().Contains("ban") && question.ToLower().Contains("padoru") && !question.ToLower().Contains("not"))
+            if (question.Contains("post", StringComparison.OrdinalIgnoreCase) && question.Contains("succ", StringComparison.OrdinalIgnoreCase) ||
+                question.Contains("rigged", StringComparison.OrdinalIgnoreCase) && !question.Contains("not", StringComparison.OrdinalIgnoreCase) ||
+                question.Contains("ban", StringComparison.OrdinalIgnoreCase) && question.Contains("padoru", StringComparison.OrdinalIgnoreCase) && !question.Contains("not", StringComparison.OrdinalIgnoreCase))
             {
                 await ReplyAsync($"> {question} \nThe spirit of Texas tells me No");
             }
             else
             {
-                Random random = new Random();
-                var chance = random.Next(1, 101);
+                var chance = Random.Shared.Next(1, 101);
                 if (chance >= 1 && chance <= 10)
                 {
-                    var positiveAns = eightBallResponses[random.Next(0, 3)];
+                    var positiveAns = EightBallResponses[Random.Shared.Next(0, 3)];
                     await ReplyAsync($"> {question} \n{positiveAns}");
                 }
                 else if (chance > 10 && chance <= 40)
                 {
-                    var negativeAns = eightBallResponses[random.Next(3, 5)];
+                    var negativeAns = EightBallResponses[Random.Shared.Next(3, 5)];
                     await ReplyAsync($"> {question} \n{negativeAns}");
                 }
                 else
                 {
-                    var succAns = eightBallResponses[random.Next(5, 8)];
+                    var succAns = EightBallResponses[Random.Shared.Next(5, 8)];
                     await ReplyAsync($"> {question} \n{succAns}");
                 }
             }
@@ -340,19 +332,39 @@ namespace BeanBot.Modules
             return (Context.Message.Author.Id == 262010462323998720);
         }
 
-        private async Task sendImageFromUrl(string url)
+        private async Task SendImageFromUrl(Uri url)
         {
             try
             {
-                var webClient = new HttpClient();
-                var response = await webClient.GetAsync(url);
-                Stream image = await response.Content.ReadAsStreamAsync();
+                using var response = await HttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+                response.EnsureSuccessStatusCode();
+                using Stream image = await response.Content.ReadAsStreamAsync();
                 await Context.Channel.SendFileAsync(image, "image.png");
             }
             catch (Exception ex)
             {
-                Log.Error(ex.Message);
+                Log.Error(ex, "Failed to download an image from {ImageUrl}", url);
+                await ReplyAsync("I couldn't download that image right now.");
             }
+        }
+
+        internal static string NormalizeSuccTarget(IEnumerable<string> input, string authorMention)
+        {
+            var words = (input ?? Enumerable.Empty<string>()).ToList();
+            if (words.Count > 0 && string.Equals(words[0], "succ", StringComparison.OrdinalIgnoreCase))
+            {
+                words.RemoveAt(0);
+            }
+
+            var target = string.Join(" ", words).Trim();
+            if (string.IsNullOrWhiteSpace(target) ||
+                target.Contains("Bean Bot", StringComparison.OrdinalIgnoreCase) ||
+                target.Contains("<@!630470467261693982>", StringComparison.Ordinal))
+            {
+                return authorMention;
+            }
+
+            return target;
         }
 
         private async Task ReplyWithOchoOcho()
@@ -360,14 +372,5 @@ namespace BeanBot.Modules
             var pages = new[] { "One plus one, equals two.", "Two plus two, equals four.", "Four plus four, equals eight.", "Doblehin ang eight.", "Tayo'y mag ocho ocho, ocho ocho, mag ocho ocho pa" };
             await PagedReplyAsync(pages);
         }
-    }
-    public class MemeResponse
-    {
-        public string postLink { get; set; }
-        public string subreddit { get; set; }
-        public string title { get; set; }
-        public string url { get; set; }
-        public bool nsfw { get; set; }
-        public bool spoiler { get; set; }
     }
 }
