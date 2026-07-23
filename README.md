@@ -31,20 +31,30 @@ BEANBOT_HEALTHCHECK_RATE_LIMIT_SECONDS=90
 When `BEANBOT_HEALTHCHECK_PORT` is set, the bot exposes `GET /healthz` and `HEAD /healthz` on that port:
 
 - `200 OK`: process is up and the Discord gateway session is ready.
+- `401 Unauthorized`: the bearer token is missing or invalid.
 - `503 Service Unavailable`: process is up, but Discord is not currently connected or ready.
 - `429 Too Many Requests`: the same client polled again before the configured rate limit expired.
 - no response / connection failure: the bot process is down or unreachable.
 
 If you bind the endpoint to anything other than `127.0.0.1`, set `BEANBOT_HEALTHCHECK_BEARER_TOKEN` and send `Authorization: Bearer <token>` from Home Assistant.
 
-## Local Run
+## Local Development
+
+Install the .NET 8 SDK, then restore, build, and run the test suite from the repo root:
 
 ```powershell
-dotnet build BeanBot/BeanBot.csproj
+dotnet restore BeanBot.sln
+dotnet build BeanBot.sln --configuration Release --no-restore
+dotnet test BeanBot.sln --configuration Release --no-build
+```
+
+To start the bot:
+
+```powershell
 dotnet run --project BeanBot/BeanBot.csproj
 ```
 
-If a `.env` file exists in the repo root, `dotnet run` will load it automatically.
+The bot requires access to the MongoDB instance configured by `BEANBOT_MONGO_CONNECTION_STRING`. If a `.env` file exists in the repo root, `dotnet run` loads it automatically.
 
 ## Docker
 
