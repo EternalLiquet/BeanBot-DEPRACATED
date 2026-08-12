@@ -396,7 +396,8 @@ namespace BeanBot.Services
                             connectionState = healthSnapshot.ConnectionState,
                             lastReadyAtUtc = healthSnapshot.LastReadyAtUtc,
                             lastDisconnectedAtUtc = healthSnapshot.LastDisconnectedAtUtc,
-                            lastDisconnectReason = healthSnapshot.LastDisconnectReason
+                            unhealthySinceAtUtc = healthSnapshot.UnhealthySinceAtUtc,
+                            mostRecentDisconnectReason = healthSnapshot.MostRecentDisconnectReason
                         },
                         isHeadRequest,
                         requestToken);

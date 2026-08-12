@@ -11,7 +11,8 @@ namespace BeanBot.Services
         private bool _gatewayReady;
         private DateTimeOffset? _lastReadyAtUtc;
         private DateTimeOffset? _lastDisconnectedAtUtc;
-        private string _lastDisconnectReason;
+        private DateTimeOffset? _unhealthySinceAtUtc;
+        private string _mostRecentDisconnectReason;
 
         public void MarkReady()
         {
@@ -19,7 +20,7 @@ namespace BeanBot.Services
             {
                 _gatewayReady = true;
                 _lastReadyAtUtc = DateTimeOffset.UtcNow;
-                _lastDisconnectReason = null;
+                _unhealthySinceAtUtc = null;
             }
         }
 
@@ -27,9 +28,11 @@ namespace BeanBot.Services
         {
             lock (_syncRoot)
             {
+                var disconnectedAtUtc = DateTimeOffset.UtcNow;
                 _gatewayReady = false;
-                _lastDisconnectedAtUtc = DateTimeOffset.UtcNow;
-                _lastDisconnectReason = exception?.Message ?? "Discord gateway disconnected.";
+                _lastDisconnectedAtUtc = disconnectedAtUtc;
+                _unhealthySinceAtUtc ??= disconnectedAtUtc;
+                _mostRecentDisconnectReason = exception?.Message ?? "Discord gateway disconnected.";
             }
         }
 
@@ -50,7 +53,8 @@ namespace BeanBot.Services
                     connectionState.ToString(),
                     _lastReadyAtUtc,
                     _lastDisconnectedAtUtc,
-                    _lastDisconnectReason);
+                    _unhealthySinceAtUtc,
+                    _mostRecentDisconnectReason);
             }
         }
 
@@ -61,9 +65,9 @@ namespace BeanBot.Services
                 return "BeanBot is connected to Discord.";
             }
 
-            if (_lastDisconnectReason is not null)
+            if (_mostRecentDisconnectReason is not null)
             {
-                return $"{_lastDisconnectReason} Current state: login={loginState}, connection={connectionState}.";
+                return $"{_mostRecentDisconnectReason} Current state: login={loginState}, connection={connectionState}.";
             }
 
             if (!_gatewayReady)
@@ -89,7 +93,8 @@ namespace BeanBot.Services
             string connectionState,
             DateTimeOffset? lastReadyAtUtc,
             DateTimeOffset? lastDisconnectedAtUtc,
-            string lastDisconnectReason)
+            DateTimeOffset? unhealthySinceAtUtc,
+            string mostRecentDisconnectReason)
         {
             IsHealthy = isHealthy;
             StatusMessage = statusMessage;
@@ -97,7 +102,8 @@ namespace BeanBot.Services
             ConnectionState = connectionState;
             LastReadyAtUtc = lastReadyAtUtc;
             LastDisconnectedAtUtc = lastDisconnectedAtUtc;
-            LastDisconnectReason = lastDisconnectReason;
+            UnhealthySinceAtUtc = unhealthySinceAtUtc;
+            MostRecentDisconnectReason = mostRecentDisconnectReason;
         }
 
         public bool IsHealthy { get; }
@@ -106,6 +112,7 @@ namespace BeanBot.Services
         public string ConnectionState { get; }
         public DateTimeOffset? LastReadyAtUtc { get; }
         public DateTimeOffset? LastDisconnectedAtUtc { get; }
-        public string LastDisconnectReason { get; }
+        public DateTimeOffset? UnhealthySinceAtUtc { get; }
+        public string MostRecentDisconnectReason { get; }
     }
 }
