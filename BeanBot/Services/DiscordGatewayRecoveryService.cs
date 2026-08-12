@@ -117,6 +117,7 @@ namespace BeanBot.Services
         private readonly object _syncRoot = new();
         private readonly Func<DiscordHealthSnapshot> _createHealthSnapshot;
         private readonly IDiscordGatewayLifecycle _lifecycle;
+        private readonly IDiscordOutageStore _outageStore;
         private readonly DiscordGatewayRecoveryOptions _options;
         private readonly IRecoveryDelay _delay;
         private readonly Action<int> _exitProcess;
@@ -128,12 +129,14 @@ namespace BeanBot.Services
         public DiscordGatewayRecoveryService(
             Func<DiscordHealthSnapshot> createHealthSnapshot,
             IDiscordGatewayLifecycle lifecycle,
+            IDiscordOutageStore outageStore,
             DiscordGatewayRecoveryOptions options = null,
             IRecoveryDelay delay = null,
             Action<int> exitProcess = null)
         {
             _createHealthSnapshot = createHealthSnapshot ?? throw new ArgumentNullException(nameof(createHealthSnapshot));
             _lifecycle = lifecycle ?? throw new ArgumentNullException(nameof(lifecycle));
+            _outageStore = outageStore ?? throw new ArgumentNullException(nameof(outageStore));
             _options = options ?? DiscordGatewayRecoveryOptions.Default;
             _delay = delay ?? new TaskRecoveryDelay();
             _exitProcess = exitProcess ?? Environment.Exit;
@@ -215,6 +218,8 @@ namespace BeanBot.Services
                     snapshot.ConnectionState,
                     snapshot.MostRecentDisconnectReason);
 
+                await PersistManualRecoveryAttemptAsync(unhealthySince, snapshot);
+
                 try
                 {
                     await _lifecycle.ReconnectAsync(_shutdown.Token);
@@ -277,6 +282,13 @@ namespace BeanBot.Services
 
                 Log.Fatal(
                     "Discord gateway recovery was exhausted; exiting with code 1 so Docker can restart BeanBot");
+                await PersistRestartRequestAsync(unhealthySince, snapshot);
+
+                if (_shutdown.IsCancellationRequested)
+                {
+                    return;
+                }
+
                 _exitProcess(1);
             }
             catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
@@ -289,8 +301,67 @@ namespace BeanBot.Services
                 {
                     Log.Fatal(
                         "Exiting with code 1 because the Discord gateway recovery monitor cannot continue safely");
+                    var snapshot = _createHealthSnapshot();
+                    await PersistRestartRequestAsync(
+                        snapshot.UnhealthySinceAtUtc ?? unhealthySince,
+                        snapshot);
+
+                    if (_shutdown.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
                     _exitProcess(1);
                 }
+            }
+        }
+
+        private async Task PersistManualRecoveryAttemptAsync(
+            DateTimeOffset unhealthySince,
+            DiscordHealthSnapshot snapshot)
+        {
+            try
+            {
+                await _outageStore.MarkManualRecoveryAttemptedAsync(
+                    unhealthySince,
+                    snapshot.MostRecentDisconnectReason,
+                    _shutdown.Token);
+            }
+            catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                // Recovery must still proceed if the durable incident record cannot be written.
+                Log.Error(
+                    exception,
+                    "Could not persist the meaningful Discord outage before manual recovery. DisconnectedAtUtc={DisconnectedAtUtc}",
+                    unhealthySince);
+            }
+        }
+
+        private async Task PersistRestartRequestAsync(
+            DateTimeOffset unhealthySince,
+            DiscordHealthSnapshot snapshot)
+        {
+            try
+            {
+                await _outageStore.MarkProcessRestartRequestedAsync(
+                    unhealthySince,
+                    snapshot.MostRecentDisconnectReason,
+                    _shutdown.Token);
+            }
+            catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                // The process must still exit so Docker can restore service even if persistence is unavailable.
+                Log.Error(
+                    exception,
+                    "Could not persist the Discord outage restart request before process exit");
             }
         }
 

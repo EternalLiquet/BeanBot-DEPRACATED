@@ -13,6 +13,7 @@ using MongoDB.Driver;
 using Serilog;
 
 using System;
+using System.IO;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
@@ -24,6 +25,8 @@ namespace BeanBot
         private DiscordSocketClient _discordClient;
         private DiscordConnectionHealth _discordConnectionHealth;
         private DiscordGatewayRecoveryService _discordGatewayRecovery;
+        private DiscordOutageStore _discordOutageStore;
+        private DiscordOutageRecoveryNotifier _discordOutageRecoveryNotifier;
         private CommandService _commandService;
         private CommandHandler _commandHandler;
         private NewMemberHandler _newMemberHandler;
@@ -139,6 +142,8 @@ namespace BeanBot
 
                 await _ownerErrorNotifier.FlushAsync(TimeSpan.FromSeconds(3));
                 _discordClient.Dispose();
+                _discordOutageRecoveryNotifier?.Dispose();
+                _discordOutageStore?.Dispose();
                 AppDomain.CurrentDomain.UnhandledException -= HandleUnhandledException;
                 TaskScheduler.UnobservedTaskException -= HandleUnobservedTaskException;
             }
@@ -156,8 +161,14 @@ namespace BeanBot
             DirectorySetup.MakeSureAllDirectoriesExist();
             _discordConnectionHealth = new DiscordConnectionHealth();
             CreateNewDiscordSocketClientWithConfigurations();
-            _ownerErrorNotifier = new DiscordOwnerErrorNotifier(_discordClient);
+            var ownerAlertDelivery = new DiscordOwnerAlertDelivery(_discordClient);
+            _ownerErrorNotifier = new DiscordOwnerErrorNotifier(ownerAlertDelivery);
             LogHandler.CreateLoggerConfiguration(_ownerErrorNotifier);
+            _discordOutageStore = new DiscordOutageStore(
+                Path.GetFullPath(DirectorySetup.botBaseDirectory));
+            _discordOutageRecoveryNotifier = new DiscordOutageRecoveryNotifier(
+                _discordOutageStore,
+                ownerAlertDelivery);
             _options = BeanBotOptionsLoader.LoadFromEnvironment();
             var recoveryOptions = DiscordGatewayRecoveryOptions.Default;
             _discordGatewayRecovery = new DiscordGatewayRecoveryService(
@@ -166,6 +177,7 @@ namespace BeanBot
                     _discordClient,
                     _options.BotToken,
                     recoveryOptions.LifecycleOperationTimeout),
+                _discordOutageStore,
                 recoveryOptions);
 
             Log.Information("Configuring MongoDB client");
@@ -248,7 +260,7 @@ namespace BeanBot
             _discordClient.Disconnected += OnDiscordDisconnectedAsync;
         }
 
-        private Task OnDiscordReadyAsync()
+        private async Task OnDiscordReadyAsync()
         {
             _discordConnectionHealth.MarkReady();
             _discordGatewayRecovery.NotifyReady();
@@ -256,7 +268,17 @@ namespace BeanBot
                 "BeanBot Discord gateway reached Ready. LoginState={LoginState}, ConnectionState={ConnectionState}",
                 _discordClient.LoginState,
                 _discordClient.ConnectionState);
-            return Task.CompletedTask;
+            try
+            {
+                await _discordOutageRecoveryNotifier.NotifyIfOutageRecoveredAsync(DateTimeOffset.UtcNow);
+            }
+            catch (Exception exception)
+            {
+                // Ready must remain a successful gateway event even if local persistence is unavailable.
+                Log.Error(
+                    exception,
+                    "Discord reached Ready, but the persisted outage recovery notification could not be processed");
+            }
         }
 
         private Task OnDiscordDisconnectedAsync(Exception exception)

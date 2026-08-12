@@ -20,7 +20,8 @@ public class DiscordGatewayRecoveryServiceTests
         var lifecycle = new FakeLifecycle();
         var delay = new ControlledDelay();
         var exitCodes = new List<int>();
-        await using var recovery = CreateService(state, lifecycle, delay, exitCodes);
+        var outageStore = new FakeOutageStore();
+        await using var recovery = CreateService(state, lifecycle, delay, exitCodes, outageStore);
 
         Assert.True(recovery.StartMonitoring());
         await delay.WaitForRequestCountAsync(1);
@@ -31,6 +32,7 @@ public class DiscordGatewayRecoveryServiceTests
 
         Assert.Equal(0, lifecycle.ReconnectCount);
         Assert.Empty(exitCodes);
+        Assert.Null(outageStore.CurrentOutage);
     }
 
     [Fact]
@@ -40,7 +42,8 @@ public class DiscordGatewayRecoveryServiceTests
         var lifecycle = new FakeLifecycle();
         var delay = new ControlledDelay();
         var exitCodes = new List<int>();
-        await using var recovery = CreateService(state, lifecycle, delay, exitCodes);
+        var outageStore = new FakeOutageStore();
+        await using var recovery = CreateService(state, lifecycle, delay, exitCodes, outageStore);
 
         Assert.True(recovery.StartMonitoring());
         Assert.False(recovery.StartMonitoring());
@@ -58,7 +61,8 @@ public class DiscordGatewayRecoveryServiceTests
         var lifecycle = new FakeLifecycle();
         var delay = new ControlledDelay();
         var exitCodes = new List<int>();
-        await using var recovery = CreateService(state, lifecycle, delay, exitCodes);
+        var outageStore = new FakeOutageStore();
+        await using var recovery = CreateService(state, lifecycle, delay, exitCodes, outageStore);
 
         recovery.StartMonitoring();
         await delay.WaitForRequestCountAsync(1);
@@ -72,6 +76,8 @@ public class DiscordGatewayRecoveryServiceTests
 
         Assert.Equal(1, lifecycle.ReconnectCount);
         Assert.Empty(exitCodes);
+        Assert.True(outageStore.CurrentOutage?.ManualRecoveryAttempted);
+        Assert.False(outageStore.CurrentOutage?.ProcessRestartRequested);
     }
 
     [Fact]
@@ -81,7 +87,8 @@ public class DiscordGatewayRecoveryServiceTests
         var lifecycle = new FakeLifecycle();
         var delay = new ControlledDelay();
         var exitCodes = new List<int>();
-        await using var recovery = CreateService(state, lifecycle, delay, exitCodes);
+        var outageStore = new FakeOutageStore();
+        await using var recovery = CreateService(state, lifecycle, delay, exitCodes, outageStore);
 
         recovery.StartMonitoring();
         await delay.WaitForRequestCountAsync(1);
@@ -93,6 +100,9 @@ public class DiscordGatewayRecoveryServiceTests
 
         Assert.Equal(1, lifecycle.ReconnectCount);
         Assert.Equal(new[] { 1 }, exitCodes);
+        Assert.True(outageStore.CurrentOutage?.ManualRecoveryAttempted);
+        Assert.True(outageStore.CurrentOutage?.ProcessRestartRequested);
+        Assert.Equal(new[] { "manual", "restart", "exit" }, outageStore.StateTransitions);
     }
 
     [Fact]
@@ -102,7 +112,8 @@ public class DiscordGatewayRecoveryServiceTests
         var lifecycle = new FakeLifecycle();
         var delay = new ControlledDelay();
         var exitCodes = new List<int>();
-        var recovery = CreateService(state, lifecycle, delay, exitCodes);
+        var outageStore = new FakeOutageStore();
+        var recovery = CreateService(state, lifecycle, delay, exitCodes, outageStore);
 
         recovery.StartMonitoring();
         await delay.WaitForRequestCountAsync(1);
@@ -110,19 +121,83 @@ public class DiscordGatewayRecoveryServiceTests
 
         Assert.Equal(0, lifecycle.ReconnectCount);
         Assert.Empty(exitCodes);
+        Assert.Null(outageStore.CurrentOutage);
     }
 
     private static DiscordGatewayRecoveryService CreateService(
         FakeHealthState state,
         FakeLifecycle lifecycle,
         ControlledDelay delay,
-        List<int> exitCodes)
+        List<int> exitCodes,
+        FakeOutageStore outageStore)
         => new(
             state.CreateSnapshot,
             lifecycle,
+            outageStore,
             TestOptions,
             delay,
-            exitCodes.Add);
+            exitCode =>
+            {
+                outageStore.StateTransitions.Add("exit");
+                exitCodes.Add(exitCode);
+            });
+
+    private sealed class FakeOutageStore : IDiscordOutageStore
+    {
+        public DiscordOutage? CurrentOutage { get; private set; }
+        public List<string> StateTransitions { get; } = new();
+
+        public Task<DiscordOutage?> ReadAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(CurrentOutage);
+
+        public Task OpenAsync(
+            DateTimeOffset disconnectedAtUtc,
+            string mostRecentDisconnectReason,
+            CancellationToken cancellationToken = default)
+        {
+            CurrentOutage ??= CreateOutage(disconnectedAtUtc, mostRecentDisconnectReason);
+            return Task.CompletedTask;
+        }
+
+        public Task MarkManualRecoveryAttemptedAsync(
+            DateTimeOffset disconnectedAtUtc,
+            string mostRecentDisconnectReason,
+            CancellationToken cancellationToken = default)
+        {
+            CurrentOutage ??= CreateOutage(disconnectedAtUtc, mostRecentDisconnectReason);
+            CurrentOutage.MostRecentDisconnectReason = mostRecentDisconnectReason;
+            CurrentOutage.ManualRecoveryAttempted = true;
+            StateTransitions.Add("manual");
+            return Task.CompletedTask;
+        }
+
+        public Task MarkProcessRestartRequestedAsync(
+            DateTimeOffset disconnectedAtUtc,
+            string mostRecentDisconnectReason,
+            CancellationToken cancellationToken = default)
+        {
+            Assert.NotNull(CurrentOutage);
+            CurrentOutage.MostRecentDisconnectReason = mostRecentDisconnectReason;
+            CurrentOutage.ProcessRestartRequested = true;
+            StateTransitions.Add("restart");
+            return Task.CompletedTask;
+        }
+
+        public Task ClearAsync(CancellationToken cancellationToken = default)
+        {
+            CurrentOutage = null;
+            return Task.CompletedTask;
+        }
+
+        private static DiscordOutage CreateOutage(
+            DateTimeOffset disconnectedAtUtc,
+            string mostRecentDisconnectReason)
+            => new()
+            {
+                DisconnectedAtUtc = disconnectedAtUtc,
+                MostRecentDisconnectReason = mostRecentDisconnectReason
+            };
+    }
 
     private sealed class FakeHealthState
     {
