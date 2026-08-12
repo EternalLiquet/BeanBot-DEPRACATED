@@ -11,6 +11,7 @@ namespace BeanBot.Services
         private bool _gatewayReady;
         private DateTimeOffset? _lastReadyAtUtc;
         private DateTimeOffset? _lastDisconnectedAtUtc;
+        private DateTimeOffset? _unhealthySinceAtUtc;
         private string _lastDisconnectReason;
 
         public void MarkReady()
@@ -19,7 +20,7 @@ namespace BeanBot.Services
             {
                 _gatewayReady = true;
                 _lastReadyAtUtc = DateTimeOffset.UtcNow;
-                _lastDisconnectReason = null;
+                _unhealthySinceAtUtc = null;
             }
         }
 
@@ -27,8 +28,10 @@ namespace BeanBot.Services
         {
             lock (_syncRoot)
             {
+                var disconnectedAtUtc = DateTimeOffset.UtcNow;
                 _gatewayReady = false;
-                _lastDisconnectedAtUtc = DateTimeOffset.UtcNow;
+                _lastDisconnectedAtUtc = disconnectedAtUtc;
+                _unhealthySinceAtUtc ??= disconnectedAtUtc;
                 _lastDisconnectReason = exception?.Message ?? "Discord gateway disconnected.";
             }
         }
@@ -50,6 +53,7 @@ namespace BeanBot.Services
                     connectionState.ToString(),
                     _lastReadyAtUtc,
                     _lastDisconnectedAtUtc,
+                    _unhealthySinceAtUtc,
                     _lastDisconnectReason);
             }
         }
@@ -89,6 +93,7 @@ namespace BeanBot.Services
             string connectionState,
             DateTimeOffset? lastReadyAtUtc,
             DateTimeOffset? lastDisconnectedAtUtc,
+            DateTimeOffset? unhealthySinceAtUtc,
             string lastDisconnectReason)
         {
             IsHealthy = isHealthy;
@@ -97,6 +102,7 @@ namespace BeanBot.Services
             ConnectionState = connectionState;
             LastReadyAtUtc = lastReadyAtUtc;
             LastDisconnectedAtUtc = lastDisconnectedAtUtc;
+            UnhealthySinceAtUtc = unhealthySinceAtUtc;
             LastDisconnectReason = lastDisconnectReason;
         }
 
@@ -106,6 +112,7 @@ namespace BeanBot.Services
         public string ConnectionState { get; }
         public DateTimeOffset? LastReadyAtUtc { get; }
         public DateTimeOffset? LastDisconnectedAtUtc { get; }
+        public DateTimeOffset? UnhealthySinceAtUtc { get; }
         public string LastDisconnectReason { get; }
     }
 }

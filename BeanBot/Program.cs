@@ -23,6 +23,7 @@ namespace BeanBot
     {
         private DiscordSocketClient _discordClient;
         private DiscordConnectionHealth _discordConnectionHealth;
+        private DiscordGatewayRecoveryService _discordGatewayRecovery;
         private CommandService _commandService;
         private CommandHandler _commandHandler;
         private NewMemberHandler _newMemberHandler;
@@ -65,6 +66,7 @@ namespace BeanBot
             _healthCheckServer?.Start();
 
             await LogIntoDiscord();
+            _discordGatewayRecovery.StartMonitoring();
             await InstantiateCommandServices();
             _discordClient.Log += LogHandler.LogMessages;
             _autoPunPoster = new PunHandler(_discordClient, _options);
@@ -105,6 +107,12 @@ namespace BeanBot
                 _commandHandler?.Dispose();
                 _services?.Dispose();
                 _discordClient.Log -= LogHandler.LogMessages;
+
+                if (_discordGatewayRecovery is not null)
+                {
+                    await _discordGatewayRecovery.DisposeAsync();
+                }
+
                 _discordClient.Ready -= OnDiscordReadyAsync;
                 _discordClient.Disconnected -= OnDiscordDisconnectedAsync;
 
@@ -151,6 +159,14 @@ namespace BeanBot
             _ownerErrorNotifier = new DiscordOwnerErrorNotifier(_discordClient);
             LogHandler.CreateLoggerConfiguration(_ownerErrorNotifier);
             _options = BeanBotOptionsLoader.LoadFromEnvironment();
+            var recoveryOptions = DiscordGatewayRecoveryOptions.Default;
+            _discordGatewayRecovery = new DiscordGatewayRecoveryService(
+                () => _discordConnectionHealth.CreateSnapshot(_discordClient),
+                new DiscordGatewayLifecycle(
+                    _discordClient,
+                    _options.BotToken,
+                    recoveryOptions.LifecycleOperationTimeout),
+                recoveryOptions);
 
             Log.Information("Configuring MongoDB client");
             var mongoClient = new MongoClient(_options.MongoConnectionString);
@@ -235,21 +251,37 @@ namespace BeanBot
         private Task OnDiscordReadyAsync()
         {
             _discordConnectionHealth.MarkReady();
-            Log.Information("Bean Bot successfully connected");
+            _discordGatewayRecovery.NotifyReady();
+            Log.Information(
+                "BeanBot Discord gateway reached Ready. LoginState={LoginState}, ConnectionState={ConnectionState}",
+                _discordClient.LoginState,
+                _discordClient.ConnectionState);
             return Task.CompletedTask;
         }
 
         private Task OnDiscordDisconnectedAsync(Exception exception)
         {
             _discordConnectionHealth.MarkDisconnected(exception);
+            var snapshot = _discordConnectionHealth.CreateSnapshot(_discordClient);
             if (exception is null)
             {
-                Log.Warning("Bean Bot disconnected from Discord");
+                Log.Warning(
+                    "BeanBot disconnected from Discord. LoginState={LoginState}, ConnectionState={ConnectionState}, LastDisconnectReason={LastDisconnectReason}",
+                    snapshot.LoginState,
+                    snapshot.ConnectionState,
+                    snapshot.LastDisconnectReason);
             }
             else
             {
-                Log.Warning(exception, "Bean Bot disconnected from Discord");
+                Log.Warning(
+                    exception,
+                    "BeanBot disconnected from Discord. LoginState={LoginState}, ConnectionState={ConnectionState}, LastDisconnectReason={LastDisconnectReason}",
+                    snapshot.LoginState,
+                    snapshot.ConnectionState,
+                    snapshot.LastDisconnectReason);
             }
+
+            _discordGatewayRecovery.StartMonitoring();
 
             return Task.CompletedTask;
         }
