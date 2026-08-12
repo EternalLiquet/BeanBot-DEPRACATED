@@ -140,6 +140,8 @@ public class HealthCheckServerTests
 
         Assert.StartsWith("HTTP/1.1 503 Service Unavailable", response);
         Assert.Contains("\"status\":\"unhealthy\"", response);
+        Assert.Contains("\"mostRecentDisconnectReason\":null", response);
+        Assert.DoesNotContain("\"lastDisconnectReason\"", response);
     }
 
     [Fact]

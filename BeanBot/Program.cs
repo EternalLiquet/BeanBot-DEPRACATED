@@ -266,19 +266,19 @@ namespace BeanBot
             if (exception is null)
             {
                 Log.Warning(
-                    "BeanBot disconnected from Discord. LoginState={LoginState}, ConnectionState={ConnectionState}, LastDisconnectReason={LastDisconnectReason}",
+                    "BeanBot disconnected from Discord. LoginState={LoginState}, ConnectionState={ConnectionState}, MostRecentDisconnectReason={MostRecentDisconnectReason}",
                     snapshot.LoginState,
                     snapshot.ConnectionState,
-                    snapshot.LastDisconnectReason);
+                    snapshot.MostRecentDisconnectReason);
             }
             else
             {
                 Log.Warning(
                     exception,
-                    "BeanBot disconnected from Discord. LoginState={LoginState}, ConnectionState={ConnectionState}, LastDisconnectReason={LastDisconnectReason}",
+                    "BeanBot disconnected from Discord. LoginState={LoginState}, ConnectionState={ConnectionState}, MostRecentDisconnectReason={MostRecentDisconnectReason}",
                     snapshot.LoginState,
                     snapshot.ConnectionState,
-                    snapshot.LastDisconnectReason);
+                    snapshot.MostRecentDisconnectReason);
             }
 
             _discordGatewayRecovery.StartMonitoring();

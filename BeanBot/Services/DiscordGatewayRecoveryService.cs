@@ -180,11 +180,11 @@ namespace BeanBot.Services
         {
             var unhealthySince = initialSnapshot.UnhealthySinceAtUtc ?? DateTimeOffset.UtcNow;
             Log.Warning(
-                "Discord gateway recovery grace period started. LoginState={LoginState}, ConnectionState={ConnectionState}, GracePeriod={GracePeriod}, LastDisconnectReason={LastDisconnectReason}",
+                "Discord gateway recovery grace period started. LoginState={LoginState}, ConnectionState={ConnectionState}, GracePeriod={GracePeriod}, MostRecentDisconnectReason={MostRecentDisconnectReason}",
                 initialSnapshot.LoginState,
                 initialSnapshot.ConnectionState,
                 _options.BuiltInRecoveryGracePeriod,
-                initialSnapshot.LastDisconnectReason);
+                initialSnapshot.MostRecentDisconnectReason);
 
             try
             {
@@ -209,11 +209,11 @@ namespace BeanBot.Services
                 }
 
                 Log.Warning(
-                    "Discord gateway remained unhealthy for {UnhealthyDuration}; beginning one manual reconnect cycle. LoginState={LoginState}, ConnectionState={ConnectionState}, LastDisconnectReason={LastDisconnectReason}",
+                    "Discord gateway remained unhealthy for {UnhealthyDuration}; beginning one manual reconnect cycle. LoginState={LoginState}, ConnectionState={ConnectionState}, MostRecentDisconnectReason={MostRecentDisconnectReason}",
                     DateTimeOffset.UtcNow - unhealthySince,
                     snapshot.LoginState,
                     snapshot.ConnectionState,
-                    snapshot.LastDisconnectReason);
+                    snapshot.MostRecentDisconnectReason);
 
                 try
                 {
@@ -228,10 +228,10 @@ namespace BeanBot.Services
                     snapshot = _createHealthSnapshot();
                     Log.Error(
                         exception,
-                        "Discord manual reconnect cycle failed. LoginState={LoginState}, ConnectionState={ConnectionState}, LastDisconnectReason={LastDisconnectReason}",
+                        "Discord manual reconnect cycle failed. LoginState={LoginState}, ConnectionState={ConnectionState}, MostRecentDisconnectReason={MostRecentDisconnectReason}",
                         snapshot.LoginState,
                         snapshot.ConnectionState,
-                        snapshot.LastDisconnectReason);
+                        snapshot.MostRecentDisconnectReason);
                 }
 
                 if (await WaitForReadyAsync(
@@ -264,11 +264,11 @@ namespace BeanBot.Services
                 }
 
                 Log.Error(
-                    "Discord manual reconnect failed to reach Ready after {UnhealthyDuration}. LoginState={LoginState}, ConnectionState={ConnectionState}, LastDisconnectReason={LastDisconnectReason}",
+                    "Discord manual reconnect failed to reach Ready after {UnhealthyDuration}. LoginState={LoginState}, ConnectionState={ConnectionState}, MostRecentDisconnectReason={MostRecentDisconnectReason}",
                     DateTimeOffset.UtcNow - unhealthySince,
                     snapshot.LoginState,
                     snapshot.ConnectionState,
-                    snapshot.LastDisconnectReason);
+                    snapshot.MostRecentDisconnectReason);
 
                 if (_shutdown.IsCancellationRequested)
                 {

@@ -12,7 +12,7 @@ namespace BeanBot.Services
         private DateTimeOffset? _lastReadyAtUtc;
         private DateTimeOffset? _lastDisconnectedAtUtc;
         private DateTimeOffset? _unhealthySinceAtUtc;
-        private string _lastDisconnectReason;
+        private string _mostRecentDisconnectReason;
 
         public void MarkReady()
         {
@@ -32,7 +32,7 @@ namespace BeanBot.Services
                 _gatewayReady = false;
                 _lastDisconnectedAtUtc = disconnectedAtUtc;
                 _unhealthySinceAtUtc ??= disconnectedAtUtc;
-                _lastDisconnectReason = exception?.Message ?? "Discord gateway disconnected.";
+                _mostRecentDisconnectReason = exception?.Message ?? "Discord gateway disconnected.";
             }
         }
 
@@ -54,7 +54,7 @@ namespace BeanBot.Services
                     _lastReadyAtUtc,
                     _lastDisconnectedAtUtc,
                     _unhealthySinceAtUtc,
-                    _lastDisconnectReason);
+                    _mostRecentDisconnectReason);
             }
         }
 
@@ -65,9 +65,9 @@ namespace BeanBot.Services
                 return "BeanBot is connected to Discord.";
             }
 
-            if (_lastDisconnectReason is not null)
+            if (_mostRecentDisconnectReason is not null)
             {
-                return $"{_lastDisconnectReason} Current state: login={loginState}, connection={connectionState}.";
+                return $"{_mostRecentDisconnectReason} Current state: login={loginState}, connection={connectionState}.";
             }
 
             if (!_gatewayReady)
@@ -94,7 +94,7 @@ namespace BeanBot.Services
             DateTimeOffset? lastReadyAtUtc,
             DateTimeOffset? lastDisconnectedAtUtc,
             DateTimeOffset? unhealthySinceAtUtc,
-            string lastDisconnectReason)
+            string mostRecentDisconnectReason)
         {
             IsHealthy = isHealthy;
             StatusMessage = statusMessage;
@@ -103,7 +103,7 @@ namespace BeanBot.Services
             LastReadyAtUtc = lastReadyAtUtc;
             LastDisconnectedAtUtc = lastDisconnectedAtUtc;
             UnhealthySinceAtUtc = unhealthySinceAtUtc;
-            LastDisconnectReason = lastDisconnectReason;
+            MostRecentDisconnectReason = mostRecentDisconnectReason;
         }
 
         public bool IsHealthy { get; }
@@ -113,6 +113,6 @@ namespace BeanBot.Services
         public DateTimeOffset? LastReadyAtUtc { get; }
         public DateTimeOffset? LastDisconnectedAtUtc { get; }
         public DateTimeOffset? UnhealthySinceAtUtc { get; }
-        public string LastDisconnectReason { get; }
+        public string MostRecentDisconnectReason { get; }
     }
 }
