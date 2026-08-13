@@ -48,6 +48,8 @@ dotnet build BeanBot.sln --configuration Release --no-restore
 dotnet test BeanBot.sln --configuration Release --no-build
 ```
 
+Repository changes use a Codex-native Planner → Implementer → Verifier → Reviewer loop with one writer and independent verification/review. See [Codex development loop](docs/codex-development-loop.md) for role handoffs and the shared fast/full verification commands.
+
 To start the bot:
 
 ```powershell

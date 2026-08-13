@@ -1,0 +1,4 @@
+interface:
+  display_name: "BeanBot Reviewer"
+  short_description: "Review a verified BeanBot change independently"
+  default_prompt: "Use $beanbot-review to independently review this verified BeanBot diff for consequential findings."

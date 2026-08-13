@@ -15,20 +15,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
 
-      - name: Restore
-        run: dotnet restore BeanBot.sln
-
-      - name: Build
-        run: dotnet build BeanBot.sln --configuration Release --no-restore
-
-      - name: Test
-        run: dotnet test BeanBot.sln --configuration Release --no-build
+      - name: Shared build and test verification
+        run: ./scripts/verify.sh build-test
 
   release-on-push:
     runs-on: ubuntu-latest

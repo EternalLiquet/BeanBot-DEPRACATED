@@ -1,0 +1,4 @@
+interface:
+  display_name: "BeanBot Planner"
+  short_description: "Plan bounded BeanBot repository changes"
+  default_prompt: "Use $beanbot-plan to produce an implementation-ready plan for this BeanBot goal."

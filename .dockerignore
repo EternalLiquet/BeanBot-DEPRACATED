@@ -1,6 +1,10 @@
 .git
 .github
 .agents
+.codex
+docs
+scripts
+AGENTS.md
 .artifacts
 .dotnet
 .dotnet-home
