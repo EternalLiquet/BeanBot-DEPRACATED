@@ -120,7 +120,12 @@ def validate_policy_and_scripts() -> None:
         if heading not in policy:
             fail(f"AGENTS.md is missing {heading}")
 
-    for relative_path in ("scripts/verify.sh", "scripts/test-verification.sh"):
+    for relative_path in (
+        "scripts/verify.sh",
+        "scripts/test-verification.sh",
+        "scripts/validate-workflow.py",
+        "scripts/check-vulnerable-packages.py",
+    ):
         path = REPOSITORY_ROOT / relative_path
         if not path.stat().st_mode & stat.S_IXUSR:
             fail(f"{relative_path} must be executable")
@@ -128,8 +133,10 @@ def validate_policy_and_scripts() -> None:
     verifier = (REPOSITORY_ROOT / "scripts" / "verify.sh").read_text(encoding="utf-8")
     if 'run_stage "Test verification orchestration" scripts/test-verification.sh' not in verifier:
         fail("scripts/verify.sh must run the orchestration self-test")
-    if "dotnet list BeanBot.sln package --vulnerable --include-transitive" not in verifier:
-        fail("full verification must scan all solution package dependencies")
+    if "--vulnerable --include-transitive" not in verifier or "--format json --output-version 1" not in verifier:
+        fail("full verification must request a machine-readable solution vulnerability report")
+    if "scripts/check-vulnerable-packages.py" not in verifier:
+        fail("full verification must reject findings in the vulnerability report")
 
     gitignore = (REPOSITORY_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     for ignored_directory in (".dotnet/", ".dotnet-home/"):

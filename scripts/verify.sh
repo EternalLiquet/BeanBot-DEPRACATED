@@ -65,6 +65,21 @@ check_diff() {
   run_stage "Check unstaged diff" git diff --check
 }
 
+check_vulnerable_packages() {
+  local report_path
+  report_path="$(mktemp "${TMPDIR:-/tmp}/beanbot-vulnerabilities.XXXXXX.json")"
+  if ! dotnet list BeanBot.sln package --vulnerable --include-transitive \
+    --format json --output-version 1 >"$report_path"; then
+    rm -f -- "$report_path"
+    return 1
+  fi
+  if ! python3 scripts/check-vulnerable-packages.py "$report_path"; then
+    rm -f -- "$report_path"
+    return 1
+  fi
+  rm -f -- "$report_path"
+}
+
 if [[ "${BEANBOT_VERIFY_SKIP_SELF_TEST:-0}" != "1" ]]; then
   self_test_workflow
 fi
@@ -73,8 +88,7 @@ build_and_test
 check_diff
 
 if [[ "$mode" == "full" ]]; then
-  run_stage "Check vulnerable NuGet packages" \
-    dotnet list BeanBot.sln package --vulnerable --include-transitive
+  run_stage "Check vulnerable NuGet packages" check_vulnerable_packages
   run_stage "Build Docker image" docker build --tag beanbot-verification:local .
 fi
 
