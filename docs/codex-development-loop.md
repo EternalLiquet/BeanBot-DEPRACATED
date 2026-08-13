@@ -24,7 +24,7 @@ Run commands from any directory; each script resolves the repository root itself
 
 `fast` is the normal implementation loop. It tests the verifier's orchestration and failure propagation, validates Codex/CI configuration, restores the solution, builds Release without a second restore, runs Release tests without a second build, and checks committed, staged, and unstaged diffs for whitespace errors.
 
-`full` runs every fast gate once, then checks direct and transitive NuGet dependencies across the complete solution for known vulnerabilities and builds the Docker image. The internal `build-test` mode gives the master-only release workflow the same orchestration self-test, validation, restore, Release build, Release test, and diff gates without duplicating full-only Docker and vulnerability work.
+`full` runs every fast gate once, then requests a machine-readable report for direct and transitive NuGet dependencies across the complete solution, fails explicitly if that report contains a known vulnerability, and builds the Docker image. The internal `build-test` mode gives the master-only release workflow the same orchestration self-test, validation, restore, Release build, Release test, and diff gates without duplicating full-only Docker and vulnerability work.
 
 The script keeps the .NET CLI home and NuGet package cache in the repository's ignored `.dotnet-home` and `.dotnet` directories unless the caller explicitly supplies `DOTNET_CLI_HOME` or `NUGET_PACKAGES`.
 

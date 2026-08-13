@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 verify_script="$repository_root/scripts/verify.sh"
+real_python="$(command -v python3)"
 temporary_directory="$(mktemp -d)"
 trap 'rm -rf -- "$temporary_directory"' EXIT
 
@@ -15,14 +16,33 @@ cat >"$stub" <<'STUB'
 set -Eeuo pipefail
 command_name="$(basename -- "$0")"
 echo "$PWD|$command_name|$*" >>"$BEANBOT_VERIFY_TEST_LOG"
+if [[ "$command_name" == "dotnet" && "$*" == *"--format json"* ]]; then
+  if [[ -n "${BEANBOT_VERIFY_TEST_VULNERABILITY_JSON:-}" ]]; then
+    printf '%s\n' "$BEANBOT_VERIFY_TEST_VULNERABILITY_JSON"
+  else
+    printf '%s\n' '{"version":1,"projects":[]}'
+  fi
+fi
 if [[ -n "${BEANBOT_VERIFY_TEST_FAIL:-}" && "$command_name $*" == *"$BEANBOT_VERIFY_TEST_FAIL"* ]]; then
   exit 17
 fi
 STUB
 chmod +x "$stub"
-for command_name in python3 dotnet git docker; do
+for command_name in dotnet git docker; do
   cp "$stub" "$stub_directory/$command_name"
 done
+cat >"$stub_directory/python3" <<'PYTHON_STUB'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+echo "$PWD|python3|$*" >>"$BEANBOT_VERIFY_TEST_LOG"
+if [[ "$1" == "scripts/check-vulnerable-packages.py" ]]; then
+  exec "${BEANBOT_VERIFY_REAL_PYTHON:-/usr/bin/python3}" "$@"
+fi
+if [[ -n "${BEANBOT_VERIFY_TEST_FAIL:-}" && "python3 $*" == *"$BEANBOT_VERIFY_TEST_FAIL"* ]]; then
+  exit 17
+fi
+PYTHON_STUB
+chmod +x "$stub_directory/python3"
 
 assert_contains() {
   local expected="$1"
@@ -69,15 +89,16 @@ full_log="$temporary_directory/full.log"
 (
   cd /tmp
   PATH="$stub_directory:$PATH" BEANBOT_VERIFY_TEST_LOG="$full_log" \
+    BEANBOT_VERIFY_REAL_PYTHON="$real_python" \
     BEANBOT_VERIFY_SKIP_SELF_TEST=1 "$verify_script" full
 )
-assert_contains "$repository_root|dotnet|list BeanBot.sln package --vulnerable --include-transitive" "$full_log"
+assert_contains "$repository_root|dotnet|list BeanBot.sln package --vulnerable --include-transitive --format json --output-version 1" "$full_log"
 assert_contains "$repository_root|docker|build --tag beanbot-verification:local ." "$full_log"
 assert_count 1 "|python3|scripts/validate-workflow.py" "$full_log"
 assert_count 1 "|dotnet|restore BeanBot.sln" "$full_log"
 assert_count 1 "|dotnet|build BeanBot.sln --configuration Release --no-restore" "$full_log"
 assert_count 1 "|dotnet|test BeanBot.sln --configuration Release --no-build" "$full_log"
-assert_count 1 "|dotnet|list BeanBot.sln package --vulnerable --include-transitive" "$full_log"
+assert_count 1 "|dotnet|list BeanBot.sln package --vulnerable --include-transitive --format json --output-version 1" "$full_log"
 assert_count 1 "|docker|build --tag beanbot-verification:local ." "$full_log"
 
 invalid_log="$temporary_directory/invalid.log"
@@ -98,5 +119,17 @@ fi
 assert_contains "|dotnet|build BeanBot.sln --configuration Release --no-restore" "$failure_log"
 assert_not_contains "|dotnet|test " "$failure_log"
 assert_not_contains "|docker|" "$failure_log"
+
+vulnerable_log="$temporary_directory/vulnerable.log"
+vulnerability_json='{"version":1,"projects":[{"path":"Fixture.csproj","frameworks":[{"framework":"net8.0","topLevelPackages":[{"id":"Example.Package","resolvedVersion":"1.2.3","vulnerabilities":[{"severity":"High","advisoryurl":"https://example.invalid/advisory"}]}]}]}]}'
+if PATH="$stub_directory:$PATH" BEANBOT_VERIFY_TEST_LOG="$vulnerable_log" \
+  BEANBOT_VERIFY_REAL_PYTHON="$real_python" \
+  BEANBOT_VERIFY_TEST_VULNERABILITY_JSON="$vulnerability_json" \
+  BEANBOT_VERIFY_SKIP_SELF_TEST=1 "$verify_script" full; then
+  echo "Reported vulnerable dependency unexpectedly passed full verification" >&2
+  exit 1
+fi
+assert_contains "|python3|scripts/check-vulnerable-packages.py" "$vulnerable_log"
+assert_not_contains "|docker|" "$vulnerable_log"
 
 echo "Verification orchestration tests passed."
