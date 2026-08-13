@@ -1,0 +1,4 @@
+interface:
+  display_name: "BeanBot Verifier"
+  short_description: "Independently verify a BeanBot change"
+  default_prompt: "Use $beanbot-verify to independently verify this BeanBot diff against its acceptance criteria."

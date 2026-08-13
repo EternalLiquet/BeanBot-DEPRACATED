@@ -1,0 +1,4 @@
+interface:
+  display_name: "BeanBot Implementer"
+  short_description: "Implement an approved BeanBot plan safely"
+  default_prompt: "Use $beanbot-implement to implement this approved BeanBot plan and drive it through verification."

@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Validate BeanBot's checked-in Codex and CI workflow infrastructure."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import stat
+import sys
+import tomllib
+
+try:
+    import yaml
+except ImportError:  # GitHub itself parses workflows before a job can start.
+    yaml = None
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+SKILL_NAMES = ("beanbot-plan", "beanbot-implement", "beanbot-verify", "beanbot-review")
+AGENTS = {
+    "beanbot_planner.toml": ("beanbot_planner", "read-only"),
+    "beanbot_verifier.toml": ("beanbot_verifier", "workspace-write"),
+    "beanbot_reviewer.toml": ("beanbot_reviewer", "read-only"),
+}
+
+
+def fail(message: str) -> None:
+    raise ValueError(message)
+
+
+def validate_yaml(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    if "\t" in text:
+        fail(f"{path.relative_to(REPOSITORY_ROOT)} contains a YAML tab indentation")
+    if yaml is not None:
+        try:
+            yaml.compose(text)
+        except yaml.YAMLError as error:
+            fail(f"{path.relative_to(REPOSITORY_ROOT)} is not valid YAML: {error}")
+
+
+def parse_skill_frontmatter(text: str, path: Path) -> dict[str, str]:
+    if not text.startswith("---\n") or "\n---\n" not in text[4:]:
+        fail(f"{path.relative_to(REPOSITORY_ROOT)} has invalid frontmatter")
+    frontmatter_text, _ = text[4:].split("\n---\n", 1)
+    metadata: dict[str, str] = {}
+    for line in frontmatter_text.splitlines():
+        key, separator, value = line.partition(":")
+        if not separator or not key.strip() or not value.strip():
+            fail(f"{path.relative_to(REPOSITORY_ROOT)} has invalid frontmatter content")
+        metadata[key.strip()] = value.strip()
+    return metadata
+
+
+def validate_skills() -> None:
+    for skill_name in SKILL_NAMES:
+        skill_directory = REPOSITORY_ROOT / ".agents" / "skills" / skill_name
+        skill_path = skill_directory / "SKILL.md"
+        text = skill_path.read_text(encoding="utf-8")
+        metadata = parse_skill_frontmatter(text, skill_path)
+        _, body = text[4:].split("\n---\n", 1)
+        if set(metadata) != {"name", "description"}:
+            fail(f"{skill_path.relative_to(REPOSITORY_ROOT)} must contain only name and description metadata")
+        if metadata["name"] != skill_name or not metadata["description"].strip():
+            fail(f"{skill_path.relative_to(REPOSITORY_ROOT)} metadata does not match its directory")
+        if not body.strip() or "TODO" in text:
+            fail(f"{skill_path.relative_to(REPOSITORY_ROOT)} is incomplete")
+
+        ui_path = skill_directory / "agents" / "openai.yaml"
+        validate_yaml(ui_path)
+        if f"${skill_name}" not in ui_path.read_text(encoding="utf-8"):
+            fail(f"{ui_path.relative_to(REPOSITORY_ROOT)} default_prompt must mention ${skill_name}")
+
+
+def validate_custom_agents() -> None:
+    agent_directory = REPOSITORY_ROOT / ".codex" / "agents"
+    for filename, (expected_name, expected_sandbox) in AGENTS.items():
+        path = agent_directory / filename
+        with path.open("rb") as stream:
+            data = tomllib.load(stream)
+        required = {"name", "description", "developer_instructions"}
+        if not required.issubset(data):
+            fail(f"{path.relative_to(REPOSITORY_ROOT)} is missing required custom-agent fields")
+        if data["name"] != expected_name or data.get("sandbox_mode") != expected_sandbox:
+            fail(f"{path.relative_to(REPOSITORY_ROOT)} has unexpected name or sandbox_mode")
+        if "model" in data or "model_reasoning_effort" in data:
+            fail(f"{path.relative_to(REPOSITORY_ROOT)} must inherit the parent model policy")
+
+
+def validate_workflows() -> None:
+    validation_path = REPOSITORY_ROOT / ".github" / "workflows" / "dotnetaction.yml"
+    release_path = REPOSITORY_ROOT / ".github" / "workflows" / "autorelease.yml"
+    validate_yaml(validation_path)
+    validate_yaml(release_path)
+
+    validation = validation_path.read_text(encoding="utf-8")
+    release = release_path.read_text(encoding="utf-8")
+    required_validation_fragments = (
+        "name: .NET Core Master and Deploy Checks",
+        "dotnet-version: 8.0.x",
+        "./scripts/verify.sh full",
+    )
+    required_release_fragments = (
+        "name: Bean Bot Automated Release/Versioning",
+        "branches:\n      - master",
+        "./scripts/verify.sh build-test",
+        "needs: build",
+    )
+    for fragment in required_validation_fragments:
+        if fragment not in validation:
+            fail(f"dotnetaction.yml is missing required content: {fragment}")
+    for fragment in required_release_fragments:
+        if fragment not in release:
+            fail(f"autorelease.yml is missing required content: {fragment}")
+
+
+def validate_policy_and_scripts() -> None:
+    policy = (REPOSITORY_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    for heading in ("## Working Rules", "## Engineering Invariants", "## Development Loop", "## Code Review Rules"):
+        if heading not in policy:
+            fail(f"AGENTS.md is missing {heading}")
+
+    for relative_path in ("scripts/verify.sh", "scripts/test-verification.sh"):
+        path = REPOSITORY_ROOT / relative_path
+        if not path.stat().st_mode & stat.S_IXUSR:
+            fail(f"{relative_path} must be executable")
+
+    verifier = (REPOSITORY_ROOT / "scripts" / "verify.sh").read_text(encoding="utf-8")
+    if 'run_stage "Test verification orchestration" scripts/test-verification.sh' not in verifier:
+        fail("scripts/verify.sh must run the orchestration self-test")
+    if "dotnet list BeanBot.sln package --vulnerable --include-transitive" not in verifier:
+        fail("full verification must scan all solution package dependencies")
+
+    gitignore = (REPOSITORY_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    for ignored_directory in (".dotnet/", ".dotnet-home/"):
+        if ignored_directory not in gitignore:
+            fail(f".gitignore must exclude verification cache {ignored_directory}")
+
+
+def main() -> int:
+    os.chdir(REPOSITORY_ROOT)
+    try:
+        validate_skills()
+        validate_custom_agents()
+        validate_workflows()
+        validate_policy_and_scripts()
+    except (KeyError, OSError, TypeError, ValueError, tomllib.TOMLDecodeError) as error:
+        print(f"Workflow validation failed: {error}", file=sys.stderr)
+        return 1
+    print("Workflow infrastructure validation passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
