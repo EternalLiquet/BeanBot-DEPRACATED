@@ -89,6 +89,8 @@ docker run -d `
 
 The container uses the .NET 10 runtime image because this is a console application, not an ASP.NET app.
 
+BeanBot makes three bounded attempts to log in to Discord during startup. Permanent token failures fail immediately; exhausted transient failures exit with a non-zero status so the configured Docker restart policy can start a fresh process. Runtime gateway disconnects continue to use BeanBot's separate natural-recovery, manual-reconnect, and process-restart sequence.
+
 ## Note
 
 This bot is slowly being replaced by a new implementation in Python. The .NET version will remain available for the foreseeable future, but no new features will be added to it. The Python version is still in early development and may not have all the same features yet. It will be transitioned one module at a time. The .NET version will continue to receive critical bug fixes and security updates as needed, but new features and improvements will be focused on the Python version going forward.
