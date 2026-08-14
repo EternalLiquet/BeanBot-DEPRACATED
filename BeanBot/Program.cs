@@ -14,7 +14,6 @@ using Serilog;
 
 using System;
 using System.IO;
-using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -37,52 +36,11 @@ namespace BeanBot
         private BeanBotOptions _options;
         private ServiceProvider _services;
         private DiscordOwnerErrorNotifier _ownerErrorNotifier;
+        private DiscordStartupLifecycle _discordStartupLifecycle;
 
         static void Main(string[] args)
         {
             var program = new Program();
-            try
-            {
-                program.StartAsync().GetAwaiter().GetResult();
-            }
-            catch (Exception exception)
-            {
-                Log.Fatal(exception, "BeanBot terminated because of an unhandled exception");
-                Environment.ExitCode = 1;
-            }
-            finally
-            {
-                program.DisposeOwnerErrorNotifierAsync().GetAwaiter().GetResult();
-                Log.CloseAndFlush();
-            }
-        }
-
-        public async Task StartAsync()
-        {
-            var database = InitializeApplication();
-            AppDomain.CurrentDomain.UnhandledException += HandleUnhandledException;
-            TaskScheduler.UnobservedTaskException += HandleUnobservedTaskException;
-            InitializeDiscordLifecycleTracking();
-            CreateCommandServiceWithOptions();
-            _services = CreateServiceProvider(database);
-            _healthCheckServer = HealthCheckServer.Create(_options.HealthCheck, _discordClient, _discordConnectionHealth);
-            _healthCheckServer?.Start();
-
-            await LogIntoDiscord();
-            _discordGatewayRecovery.StartMonitoring();
-            await InstantiateCommandServices();
-            _discordClient.Log += LogHandler.LogMessages;
-            _autoPunPoster = new PunHandler(_discordClient, _options);
-            _autoPunPoster.Start();
-            _editMessageHandler = new EditMessageHandler(_discordClient);
-            _editMessageHandler.InitializeEventListener();
-            _newMemberHandler = new NewMemberHandler(_discordClient);
-            _newMemberHandler.InitializeNewMembers();
-            _reactHandler = new ReactHandler(
-                _discordClient,
-                _services.GetRequiredService<RoleReactService>());
-            _reactHandler.InitializeReactDependentServices();
-
             using var cts = new CancellationTokenSource();
             ConsoleCancelEventHandler cancelKeyPressHandler = (_, eventArgs) =>
             {
@@ -94,16 +52,63 @@ namespace BeanBot
             AppDomain.CurrentDomain.ProcessExit += processExitHandler;
             try
             {
-                await Task.Delay(Timeout.Infinite, cts.Token);
+                program.StartAsync(cts.Token).GetAwaiter().GetResult();
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
             {
-                Log.Warning("Shutting Down");
+                Log.Warning("Shutting down");
+            }
+            catch (Exception exception)
+            {
+                Log.Fatal(exception, "BeanBot terminated because of an unhandled exception");
+                Environment.ExitCode = 1;
             }
             finally
             {
                 Console.CancelKeyPress -= cancelKeyPressHandler;
                 AppDomain.CurrentDomain.ProcessExit -= processExitHandler;
+                program.DisposeOwnerErrorNotifierAsync().GetAwaiter().GetResult();
+                Log.CloseAndFlush();
+            }
+        }
+
+        public async Task StartAsync(CancellationToken cancellationToken = default)
+        {
+            var database = InitializeApplication();
+            AppDomain.CurrentDomain.UnhandledException += HandleUnhandledException;
+            TaskScheduler.UnobservedTaskException += HandleUnobservedTaskException;
+            InitializeDiscordLifecycleTracking();
+            CreateCommandServiceWithOptions();
+            _services = CreateServiceProvider(database);
+            _healthCheckServer = HealthCheckServer.Create(_options.HealthCheck, _discordClient, _discordConnectionHealth);
+            try
+            {
+                _healthCheckServer?.Start();
+                var startupOptions = DiscordStartupOptions.Default;
+                _discordStartupLifecycle = new DiscordStartupLifecycle(
+                    _discordClient,
+                    _options.BotToken,
+                    startupOptions.LifecycleOperationTimeout);
+                var startupService = new DiscordStartupService(_discordStartupLifecycle, startupOptions);
+                await startupService.StartAsync(cancellationToken);
+                _discordGatewayRecovery.StartMonitoring();
+                await InstantiateCommandServices();
+                _discordClient.Log += LogHandler.LogMessages;
+                _autoPunPoster = new PunHandler(_discordClient, _options);
+                _autoPunPoster.Start();
+                _editMessageHandler = new EditMessageHandler(_discordClient);
+                _editMessageHandler.InitializeEventListener();
+                _newMemberHandler = new NewMemberHandler(_discordClient);
+                _newMemberHandler.InitializeNewMembers();
+                _reactHandler = new ReactHandler(
+                    _discordClient,
+                    _services.GetRequiredService<RoleReactService>());
+                _reactHandler.InitializeReactDependentServices();
+
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+            finally
+            {
                 _reactHandler?.Dispose();
                 _newMemberHandler?.Dispose();
                 _editMessageHandler?.Dispose();
@@ -130,22 +135,78 @@ namespace BeanBot
                 }
 
                 await _ownerErrorNotifier.FlushAsync(TimeSpan.FromSeconds(3));
-                try
-                {
-                    await _discordClient.StopAsync();
-                    await _discordClient.LogoutAsync();
-                }
-                catch (Exception e)
-                {
-                    Log.Error(e, "Error shutting down: ");
-                }
+                await StopDiscordAsync();
 
                 await _ownerErrorNotifier.FlushAsync(TimeSpan.FromSeconds(3));
-                _discordClient.Dispose();
+                if (_discordStartupLifecycle?.HasUnfinishedOperation != true)
+                {
+                    _discordClient.Dispose();
+                }
+                else
+                {
+                    Log.Warning(
+                        "Skipping Discord client disposal because a startup lifecycle operation is still running; process exit will reclaim it");
+                }
                 _discordOutageRecoveryNotifier?.Dispose();
                 _discordOutageStore?.Dispose();
                 AppDomain.CurrentDomain.UnhandledException -= HandleUnhandledException;
                 TaskScheduler.UnobservedTaskException -= HandleUnobservedTaskException;
+            }
+        }
+
+        private async Task StopDiscordAsync()
+        {
+            if (_discordStartupLifecycle?.HasUnfinishedOperation == true)
+            {
+                Log.Warning(
+                    "Skipping Discord stop/logout because a startup lifecycle operation is still running; process exit will reclaim it");
+                return;
+            }
+
+            var operationTimeout = DiscordGatewayRecoveryOptions.Default.LifecycleOperationTimeout;
+            if (!await RunBoundedShutdownOperationAsync(
+                _discordClient.StopAsync(),
+                "stop",
+                operationTimeout))
+            {
+                return;
+            }
+
+            await RunBoundedShutdownOperationAsync(
+                _discordClient.LogoutAsync(),
+                "logout",
+                operationTimeout);
+        }
+
+        private static async Task<bool> RunBoundedShutdownOperationAsync(
+            Task operation,
+            string operationName,
+            TimeSpan timeout)
+        {
+            try
+            {
+                await operation.WaitAsync(timeout);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                if (!operation.IsCompleted)
+                {
+                    _ = operation.ContinueWith(
+                        completedTask => Log.Error(
+                            completedTask.Exception,
+                            "Discord {Operation} operation failed after its shutdown wait ended",
+                            operationName),
+                        CancellationToken.None,
+                        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default);
+                }
+
+                Log.Error(
+                    exception,
+                    "Discord {Operation} operation did not complete during bounded shutdown",
+                    operationName);
+                return false;
             }
         }
 
@@ -216,32 +277,6 @@ namespace BeanBot
                 LogLevel = LogSeverity.Verbose,
                 CaseSensitiveCommands = false,
             });
-        }
-
-        private async Task LogIntoDiscord()
-        {
-            bool loggedIn = false;
-            while (loggedIn == false)
-            {
-                try
-                {
-                    await _discordClient.LoginAsync(TokenType.Bot, _options.BotToken);
-                    await _discordClient.StartAsync();
-                    await _discordClient.SetGameAsync("My purpose is to bully Hatate and succ the world dry", null, ActivityType.Playing);
-                    loggedIn = true;
-                }
-                catch (Discord.Net.HttpException e)
-                {
-                    if (e.HttpCode == HttpStatusCode.Unauthorized)
-                    {
-                        Log.Fatal(e, "Discord rejected the configured bot token. Update BEANBOT_BOT_TOKEN and restart the process.");
-                        throw;
-                    }
-
-                    Log.Error(e, "Discord login failed; retrying in 30 seconds");
-                    await Task.Delay(TimeSpan.FromSeconds(30));
-                }
-            }
         }
 
         private void CreateNewDiscordSocketClientWithConfigurations()
