@@ -17,6 +17,7 @@ namespace BeanBot.Services
     {
         internal const int MaximumActivePaginators = 64;
         internal static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(5);
+        internal static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(5);
         private static readonly Emoji FirstPage = new("⏮");
         private static readonly Emoji PreviousPage = new("◀");
         private static readonly Emoji NextPage = new("▶");
@@ -68,9 +69,13 @@ namespace BeanBot.Services
                 throw new ArgumentOutOfRangeException(nameof(timeout));
             }
 
-            if (!_availableSlots.Wait(0))
+            lock (_syncRoot)
             {
-                throw new InvalidOperationException("Too many Discord paginators are already active.");
+                ThrowIfDisposed();
+                if (!_availableSlots.Wait(0))
+                {
+                    throw new InvalidOperationException("Too many Discord paginators are already active.");
+                }
             }
 
             IUserMessage message = null;
@@ -80,7 +85,9 @@ namespace BeanBot.Services
             try
             {
                 var cursor = new PaginationCursor(pageList.Count);
-                message = await context.Channel.SendMessageAsync(embed: BuildEmbed(pageList, cursor));
+                message = await context.Channel.SendMessageAsync(
+                    embed: BuildEmbed(pageList, cursor),
+                    options: CreateRequestOptions(_shutdown.Token));
                 session = new PaginationSession(message, context.User.Id, pageList, cursor, _shutdown.Token);
                 await session.Access.WaitAsync();
                 sessionAccessHeld = true;
@@ -97,7 +104,7 @@ namespace BeanBot.Services
 
                 foreach (var control in Controls)
                 {
-                    await message.AddReactionAsync(control);
+                    await message.AddReactionAsync(control, CreateRequestOptions(_shutdown.Token));
                 }
 
                 if (!_sessions.TryGetValue(message.Id, out var currentSession)
@@ -113,7 +120,7 @@ namespace BeanBot.Services
             {
                 if (!sessionRegistered)
                 {
-                    _availableSlots.Release();
+                    ReleaseAvailableSlot();
                 }
                 else
                 {
@@ -177,13 +184,15 @@ namespace BeanBot.Services
                         if (session.Cursor.Move(action))
                         {
                             await session.Message.ModifyAsync(
-                                properties => properties.Embed = BuildEmbed(session.Pages, session.Cursor));
+                                properties => properties.Embed = BuildEmbed(session.Pages, session.Cursor),
+                                options: CreateRequestOptions(_shutdown.Token));
                         }
 
                         await TryRemoveUserReactionAsync(
                             session.Message,
                             reaction.Emote,
-                            reaction.UserId);
+                            reaction.UserId,
+                            _shutdown.Token);
                     }
                 }
                 finally
@@ -243,7 +252,10 @@ namespace BeanBot.Services
 
                     try
                     {
-                        await session.Message.RemoveReactionAsync(control, currentUser);
+                        await session.Message.RemoveReactionAsync(
+                            control,
+                            currentUser,
+                            CreateRequestOptions(expirationCancellation));
                     }
                     catch (Exception exception)
                     {
@@ -291,7 +303,7 @@ namespace BeanBot.Services
                 await session.ExpirationTask;
                 if (deleteMessage && !_shutdown.IsCancellationRequested)
                 {
-                    await session.Message.DeleteAsync();
+                    await session.Message.DeleteAsync(CreateRequestOptions(_shutdown.Token));
                 }
             }
             finally
@@ -303,11 +315,15 @@ namespace BeanBot.Services
         internal static async Task TryRemoveUserReactionAsync(
             IUserMessage message,
             IEmote emote,
-            ulong userId)
+            ulong userId,
+            CancellationToken cancellationToken = default)
         {
             try
             {
-                await message.RemoveReactionAsync(emote, userId);
+                await message.RemoveReactionAsync(
+                    emote,
+                    userId,
+                    CreateRequestOptions(cancellationToken));
             }
             catch (Exception exception)
             {
@@ -327,7 +343,7 @@ namespace BeanBot.Services
             try
             {
                 RemoveSession(messageId, session);
-                session.ReleaseSlot(_availableSlots);
+                ReleaseAvailableSlot(session);
                 session.Dispose();
             }
             finally
@@ -335,6 +351,27 @@ namespace BeanBot.Services
                 session.MarkCompletionFinished();
             }
         }
+
+        private void ReleaseAvailableSlot(PaginationSession session = null)
+        {
+            lock (_syncRoot)
+            {
+                if (Volatile.Read(ref _disposed) == 0)
+                {
+                    if (session == null)
+                    {
+                        _availableSlots.Release();
+                    }
+                    else
+                    {
+                        session.ReleaseSlot(_availableSlots);
+                    }
+                }
+            }
+        }
+
+        private static RequestOptions CreateRequestOptions(CancellationToken cancellationToken)
+            => new() { CancelToken = cancellationToken };
 
         private static PaginationAction GetAction(IEmote emote)
         {
@@ -354,8 +391,7 @@ namespace BeanBot.Services
 
         public void Dispose()
         {
-            List<Task> inFlightCompletions;
-            List<KeyValuePair<ulong, PaginationSession>> ownedSessions;
+            List<Task> shutdownTasks;
             lock (_syncRoot)
             {
                 if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -365,37 +401,79 @@ namespace BeanBot.Services
 
                 _discordClient.ReactionAdded -= HandleReactionAsync;
                 _shutdown.Cancel();
-                inFlightCompletions = new List<Task>(_sessions.Count);
-                ownedSessions = new List<KeyValuePair<ulong, PaginationSession>>(_sessions.Count);
+                shutdownTasks = new List<Task>(_sessions.Count);
                 foreach (var session in _sessions)
                 {
                     session.Value.CancelExpiration();
                     if (session.Value.TryBeginCompletion())
                     {
-                        ownedSessions.Add(session);
+                        shutdownTasks.Add(CompleteOwnedSessionAsync(session.Key, session.Value));
                     }
                     else
                     {
-                        inFlightCompletions.Add(session.Value.CompletionTask);
+                        shutdownTasks.Add(session.Value.CompletionTask);
                     }
                 }
+
+                _availableSlots.Dispose();
             }
 
-            foreach (var session in ownedSessions)
+            var shutdown = Task.WhenAll(shutdownTasks);
+            try
             {
-                session.Value.ExpirationTask.GetAwaiter().GetResult();
-                session.Value.Access.Wait();
-                try
+                if (WaitForShutdown(shutdown, ShutdownTimeout))
                 {
-                    CompleteSession(session.Key, session.Value);
+                    _shutdown.Dispose();
+                    return;
                 }
-                finally
-                {
-                    session.Value.Access.Release();
-                }
+
+                Log.Warning(
+                    "Discord paginator shutdown exceeded {Timeout}; cleanup will finish in the background",
+                    ShutdownTimeout);
             }
-            Task.WhenAll(inFlightCompletions).GetAwaiter().GetResult();
-            _shutdown.Dispose();
+            catch (Exception exception)
+            {
+                Log.Warning(exception, "Discord paginator shutdown encountered a cleanup failure");
+                _shutdown.Dispose();
+                return;
+            }
+
+            _ = ObserveDeferredShutdownAsync(shutdown);
+        }
+
+        internal static bool WaitForShutdown(Task shutdown, TimeSpan timeout)
+            => shutdown.Wait(timeout);
+
+        private async Task CompleteOwnedSessionAsync(
+            ulong messageId,
+            PaginationSession session)
+        {
+            await session.ExpirationTask;
+            await session.Access.WaitAsync();
+            try
+            {
+                CompleteSession(messageId, session);
+            }
+            finally
+            {
+                session.Access.Release();
+            }
+        }
+
+        private async Task ObserveDeferredShutdownAsync(Task shutdown)
+        {
+            try
+            {
+                await shutdown;
+            }
+            catch (Exception exception)
+            {
+                Log.Warning(exception, "Deferred Discord paginator cleanup failed");
+            }
+            finally
+            {
+                _shutdown.Dispose();
+            }
         }
 
         private void ThrowIfDisposed()

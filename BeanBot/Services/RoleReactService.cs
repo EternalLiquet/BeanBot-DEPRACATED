@@ -40,14 +40,20 @@ namespace BeanBot.Services
         {
             try
             {
+                var currentUser = _client?.CurrentUser;
+                if (currentUser == null)
+                {
+                    return;
+                }
+
                 var resolvedChannel = await channel.GetOrDownloadAsync();
-                if (_client?.CurrentUser == null || resolvedChannel is not SocketTextChannel textChannel)
+                if (resolvedChannel is not SocketTextChannel textChannel)
                 {
                     return;
                 }
 
                 var cachedMessage = await message.GetOrDownloadAsync();
-                if (cachedMessage.Author.Id != _client.CurrentUser.Id || reaction.UserId == _client.CurrentUser.Id)
+                if (cachedMessage.Author.Id != currentUser.Id || reaction.UserId == currentUser.Id)
                 {
                     return;
                 }

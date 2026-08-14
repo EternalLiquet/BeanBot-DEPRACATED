@@ -1,8 +1,10 @@
 using BeanBot.Services;
 
 using Discord;
+using Discord.WebSocket;
 
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -183,6 +185,37 @@ public class DiscordPaginatorServiceTests
 
         Assert.Equal(new ulong[] { 42, 42 }, recorder.RemovedUserIds);
         Assert.All(recorder.RemovedEmotes, emote => Assert.Equal(control, emote));
+    }
+
+    [Fact]
+    public void ShutdownWait_ReturnsWithinConfiguredBound()
+    {
+        var incompleteShutdown = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var stopwatch = Stopwatch.StartNew();
+
+        var completed = DiscordPaginatorService.WaitForShutdown(
+            incompleteShutdown.Task,
+            TimeSpan.FromMilliseconds(25));
+
+        stopwatch.Stop();
+        Assert.False(completed);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public void Dispose_DisposesOwnedSlotSemaphore()
+    {
+        using var client = new DiscordSocketClient();
+        var paginator = new DiscordPaginatorService(client);
+        var slotsField = typeof(DiscordPaginatorService).GetField(
+            "_availableSlots",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var slots = Assert.IsType<SemaphoreSlim>(slotsField?.GetValue(paginator));
+
+        paginator.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => slots.Wait(0));
     }
 
     [Fact]
