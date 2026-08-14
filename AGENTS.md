@@ -7,7 +7,7 @@
 - Keep code human-readable and human-reviewable. Prefer self-documenting method and variable names.
 - Do not weaken tests, assertions, validation, authentication, rate limiting, or failure handling to obtain green output.
 - Never commit or log `.env` contents, Discord tokens, MongoDB credentials, bearer tokens, channel IDs, connection strings, sensitive Discord payloads, or other deployment secrets. Secrets belong in environment variables.
-- Preserve compatibility with the existing self-hosted .NET 8 Docker deployment. Runtime files belong under the existing persistent `BeanBotFiles` data directory.
+- Preserve compatibility with the existing self-hosted .NET 10 Docker deployment. Runtime files belong under the existing persistent `BeanBotFiles` data directory.
 - Critical bug fixes and security maintenance remain allowed. Do not add unrelated bot features, begin the Python migration, or perform the planned .NET/Discord.Net upgrade as part of another task.
 - Do not merge a pull request or enable auto-merge unless the user explicitly instructs it.
 

@@ -1,4 +1,5 @@
-﻿using BeanBot.Util;
+﻿using BeanBot.Services;
+using BeanBot.Util;
 
 using Discord.Commands;
 using Discord.WebSocket;
@@ -18,6 +19,7 @@ namespace BeanBot.EventHandlers
         private readonly CommandService _commandService;
         private readonly IServiceProvider _services;
         private readonly FortuneAnswerQueue _fortuneAnswers;
+        private readonly DiscordMessageWaiter _messageWaiter;
         private bool _initialized;
 
         public CommandHandler(
@@ -30,6 +32,7 @@ namespace BeanBot.EventHandlers
             _commandService = commandService ?? throw new ArgumentNullException(nameof(commandService));
             _services = services ?? throw new ArgumentNullException(nameof(services));
             _fortuneAnswers = _services.GetRequiredService<FortuneAnswerQueue>();
+            _messageWaiter = _services.GetRequiredService<DiscordMessageWaiter>();
         }
 
         public async Task InitializeCommandsAsync()
@@ -60,6 +63,7 @@ namespace BeanBot.EventHandlers
 
         internal async Task HandleCommandAsync(SocketMessage messageEvent)
         {
+            _messageWaiter.TryPublish(messageEvent);
             var discordMessage = messageEvent as SocketUserMessage;
             if (MessageIsSystemMessage(discordMessage))
             {

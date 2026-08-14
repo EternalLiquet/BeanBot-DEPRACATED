@@ -1,10 +1,11 @@
 ﻿using BeanBot.Entities;
 using BeanBot.Configuration;
+using BeanBot.Services;
 using BeanBot.Util;
 using CsvHelper;
 using Discord;
-using Discord.Addons.Interactive;
 using Discord.Commands;
+using Discord.WebSocket;
 using MemeApiDotNetWrapper;
 using Serilog;
 using System;
@@ -18,17 +19,22 @@ using System.Threading.Tasks;
 namespace BeanBot.Modules
 {
     [Name("Meme Commands")]
-    public class MemeModule : InteractiveBase
+    public class MemeModule : ModuleBase<SocketCommandContext>
     {
         private static readonly HttpClient HttpClient = new HttpClient();
         private readonly MemeMachine _memeMachine = new MemeMachine();
         private readonly BeanBotOptions _options;
         private readonly FortuneAnswerQueue _fortuneAnswers;
+        private readonly DiscordPaginatorService _paginator;
 
-        public MemeModule(BeanBotOptions options, FortuneAnswerQueue fortuneAnswers)
+        public MemeModule(
+            BeanBotOptions options,
+            FortuneAnswerQueue fortuneAnswers,
+            DiscordPaginatorService paginator)
         {
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _fortuneAnswers = fortuneAnswers ?? throw new ArgumentNullException(nameof(fortuneAnswers));
+            _paginator = paginator ?? throw new ArgumentNullException(nameof(paginator));
         }
 
         private static readonly string[] EightBallResponses = new string[8]
@@ -370,7 +376,7 @@ namespace BeanBot.Modules
         private async Task ReplyWithOchoOcho()
         {
             var pages = new[] { "One plus one, equals two.", "Two plus two, equals four.", "Four plus four, equals eight.", "Doblehin ang eight.", "Tayo'y mag ocho ocho, ocho ocho, mag ocho ocho pa" };
-            await PagedReplyAsync(pages);
+            await _paginator.SendAsync(Context, pages);
         }
     }
 }

@@ -3,7 +3,7 @@
 
 # Bean Bot
 
-Bean Bot is a .NET 8 Discord bot with MongoDB-backed role reaction storage and a small set of server utilities.
+Bean Bot is a .NET 10 Discord bot with MongoDB-backed role reaction storage and a small set of server utilities.
 
 ## Configuration
 
@@ -18,6 +18,15 @@ BEANBOT_YOSHIMARU_URL=
 ```
 
 For backwards compatibility, the legacy variable names (`botToken`, `mongoConnectionString`, and so on) are still accepted, but the `BEANBOT_*` names are the intended format. Real environment variables take precedence over values from `.env`.
+
+### Discord Gateway Intents
+
+BeanBot explicitly requests only the gateway events used by its commands and event handlers. In the Discord Developer Portal, open the application, select **Bot**, and enable these privileged intents before deployment:
+
+- **Server Members Intent** for new-member welcome messages and current guild-member data.
+- **Message Content Intent** for BeanBot's prefix commands and edited-message handling.
+
+Leave **Presence Intent** disabled; BeanBot does not use presence events. The remaining requested intents are unprivileged and cover guild/channel state, guild emotes, guild and direct messages, and guild/direct-message reactions used by reaction roles and pagination.
 
 Optional health check settings:
 
@@ -40,7 +49,7 @@ If you bind the endpoint to anything other than `127.0.0.1`, set `BEANBOT_HEALTH
 
 ## Local Development
 
-Install the .NET 8 SDK, then restore, build, and run the test suite from the repo root:
+Install the .NET 10 SDK, then restore, build, and run the test suite from the repo root:
 
 ```powershell
 dotnet restore BeanBot.sln
@@ -78,7 +87,7 @@ docker run -d `
   beanbot
 ```
 
-The container uses the .NET 8 runtime image because this is a console application, not an ASP.NET app.
+The container uses the .NET 10 runtime image because this is a console application, not an ASP.NET app.
 
 ## Note
 

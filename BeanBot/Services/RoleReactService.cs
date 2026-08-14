@@ -26,27 +26,34 @@ namespace BeanBot.Services
             _client = client;
         }
 
-        public Task HandleReact(Cacheable<IUserMessage, ulong> message, ISocketMessageChannel channel, SocketReaction reaction)
+        public Task HandleReact(Cacheable<IUserMessage, ulong> message, Cacheable<IMessageChannel, ulong> channel, SocketReaction reaction)
             => HandleReactionAsync(message, channel, reaction, addRole: true);
 
-        public Task HandleRemoveReact(Cacheable<IUserMessage, ulong> message, ISocketMessageChannel channel, SocketReaction reaction)
+        public Task HandleRemoveReact(Cacheable<IUserMessage, ulong> message, Cacheable<IMessageChannel, ulong> channel, SocketReaction reaction)
             => HandleReactionAsync(message, channel, reaction, addRole: false);
 
         private async Task HandleReactionAsync(
             Cacheable<IUserMessage, ulong> message,
-            ISocketMessageChannel channel,
+            Cacheable<IMessageChannel, ulong> channel,
             SocketReaction reaction,
             bool addRole)
         {
             try
             {
-                if (_client?.CurrentUser == null || channel is not SocketTextChannel textChannel)
+                var currentUser = _client?.CurrentUser;
+                if (currentUser == null)
+                {
+                    return;
+                }
+
+                var resolvedChannel = await channel.GetOrDownloadAsync();
+                if (resolvedChannel is not SocketTextChannel textChannel)
                 {
                     return;
                 }
 
                 var cachedMessage = await message.GetOrDownloadAsync();
-                if (cachedMessage.Author.Id != _client.CurrentUser.Id || reaction.UserId == _client.CurrentUser.Id)
+                if (cachedMessage.Author.Id != currentUser.Id || reaction.UserId == currentUser.Id)
                 {
                     return;
                 }

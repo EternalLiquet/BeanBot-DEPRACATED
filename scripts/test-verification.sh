@@ -121,7 +121,7 @@ assert_not_contains "|dotnet|test " "$failure_log"
 assert_not_contains "|docker|" "$failure_log"
 
 vulnerable_log="$temporary_directory/vulnerable.log"
-vulnerability_json='{"version":1,"projects":[{"path":"Fixture.csproj","frameworks":[{"framework":"net8.0","topLevelPackages":[{"id":"Example.Package","resolvedVersion":"1.2.3","vulnerabilities":[{"severity":"High","advisoryurl":"https://example.invalid/advisory"}]}]}]}]}'
+vulnerability_json='{"version":1,"projects":[{"path":"Fixture.csproj","frameworks":[{"framework":"net10.0","topLevelPackages":[{"id":"Example.Package","resolvedVersion":"1.2.3","vulnerabilities":[{"severity":"High","advisoryurl":"https://example.invalid/advisory"}]}]}]}]}'
 if PATH="$stub_directory:$PATH" BEANBOT_VERIFY_TEST_LOG="$vulnerable_log" \
   BEANBOT_VERIFY_REAL_PYTHON="$real_python" \
   BEANBOT_VERIFY_TEST_VULNERABILITY_JSON="$vulnerability_json" \

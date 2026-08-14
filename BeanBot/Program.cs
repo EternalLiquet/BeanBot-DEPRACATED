@@ -201,7 +201,8 @@ namespace BeanBot
                 .AddSingleton(_commandService)
                 .AddSingleton(database)
                 .AddSingleton<FortuneAnswerQueue>()
-                .AddSingleton(new Discord.Addons.Interactive.InteractiveService(_discordClient))
+                .AddSingleton<DiscordMessageWaiter>()
+                .AddSingleton<DiscordPaginatorService>()
                 .AddSingleton<RoleReactRepository>()
                 .AddSingleton<RoleReactService>()
                 .AddSingleton<DiscordMessageCleanupService>()
@@ -245,13 +246,25 @@ namespace BeanBot
 
         private void CreateNewDiscordSocketClientWithConfigurations()
         {
-            _discordClient = new DiscordSocketClient(new DiscordSocketConfig
+            _discordClient = new DiscordSocketClient(CreateDiscordSocketConfig());
+        }
+
+        internal static DiscordSocketConfig CreateDiscordSocketConfig()
+        {
+            return new DiscordSocketConfig
             {
                 LogLevel = LogSeverity.Verbose,
                 MessageCacheSize = 50,
-                ExclusiveBulkDelete = true,
-                AlwaysDownloadUsers = false
-            });
+                AlwaysDownloadUsers = false,
+                GatewayIntents = GatewayIntents.Guilds
+                    | GatewayIntents.GuildMembers
+                    | GatewayIntents.GuildEmojis
+                    | GatewayIntents.GuildMessages
+                    | GatewayIntents.DirectMessages
+                    | GatewayIntents.GuildMessageReactions
+                    | GatewayIntents.DirectMessageReactions
+                    | GatewayIntents.MessageContent
+            };
         }
 
         private void InitializeDiscordLifecycleTracking()
