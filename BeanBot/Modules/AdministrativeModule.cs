@@ -15,6 +15,18 @@ namespace BeanBot.Modules
     [Name("Administrative Commands")]
     public class AdministrativeModule : ModuleBase<SocketCommandContext>
     {
+        internal enum RoleResolutionStatus
+        {
+            Resolved,
+            NotFound,
+            MultipleMentions,
+            AmbiguousName
+        }
+
+        internal readonly record struct RoleCandidate(ulong Id, string Name);
+
+        internal readonly record struct RoleResolution(RoleResolutionStatus Status, ulong? RoleId);
+
         private const int MaximumRolesPerGroup = 25;
         private static readonly TimeSpan InteractionTimeout = TimeSpan.FromSeconds(60);
         private readonly RoleReactService _roleReactService;
@@ -160,15 +172,73 @@ namespace BeanBot.Modules
             }
 
             messages.Add(response);
-            var role = Context.Guild.Roles.FirstOrDefault(candidate =>
-                string.Equals(response.Content.Trim(), candidate.Name.Trim(), StringComparison.OrdinalIgnoreCase));
-            if (role == null)
+            var availableRoles = Context.Guild.Roles.ToList();
+            var roleResolution = ResolveRole(
+                response.Content,
+                response.MentionedRoleIds,
+                availableRoles.Select(role => new RoleCandidate(role.Id, role.Name)));
+
+            if (roleResolution.Status == RoleResolutionStatus.MultipleMentions)
+            {
+                messages.Add(await ReplyAsync("Please mention only one role. Please start again."));
+                return null;
+            }
+
+            if (roleResolution.Status == RoleResolutionStatus.AmbiguousName)
+            {
+                messages.Add(await ReplyAsync("Multiple roles have that name. Please mention the role you want and start again."));
+                return null;
+            }
+
+            if (roleResolution.Status == RoleResolutionStatus.NotFound)
             {
                 messages.Add(await ReplyAsync($"The role {response.Content} does not exist. Please start again."));
                 return null;
             }
 
-            return role;
+            return availableRoles.Single(role => role.Id == roleResolution.RoleId);
+        }
+
+        internal static RoleResolution ResolveRole(
+            string roleName,
+            IEnumerable<ulong> mentionedRoleIds,
+            IEnumerable<RoleCandidate> availableRoles)
+        {
+            var roleCandidates = availableRoles.ToList();
+            var distinctMentionedRoleIds = mentionedRoleIds.Distinct().Take(2).ToList();
+            if (distinctMentionedRoleIds.Count > 1)
+            {
+                return new RoleResolution(RoleResolutionStatus.MultipleMentions, null);
+            }
+
+            if (distinctMentionedRoleIds.Count == 1)
+            {
+                var mentionedRoleId = distinctMentionedRoleIds[0];
+                return roleCandidates.Any(candidate => candidate.Id == mentionedRoleId)
+                    ? new RoleResolution(RoleResolutionStatus.Resolved, mentionedRoleId)
+                    : new RoleResolution(RoleResolutionStatus.NotFound, null);
+            }
+
+            if (string.IsNullOrWhiteSpace(roleName))
+            {
+                return new RoleResolution(RoleResolutionStatus.NotFound, null);
+            }
+
+            var normalizedRoleName = roleName.Trim();
+            var matchingRoles = roleCandidates
+                .Where(candidate => string.Equals(
+                    normalizedRoleName,
+                    candidate.Name.Trim(),
+                    StringComparison.OrdinalIgnoreCase))
+                .Take(2)
+                .ToList();
+
+            return matchingRoles.Count switch
+            {
+                1 => new RoleResolution(RoleResolutionStatus.Resolved, matchingRoles[0].Id),
+                > 1 => new RoleResolution(RoleResolutionStatus.AmbiguousName, null),
+                _ => new RoleResolution(RoleResolutionStatus.NotFound, null)
+            };
         }
 
         private async Task<Emote> GetEmoteAsync(List<IMessage> messages, SocketMessage response)
