@@ -66,6 +66,7 @@ dotnet run --project BeanBot/BeanBot.csproj
 ```
 
 The bot requires access to the MongoDB instance configured by `BEANBOT_MONGO_CONNECTION_STRING`. If a `.env` file exists in the repo root, `dotnet run` loads it automatically.
+BeanBot runs through the .NET Generic Host, so Ctrl+C and normal process-stop signals trigger the same bounded graceful-shutdown path used in production.
 
 ## Docker
 
@@ -88,6 +89,7 @@ docker run -d `
 ```
 
 The container uses the .NET 10 runtime image because this is a console application, not an ASP.NET app.
+Container stop signals are handled by the Generic Host and flow through BeanBot's bounded Discord and background-service shutdown sequence.
 
 BeanBot makes three bounded attempts to log in to Discord during startup. Permanent token failures fail immediately; exhausted transient failures exit with a non-zero status so the configured Docker restart policy can start a fresh process. Runtime gateway disconnects continue to use BeanBot's separate natural-recovery, manual-reconnect, and process-restart sequence.
 

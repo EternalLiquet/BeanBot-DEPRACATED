@@ -1,3 +1,5 @@
+using BeanBot.Hosting;
+
 using Discord;
 
 using Xunit;
@@ -9,7 +11,7 @@ public class DiscordSocketConfigurationTests
     [Fact]
     public void Configuration_RequestsOnlyRequiredGatewayIntents()
     {
-        var configuration = Program.CreateDiscordSocketConfig();
+        var configuration = DiscordSocketConfiguration.Create();
         var expected = GatewayIntents.Guilds
             | GatewayIntents.GuildMembers
             | GatewayIntents.GuildEmojis
