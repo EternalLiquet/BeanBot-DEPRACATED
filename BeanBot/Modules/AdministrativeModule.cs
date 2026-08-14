@@ -2,7 +2,6 @@ using BeanBot.Attributes;
 using BeanBot.Entities;
 using BeanBot.Services;
 using Discord;
-using Discord.Addons.Interactive;
 using Discord.Commands;
 using Discord.WebSocket;
 using Serilog;
@@ -14,19 +13,22 @@ using System.Threading.Tasks;
 namespace BeanBot.Modules
 {
     [Name("Administrative Commands")]
-    public class AdministrativeModule : InteractiveBase
+    public class AdministrativeModule : ModuleBase<SocketCommandContext>
     {
         private const int MaximumRolesPerGroup = 25;
         private static readonly TimeSpan InteractionTimeout = TimeSpan.FromSeconds(60);
         private readonly RoleReactService _roleReactService;
         private readonly DiscordMessageCleanupService _messageCleanupService;
+        private readonly DiscordMessageWaiter _messageWaiter;
 
         public AdministrativeModule(
             RoleReactService roleReactService,
-            DiscordMessageCleanupService messageCleanupService)
+            DiscordMessageCleanupService messageCleanupService,
+            DiscordMessageWaiter messageWaiter)
         {
             _roleReactService = roleReactService ?? throw new ArgumentNullException(nameof(roleReactService));
             _messageCleanupService = messageCleanupService ?? throw new ArgumentNullException(nameof(messageCleanupService));
+            _messageWaiter = messageWaiter ?? throw new ArgumentNullException(nameof(messageWaiter));
         }
 
         [Command("role setting", RunMode = RunMode.Async)]
@@ -45,7 +47,7 @@ namespace BeanBot.Modules
             {
                 var roleEmotePairs = new List<RoleEmotePair>();
                 messagesInInteraction.Add(await ReplyAsync($"How many roles do you wish to configure? (1-{MaximumRolesPerGroup})"));
-                var amountMessage = await NextMessageAsync(timeout: InteractionTimeout);
+                var amountMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
                 var roleCountResult = await GetRoleCountAsync(messagesInInteraction, amountMessage);
                 if (!roleCountResult.Success)
                 {
@@ -55,7 +57,7 @@ namespace BeanBot.Modules
                 for (var index = 0; index < roleCountResult.RoleCount; index++)
                 {
                     messagesInInteraction.Add(await ReplyAsync("Which role would you like to set up?"));
-                    var roleMessage = await NextMessageAsync(timeout: InteractionTimeout);
+                    var roleMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
                     var role = await GetRoleAsync(messagesInInteraction, roleMessage);
                     if (role == null)
                     {
@@ -63,7 +65,7 @@ namespace BeanBot.Modules
                     }
 
                     messagesInInteraction.Add(await ReplyAsync($"Which emote would you like to set up with the role {role.Name}?"));
-                    var emoteMessage = await NextMessageAsync(timeout: InteractionTimeout);
+                    var emoteMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
                     var emote = await GetEmoteAsync(messagesInInteraction, emoteMessage);
                     if (emote == null)
                     {
@@ -80,7 +82,7 @@ namespace BeanBot.Modules
                 }
 
                 messagesInInteraction.Add(await ReplyAsync("Please label this group of roles (i.e. Games, Position, NSFW, etc)."));
-                var labelMessage = await NextMessageAsync(timeout: InteractionTimeout);
+                var labelMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
                 if (labelMessage == null)
                 {
                     messagesInInteraction.Add(await ReplyAsync("Time has expired, please try again."));

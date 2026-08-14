@@ -194,7 +194,7 @@ namespace BeanBot.Util
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            var directMessageChannel = await owner.GetOrCreateDMChannelAsync();
+            var directMessageChannel = await owner.CreateDMChannelAsync();
             cancellationToken.ThrowIfCancellationRequested();
             await directMessageChannel.SendMessageAsync(alert);
         }

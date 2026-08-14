@@ -26,21 +26,22 @@ namespace BeanBot.Services
             _client = client;
         }
 
-        public Task HandleReact(Cacheable<IUserMessage, ulong> message, ISocketMessageChannel channel, SocketReaction reaction)
+        public Task HandleReact(Cacheable<IUserMessage, ulong> message, Cacheable<IMessageChannel, ulong> channel, SocketReaction reaction)
             => HandleReactionAsync(message, channel, reaction, addRole: true);
 
-        public Task HandleRemoveReact(Cacheable<IUserMessage, ulong> message, ISocketMessageChannel channel, SocketReaction reaction)
+        public Task HandleRemoveReact(Cacheable<IUserMessage, ulong> message, Cacheable<IMessageChannel, ulong> channel, SocketReaction reaction)
             => HandleReactionAsync(message, channel, reaction, addRole: false);
 
         private async Task HandleReactionAsync(
             Cacheable<IUserMessage, ulong> message,
-            ISocketMessageChannel channel,
+            Cacheable<IMessageChannel, ulong> channel,
             SocketReaction reaction,
             bool addRole)
         {
             try
             {
-                if (_client?.CurrentUser == null || channel is not SocketTextChannel textChannel)
+                var resolvedChannel = await channel.GetOrDownloadAsync();
+                if (_client?.CurrentUser == null || resolvedChannel is not SocketTextChannel textChannel)
                 {
                     return;
                 }

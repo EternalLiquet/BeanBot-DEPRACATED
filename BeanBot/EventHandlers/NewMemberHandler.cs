@@ -38,7 +38,7 @@ namespace BeanBot.EventHandlers
 
             try
             {
-                var userDmChannel = await user.GetOrCreateDMChannelAsync();
+                var userDmChannel = await user.CreateDMChannelAsync();
                 await userDmChannel.SendMessageAsync("Please read the rules in the Eli's Charter channel. If you agree to these rules and are over the age of 17, please DM one of the moderators with the blue role \"Student Council\" (i.e discount Hatate/Makoto Kikuchi#2351) for full access to the server! (I promise it's worth it)");
                 Log.Debug("Sent the welcome message to {UserId}", user.Id);
             }

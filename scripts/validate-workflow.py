@@ -97,7 +97,7 @@ def validate_workflows() -> None:
     release = release_path.read_text(encoding="utf-8")
     required_validation_fragments = (
         "name: .NET Core Master and Deploy Checks",
-        "dotnet-version: 8.0.x",
+        "dotnet-version: 10.0.x",
         "./scripts/verify.sh full",
     )
     required_release_fragments = (
