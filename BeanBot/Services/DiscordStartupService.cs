@@ -219,9 +219,16 @@ namespace BeanBot.Services
             {
                 throw;
             }
+            catch (TimeoutException)
+            {
+                // A timed-out presence task may still own the Discord client. Propagate
+                // so startup teardown can avoid racing it with runtime lifecycle work.
+                throw;
+            }
             catch (Exception exception)
             {
-                // Presence is cosmetic and must not restart an otherwise valid gateway lifecycle.
+                // A completed presence failure is cosmetic and must not fail an
+                // otherwise valid gateway lifecycle.
                 Log.Warning(exception, "Discord started, but the initial presence could not be set");
             }
         }

@@ -202,6 +202,60 @@ public class DiscordStartupServiceTests
         Assert.Equal(1, lifecycle.PresenceCount);
     }
 
+    [Fact]
+    public async Task PresenceTimeout_WithUnfinishedOperation_IsTerminal()
+    {
+        var presence = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lifecycle = new DiscordStartupLifecycle(
+            () => Task.CompletedTask,
+            () => Task.CompletedTask,
+            () => presence.Task,
+            TimeSpan.FromMilliseconds(20));
+        var service = new DiscordStartupService(
+            lifecycle,
+            DiscordStartupOptions.Default,
+            new RecordingDelay());
+
+        await Assert.ThrowsAsync<TimeoutException>(
+            () => service.StartAsync(CancellationToken.None));
+        Assert.True(lifecycle.HasUnfinishedOperation);
+
+        presence.TrySetResult(true);
+        await WaitForNoUnfinishedOperationAsync(lifecycle);
+    }
+
+    [Fact]
+    public async Task CancellationDuringPresence_PropagatesAndTracksUnfinishedOperation()
+    {
+        var presenceStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var presence = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lifecycle = new DiscordStartupLifecycle(
+            () => Task.CompletedTask,
+            () => Task.CompletedTask,
+            () =>
+            {
+                presenceStarted.TrySetResult(true);
+                return presence.Task;
+            },
+            TimeSpan.FromMinutes(1));
+        var service = new DiscordStartupService(
+            lifecycle,
+            DiscordStartupOptions.Default,
+            new RecordingDelay());
+        using var cancellation = new CancellationTokenSource();
+
+        var startup = service.StartAsync(cancellation.Token);
+        await presenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => startup.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.True(lifecycle.HasUnfinishedOperation);
+
+        presence.TrySetResult(true);
+        await WaitForNoUnfinishedOperationAsync(lifecycle);
+    }
+
     private static Discord.Net.HttpException CreateHttpException(HttpStatusCode statusCode)
         => new(statusCode, null, null, "Test Discord failure", null);
 
