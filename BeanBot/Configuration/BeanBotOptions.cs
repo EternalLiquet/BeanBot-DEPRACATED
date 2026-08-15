@@ -35,7 +35,7 @@ namespace BeanBot.Configuration
             bool enabled,
             IPAddress bindAddress,
             int port,
-            string bearerToken,
+            string? bearerToken,
             TimeSpan minimumPollInterval)
         {
             Enabled = enabled;
@@ -49,7 +49,7 @@ namespace BeanBot.Configuration
         public IPAddress BindAddress { get; }
         public int Port { get; }
         public string Path { get; } = "/healthz";
-        public string BearerToken { get; }
+        public string? BearerToken { get; }
         public TimeSpan MinimumPollInterval { get; }
 
         public static HealthCheckOptions Disabled { get; } = new HealthCheckOptions(

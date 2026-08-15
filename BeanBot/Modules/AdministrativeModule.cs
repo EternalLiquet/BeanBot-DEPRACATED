@@ -7,6 +7,7 @@ using Discord.WebSocket;
 using Serilog;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -84,13 +85,17 @@ namespace BeanBot.Modules
                         return;
                     }
 
-                    if (roleEmotePairs.Any(pair => pair.roleId == role.Id.ToString() || pair.emojiId == emote.Id.ToString()))
+                    if (roleEmotePairs.Any(pair =>
+                        pair.roleId == role.Id.ToString(CultureInfo.InvariantCulture)
+                        || pair.emojiId == emote.Id.ToString(CultureInfo.InvariantCulture)))
                     {
                         messagesInInteraction.Add(await ReplyAsync("That role or emote is already being configured. Please start again."));
                         return;
                     }
 
-                    roleEmotePairs.Add(new RoleEmotePair(role.Id.ToString(), emote.Id.ToString()));
+                    roleEmotePairs.Add(new RoleEmotePair(
+                        role.Id.ToString(CultureInfo.InvariantCulture),
+                        emote.Id.ToString(CultureInfo.InvariantCulture)));
                 }
 
                 messagesInInteraction.Add(await ReplyAsync("Please label this group of roles (i.e. Games, Position, NSFW, etc)."));
@@ -126,7 +131,8 @@ namespace BeanBot.Modules
             var roleEmbed = new EmbedBuilder();
             foreach (var pair in pairs)
             {
-                var emote = Context.Guild.Emotes.First(candidate => candidate.Id.ToString() == pair.emojiId);
+                var emote = Context.Guild.Emotes.First(candidate =>
+                    candidate.Id.ToString(CultureInfo.InvariantCulture) == pair.emojiId);
                 roleEmbed.AddField(emote.ToString(), $"<@&{pair.roleId}>", inline: true);
             }
 
@@ -139,13 +145,14 @@ namespace BeanBot.Modules
             var pairs = roleEmotePairs.ToList();
             foreach (var pair in pairs)
             {
-                var emote = Context.Guild.Emotes.First(candidate => candidate.Id.ToString() == pair.emojiId);
+                var emote = Context.Guild.Emotes.First(candidate =>
+                    candidate.Id.ToString(CultureInfo.InvariantCulture) == pair.emojiId);
                 await messageToListen.AddReactionAsync(emote);
                 await Task.Delay(TimeSpan.FromMilliseconds(250));
             }
         }
 
-        private async Task<(bool Success, int RoleCount)> GetRoleCountAsync(List<IMessage> messages, SocketMessage response)
+        private async Task<(bool Success, int RoleCount)> GetRoleCountAsync(List<IMessage> messages, SocketMessage? response)
         {
             if (response == null)
             {
@@ -163,7 +170,7 @@ namespace BeanBot.Modules
             return (true, roleCount);
         }
 
-        private async Task<SocketRole> GetRoleAsync(List<IMessage> messages, SocketMessage response)
+        private async Task<SocketRole?> GetRoleAsync(List<IMessage> messages, SocketMessage? response)
         {
             if (response == null)
             {
@@ -241,7 +248,7 @@ namespace BeanBot.Modules
             };
         }
 
-        private async Task<Emote> GetEmoteAsync(List<IMessage> messages, SocketMessage response)
+        private async Task<Emote?> GetEmoteAsync(List<IMessage> messages, SocketMessage? response)
         {
             if (response == null)
             {
@@ -261,7 +268,7 @@ namespace BeanBot.Modules
             return emote;
         }
 
-        private async Task CleanUpMessagesAsync(IReadOnlyCollection<IMessage> messages)
+        private async Task CleanUpMessagesAsync(List<IMessage> messages)
         {
             await Task.Delay(TimeSpan.FromSeconds(5));
             if (Context.Channel is not ITextChannel textChannel || messages.Count == 0)

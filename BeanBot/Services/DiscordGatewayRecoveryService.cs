@@ -122,17 +122,17 @@ namespace BeanBot.Services
         private readonly IRecoveryDelay _delay;
         private readonly Action<int> _exitProcess;
         private readonly CancellationTokenSource _shutdown = new();
-        private TaskCompletionSource<bool> _readySignal;
-        private Task _monitorTask;
+        private TaskCompletionSource<bool>? _readySignal;
+        private Task? _monitorTask;
         private bool _disposed;
 
         public DiscordGatewayRecoveryService(
             Func<DiscordHealthSnapshot> createHealthSnapshot,
             IDiscordGatewayLifecycle lifecycle,
             IDiscordOutageStore outageStore,
-            DiscordGatewayRecoveryOptions options = null,
-            IRecoveryDelay delay = null,
-            Action<int> exitProcess = null)
+            DiscordGatewayRecoveryOptions? options = null,
+            IRecoveryDelay? delay = null,
+            Action<int>? exitProcess = null)
         {
             _createHealthSnapshot = createHealthSnapshot ?? throw new ArgumentNullException(nameof(createHealthSnapshot));
             _lifecycle = lifecycle ?? throw new ArgumentNullException(nameof(lifecycle));
@@ -380,7 +380,8 @@ namespace BeanBot.Services
                 TaskCompletionSource<bool> readySignal;
                 lock (_syncRoot)
                 {
-                    readySignal = _readySignal;
+                    readySignal = _readySignal
+                        ?? throw new InvalidOperationException("Discord gateway recovery has no Ready signal.");
                 }
 
                 var remaining = timeout - stopwatch.Elapsed;
@@ -436,7 +437,7 @@ namespace BeanBot.Services
 
         public async ValueTask DisposeAsync()
         {
-            Task monitorTask;
+            Task? monitorTask;
             lock (_syncRoot)
             {
                 if (_disposed)

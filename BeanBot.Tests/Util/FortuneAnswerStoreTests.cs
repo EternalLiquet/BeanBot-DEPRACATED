@@ -3,12 +3,12 @@ using Xunit;
 
 namespace BeanBot.Tests.Util;
 
-public class FortuneAnswerQueueTests
+public class FortuneAnswerStoreTests
 {
     [Fact]
     public void Reservation_CanBeConsumedOnce()
     {
-        var queue = new FortuneAnswerQueue();
+        var queue = new FortuneAnswerStore();
         queue.Queue(42, positive: true);
 
         Assert.True(queue.TryReserve(42, out var reservation));
@@ -20,7 +20,7 @@ public class FortuneAnswerQueueTests
     [Fact]
     public void WrongRecipient_DoesNotReserveOrConsumeAnswer()
     {
-        var queue = new FortuneAnswerQueue();
+        var queue = new FortuneAnswerStore();
         queue.Queue(42, positive: false);
 
         Assert.False(queue.TryReserve(7, out _));
@@ -31,7 +31,7 @@ public class FortuneAnswerQueueTests
     [Fact]
     public void ReplacedAnswer_IsNotConsumedByAnOlderReservation()
     {
-        var queue = new FortuneAnswerQueue();
+        var queue = new FortuneAnswerStore();
         queue.Queue(42, positive: true);
         Assert.True(queue.TryReserve(42, out var oldReservation));
 

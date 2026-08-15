@@ -2,6 +2,7 @@ using Discord;
 using Discord.WebSocket;
 using Serilog;
 using System;
+using System.Buffers;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -10,6 +11,7 @@ namespace BeanBot.Services
     public sealed class EditMessageEventServices
     {
         private const string EditWarning = "Do not edit your 8ball requests in my presence, mortal.";
+        private static readonly SearchValues<char> CommandSeparators = SearchValues.Create(" \t\r\n");
         private readonly DiscordSocketClient _discordClient;
 
         public EditMessageEventServices(DiscordSocketClient discordClient)
@@ -74,7 +76,7 @@ namespace BeanBot.Services
                 return false;
             }
 
-            var commandEnd = commandText.IndexOfAny(new[] { ' ', '\t', '\r', '\n' });
+            var commandEnd = commandText.AsSpan().IndexOfAny(CommandSeparators);
             var command = commandEnd < 0 ? commandText : commandText.Substring(0, commandEnd);
             return string.Equals(command, "8ball", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(command, "fortune", StringComparison.OrdinalIgnoreCase);

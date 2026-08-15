@@ -2,10 +2,10 @@ namespace BeanBot.Util
 {
     public readonly record struct FortuneAnswerReservation(ulong RecipientId, string Answer, long Version);
 
-    public sealed class FortuneAnswerQueue
+    public sealed class FortuneAnswerStore
     {
         private readonly object _sync = new object();
-        private string _answer;
+        private string? _answer;
         private ulong _recipientId;
         private long _version;
 

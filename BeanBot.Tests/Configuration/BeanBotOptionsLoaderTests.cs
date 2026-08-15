@@ -22,6 +22,7 @@ public class BeanBotOptionsLoaderTests
         Assert.Equal(8080, options.HealthCheck.Port);
         Assert.Equal(IPAddress.Loopback, options.HealthCheck.BindAddress);
         Assert.Equal(TimeSpan.FromSeconds(12), options.HealthCheck.MinimumPollInterval);
+        Assert.Null(options.HealthCheck.BearerToken);
     }
 
     [Fact]

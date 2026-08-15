@@ -28,7 +28,7 @@ namespace BeanBot.Configuration
             return options;
         }
 
-        internal static BeanBotOptions Load(Func<string, string> getEnvironmentValue)
+        internal static BeanBotOptions Load(Func<string, string?> getEnvironmentValue)
         {
             var missingSettings = new List<string>();
             var botToken = GetRequired(getEnvironmentValue, BotTokenVariable, "botToken", missingSettings);
@@ -42,21 +42,21 @@ namespace BeanBot.Configuration
                 throw new InvalidOperationException($"Missing required environment variables: {string.Join(", ", missingSettings)}");
             }
 
-            if (!ulong.TryParse(generalChannel, NumberStyles.None, CultureInfo.InvariantCulture, out var generalChannelId))
+            if (!ulong.TryParse(generalChannel!, NumberStyles.None, CultureInfo.InvariantCulture, out var generalChannelId))
             {
-                throw InvalidValue(GeneralChannelVariable, generalChannel, "a Discord snowflake ID");
+                throw InvalidValue(GeneralChannelVariable, generalChannel!, "a Discord snowflake ID");
             }
 
             return new BeanBotOptions(
-                botToken,
-                mongoConnection,
+                botToken!,
+                mongoConnection!,
                 generalChannelId,
-                ParseHttpUri(HatoeteUrlVariable, hatoeteUrl),
-                ParseHttpUri(YoshimaruUrlVariable, yoshimaruUrl),
+                ParseHttpUri(HatoeteUrlVariable, hatoeteUrl!),
+                ParseHttpUri(YoshimaruUrlVariable, yoshimaruUrl!),
                 LoadHealthCheckOptions(getEnvironmentValue));
         }
 
-        private static HealthCheckOptions LoadHealthCheckOptions(Func<string, string> getEnvironmentValue)
+        private static HealthCheckOptions LoadHealthCheckOptions(Func<string, string?> getEnvironmentValue)
         {
             var portValue = GetOptional(getEnvironmentValue, HealthCheckPortVariable, "healthCheckPort");
             if (string.IsNullOrWhiteSpace(portValue))
@@ -106,11 +106,11 @@ namespace BeanBot.Configuration
             return uri;
         }
 
-        private static string GetRequired(
-            Func<string, string> getEnvironmentValue,
+        private static string? GetRequired(
+            Func<string, string?> getEnvironmentValue,
             string preferredName,
             string legacyName,
-            ICollection<string> missingSettings)
+            List<string> missingSettings)
         {
             var value = GetOptional(getEnvironmentValue, preferredName, legacyName);
             if (!string.IsNullOrWhiteSpace(value))
@@ -122,7 +122,7 @@ namespace BeanBot.Configuration
             return null;
         }
 
-        private static string GetOptional(Func<string, string> getEnvironmentValue, string preferredName, string legacyName)
+        private static string? GetOptional(Func<string, string?> getEnvironmentValue, string preferredName, string legacyName)
             => getEnvironmentValue(preferredName) ?? getEnvironmentValue(legacyName);
 
         private static InvalidOperationException InvalidValue(string variableName, string value, string expectation)
@@ -149,7 +149,7 @@ namespace BeanBot.Configuration
                 foreach (var rawLine in File.ReadAllLines(candidatePath))
                 {
                     var line = rawLine.Trim();
-                    if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#", StringComparison.Ordinal))
+                    if (string.IsNullOrWhiteSpace(line) || line.StartsWith('#'))
                     {
                         continue;
                     }

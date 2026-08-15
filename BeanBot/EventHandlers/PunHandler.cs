@@ -18,7 +18,7 @@ namespace BeanBot.EventHandlers
         private readonly DiscordSocketClient _discordClient;
         private readonly ulong _generalChannelId;
         private readonly CancellationTokenSource _tokenSource = new();
-        private Task _runner;
+        private Task? _runner;
         private int _disposed;
 
         private static readonly TimeSpan PostTimeLocal = new TimeSpan(16, 20, 0);
@@ -32,10 +32,7 @@ namespace BeanBot.EventHandlers
 
         public void Start()
         {
-            if (Volatile.Read(ref _disposed) != 0)
-            {
-                throw new ObjectDisposedException(nameof(PunHandler));
-            }
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
             if (_runner is not null)
             {
@@ -62,9 +59,9 @@ namespace BeanBot.EventHandlers
 
                     var chicagoNow = GetChicagoNow(timezone);
                     Log.Information("Next pun scheduled for {NextLocal} Chicago ({NextUtc} UTC). Now: {NowLocal} Chicago",
-                        TimeZoneInfo.ConvertTime(nextRunUtc, timezone).ToString("yyyy-MM-dd HH:mm:ss"),
-                        nextRunUtc.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss"),
-                        chicagoNow.ToString("yyyy-MM-dd HH:mm:ss"));
+                        TimeZoneInfo.ConvertTime(nextRunUtc, timezone).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+                        nextRunUtc.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+                        chicagoNow.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
 
                     await Task.Delay(delay, token);
 

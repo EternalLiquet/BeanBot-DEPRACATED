@@ -7,6 +7,17 @@ namespace BeanBot.Tests.Services;
 public class BoundedLineReaderTests
 {
     [Fact]
+    public async Task ReadLineAsync_EmptyStreamReturnsNull()
+    {
+        await using var stream = new MemoryStream();
+        var reader = new BoundedLineReader(stream);
+
+        var line = await reader.ReadLineAsync(5, CancellationToken.None);
+
+        Assert.Null(line);
+    }
+
+    [Fact]
     public async Task ReadLineAsync_AcceptsLineExactlyAtLimit()
     {
         await using var stream = new MemoryStream(Encoding.ASCII.GetBytes("12345\r\n"));

@@ -20,12 +20,9 @@ namespace BeanBot.Services
             _stream = stream ?? throw new ArgumentNullException(nameof(stream));
         }
 
-        public async Task<string> ReadLineAsync(int maximumLength, CancellationToken cancellationToken)
+        public async Task<string?> ReadLineAsync(int maximumLength, CancellationToken cancellationToken)
         {
-            if (maximumLength < 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(maximumLength));
-            }
+            ArgumentOutOfRangeException.ThrowIfNegative(maximumLength);
 
             var lineBuffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, maximumLength + 1));
             var lineLength = 0;

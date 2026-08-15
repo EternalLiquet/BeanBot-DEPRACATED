@@ -152,7 +152,7 @@ public class DiscordGatewayRecoveryServiceTests
 
         public Task OpenAsync(
             DateTimeOffset disconnectedAtUtc,
-            string mostRecentDisconnectReason,
+            string? mostRecentDisconnectReason,
             CancellationToken cancellationToken = default)
         {
             CurrentOutage ??= CreateOutage(disconnectedAtUtc, mostRecentDisconnectReason);
@@ -161,11 +161,11 @@ public class DiscordGatewayRecoveryServiceTests
 
         public Task MarkManualRecoveryAttemptedAsync(
             DateTimeOffset disconnectedAtUtc,
-            string mostRecentDisconnectReason,
+            string? mostRecentDisconnectReason,
             CancellationToken cancellationToken = default)
         {
             CurrentOutage ??= CreateOutage(disconnectedAtUtc, mostRecentDisconnectReason);
-            CurrentOutage.MostRecentDisconnectReason = mostRecentDisconnectReason;
+            CurrentOutage.MostRecentDisconnectReason = NormalizeReason(mostRecentDisconnectReason);
             CurrentOutage.ManualRecoveryAttempted = true;
             StateTransitions.Add("manual");
             return Task.CompletedTask;
@@ -173,11 +173,11 @@ public class DiscordGatewayRecoveryServiceTests
 
         public Task MarkProcessRestartRequestedAsync(
             DateTimeOffset disconnectedAtUtc,
-            string mostRecentDisconnectReason,
+            string? mostRecentDisconnectReason,
             CancellationToken cancellationToken = default)
         {
             Assert.NotNull(CurrentOutage);
-            CurrentOutage.MostRecentDisconnectReason = mostRecentDisconnectReason;
+            CurrentOutage.MostRecentDisconnectReason = NormalizeReason(mostRecentDisconnectReason);
             CurrentOutage.ProcessRestartRequested = true;
             StateTransitions.Add("restart");
             return Task.CompletedTask;
@@ -191,12 +191,15 @@ public class DiscordGatewayRecoveryServiceTests
 
         private static DiscordOutage CreateOutage(
             DateTimeOffset disconnectedAtUtc,
-            string mostRecentDisconnectReason)
+            string? mostRecentDisconnectReason)
             => new()
             {
                 DisconnectedAtUtc = disconnectedAtUtc,
-                MostRecentDisconnectReason = mostRecentDisconnectReason
+                MostRecentDisconnectReason = NormalizeReason(mostRecentDisconnectReason)
             };
+
+        private static string NormalizeReason(string? reason)
+            => reason ?? "Discord gateway disconnected.";
     }
 
     private sealed class FakeHealthState

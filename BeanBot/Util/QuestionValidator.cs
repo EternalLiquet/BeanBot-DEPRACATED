@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 
 namespace BeanBot.Util
 {
-    public static class QuestionValidator
+    public static partial class QuestionValidator
     {
         private static readonly HashSet<string> InterrogativeWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -170,17 +170,20 @@ namespace BeanBot.Util
             "ve"
         };
 
-        private static readonly Regex DiscordObjectRegex = new Regex(
+        [GeneratedRegex(
             @"<(?:(?:@!?|@&|#)\d+|a?:[^:>\s]+:\d+)>",
-            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+            RegexOptions.CultureInvariant)]
+        private static partial Regex DiscordObjectRegex();
 
-        private static readonly Regex UrlRegex = new Regex(
+        [GeneratedRegex(
             @"\b(?:https?://|www\.)[^\s,;]+",
-            RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+        private static partial Regex UrlRegex();
 
-        private static readonly Regex WordRegex = new Regex(
+        [GeneratedRegex(
             @"[\p{L}\p{N}]+(?:['\u2019][\p{L}\p{N}]+)*",
-            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+            RegexOptions.CultureInvariant)]
+        private static partial Regex WordRegex();
 
         private static readonly char[] ClosingCharacters =
         {
@@ -202,8 +205,8 @@ namespace BeanBot.Util
                 return false;
             }
 
-            questionBody = DiscordObjectRegex.Replace(questionBody, " item ");
-            questionBody = UrlRegex.Replace(questionBody, " item ");
+            questionBody = DiscordObjectRegex().Replace(questionBody, " item ");
+            questionBody = UrlRegex().Replace(questionBody, " item ");
 
             if (IsInterrogativeClause(questionBody))
             {
@@ -239,7 +242,7 @@ namespace BeanBot.Util
 
         private static bool IsInterrogativeClause(string clause)
         {
-            var words = WordRegex.Matches(clause);
+            var words = WordRegex().Matches(clause);
             if (words.Count == 0)
             {
                 return false;
@@ -286,8 +289,8 @@ namespace BeanBot.Util
 
         private static bool IsConfirmationTag(string leadingClause, string finalClause)
         {
-            var leadingWords = WordRegex.Matches(leadingClause);
-            var finalWords = WordRegex.Matches(finalClause);
+            var leadingWords = WordRegex().Matches(leadingClause);
+            var finalWords = WordRegex().Matches(finalClause);
 
             return leadingWords.Count >= 2 &&
                 finalWords.Count == 1 &&

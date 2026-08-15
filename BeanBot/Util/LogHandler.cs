@@ -3,6 +3,7 @@ using Discord.Commands;
 using Discord.WebSocket;
 using Serilog;
 
+using System.Globalization;
 using System.IO;
 using System.Threading.Tasks;
 
@@ -14,8 +15,11 @@ namespace BeanBot.Util
         {
             Log.Logger = new LoggerConfiguration()
                 .MinimumLevel.Verbose()
-                .WriteTo.Console()
-                .WriteTo.Async(a => a.File(Path.Combine(DirectorySetup.botBaseDirectory, "Logs", "BeanBotLogs.txt"), rollingInterval: RollingInterval.Day))
+                .WriteTo.Console(formatProvider: CultureInfo.InvariantCulture)
+                .WriteTo.Async(a => a.File(
+                    Path.Combine(DirectorySetup.botBaseDirectory, "Logs", "BeanBotLogs.txt"),
+                    formatProvider: CultureInfo.InvariantCulture,
+                    rollingInterval: RollingInterval.Day))
                 .WriteTo.Sink(new DiscordOwnerErrorSink(ownerErrorNotifier))
                 .CreateLogger();
             Log.Information("Logger Configuration complete");

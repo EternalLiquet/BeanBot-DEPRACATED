@@ -3,6 +3,7 @@ using BeanBot.Util;
 using Serilog;
 
 using System;
+using System.Globalization;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,7 +24,7 @@ namespace BeanBot.Services
         public DiscordOutageRecoveryNotifier(
             IDiscordOutageStore outageStore,
             IOwnerAlertDelivery ownerAlertDelivery,
-            Func<int, TimeSpan> retryDelay = null,
+            Func<int, TimeSpan>? retryDelay = null,
             TimeSpan? deliveryTimeout = null)
         {
             _outageStore = outageStore ?? throw new ArgumentNullException(nameof(outageStore));
@@ -83,12 +84,20 @@ namespace BeanBot.Services
 
             var message = new StringBuilder()
                 .AppendLine("BeanBot recovered from a Discord outage.")
-                .AppendLine()
-                .AppendLine($"Disconnected: {outage.DisconnectedAtUtc.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC")
-                .AppendLine($"Approximate downtime: {FormatDuration(downtime)}")
-                .AppendLine($"Reason: {outage.MostRecentDisconnectReason}")
-                .AppendLine($"Manual recovery attempted: {FormatBoolean(outage.ManualRecoveryAttempted)}")
-                .Append($"Container restart requested: {FormatBoolean(outage.ProcessRestartRequested)}");
+                .AppendLine();
+            message.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"Disconnected: {outage.DisconnectedAtUtc.UtcDateTime:yyyy-MM-dd HH:mm:ss} UTC");
+            message.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"Approximate downtime: {FormatDuration(downtime)}");
+            message.AppendLine(CultureInfo.InvariantCulture, $"Reason: {outage.MostRecentDisconnectReason}");
+            message.AppendLine(
+                CultureInfo.InvariantCulture,
+                $"Manual recovery attempted: {FormatBoolean(outage.ManualRecoveryAttempted)}");
+            message.Append(
+                CultureInfo.InvariantCulture,
+                $"Container restart requested: {FormatBoolean(outage.ProcessRestartRequested)}");
 
             if (outage.ProcessRestartRequested)
             {
@@ -98,7 +107,9 @@ namespace BeanBot.Services
             var recoveryMessage = message.ToString();
             return recoveryMessage.Length <= MaximumDiscordMessageLength
                 ? recoveryMessage
-                : recoveryMessage.Substring(0, MaximumDiscordMessageLength - 15) + "\n...(truncated)";
+                : string.Concat(
+                    recoveryMessage.AsSpan(0, MaximumDiscordMessageLength - 15),
+                    "\n...(truncated)");
         }
 
         private async Task<bool> DeliverWithRetryAsync(
@@ -141,17 +152,17 @@ namespace BeanBot.Services
             var parts = new StringBuilder();
             if (duration.Days > 0)
             {
-                parts.Append($"{duration.Days}d ");
+                parts.Append(CultureInfo.InvariantCulture, $"{duration.Days}d ");
             }
             if (duration.Hours > 0 || duration.Days > 0)
             {
-                parts.Append($"{duration.Hours}h ");
+                parts.Append(CultureInfo.InvariantCulture, $"{duration.Hours}h ");
             }
             if (duration.Minutes > 0 || duration.Hours > 0 || duration.Days > 0)
             {
-                parts.Append($"{duration.Minutes}m ");
+                parts.Append(CultureInfo.InvariantCulture, $"{duration.Minutes}m ");
             }
-            parts.Append($"{duration.Seconds}s");
+            parts.Append(CultureInfo.InvariantCulture, $"{duration.Seconds}s");
             return parts.ToString();
         }
 

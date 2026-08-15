@@ -40,7 +40,7 @@ namespace BeanBot.Modules
                         continue;
                     }
 
-                    description.Append("**").Append(command.Aliases.First()).AppendLine("**");
+                    description.Append("**").Append(command.Aliases[0]).AppendLine("**");
                     if (command.Aliases.Count > 1)
                     {
                         description.AppendLine(command.Aliases.Count > 2
