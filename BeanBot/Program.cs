@@ -19,7 +19,7 @@ namespace BeanBot
 
         private static async Task<int> Main(string[] args)
         {
-            IHost host = null;
+            IHost? host = null;
             try
             {
                 DirectorySetup.MakeSureAllDirectoriesExist();
@@ -70,7 +70,7 @@ namespace BeanBot
             }
         }
 
-        private static bool IsHostStopping(IHost host)
+        private static bool IsHostStopping(IHost? host)
             => host?.Services
                 .GetService<IHostApplicationLifetime>()
                 ?.ApplicationStopping

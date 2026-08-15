@@ -211,7 +211,7 @@ namespace BeanBot.Hosting
             }
         }
 
-        private Task OnDiscordDisconnectedAsync(Exception exception)
+        private Task OnDiscordDisconnectedAsync(Exception? exception)
         {
             _discordConnectionHealth.MarkDisconnected(exception);
             var snapshot = _discordConnectionHealth.CreateSnapshot(_discordClient);
@@ -249,7 +249,7 @@ namespace BeanBot.Hosting
             }
         }
 
-        private static void HandleUnobservedTaskException(object sender, UnobservedTaskExceptionEventArgs eventArgs)
+        private static void HandleUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs eventArgs)
         {
             Log.Error(eventArgs.Exception, "An unobserved task exception occurred");
             eventArgs.SetObserved();

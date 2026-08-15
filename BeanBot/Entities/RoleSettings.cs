@@ -11,12 +11,12 @@ namespace BeanBot.Entities
     public class RoleSettings
     {
         [BsonId]
-        public ObjectId id;
-        public List<RoleEmotePair> roleEmotePair;
-        public string guildId;
-        public string channelId;
-        public string messageId;
-        public DateTime lastAccessed;
+        public ObjectId id { get; set; }
+        public List<RoleEmotePair> roleEmotePair { get; set; } = new();
+        public string guildId { get; set; } = string.Empty;
+        public string channelId { get; set; } = string.Empty;
+        public string messageId { get; set; } = string.Empty;
+        public DateTime lastAccessed { get; set; }
 
         public RoleSettings() { }
 

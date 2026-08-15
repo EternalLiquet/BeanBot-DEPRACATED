@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 using Serilog;
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Threading.Tasks;
 
@@ -18,7 +19,7 @@ namespace BeanBot.EventHandlers
         private readonly DiscordSocketClient _discordClient;
         private readonly CommandService _commandService;
         private readonly IServiceProvider _services;
-        private readonly FortuneAnswerQueue _fortuneAnswers;
+        private readonly FortuneAnswerStore _fortuneAnswers;
         private readonly DiscordMessageWaiter _messageWaiter;
         private bool _initialized;
 
@@ -31,7 +32,7 @@ namespace BeanBot.EventHandlers
             _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
             _commandService = commandService ?? throw new ArgumentNullException(nameof(commandService));
             _services = services ?? throw new ArgumentNullException(nameof(services));
-            _fortuneAnswers = _services.GetRequiredService<FortuneAnswerQueue>();
+            _fortuneAnswers = _services.GetRequiredService<FortuneAnswerStore>();
             _messageWaiter = _services.GetRequiredService<DiscordMessageWaiter>();
         }
 
@@ -98,7 +99,7 @@ namespace BeanBot.EventHandlers
                             discordMessage.HasCharPrefix('%', ref argPos));
         }
 
-        internal bool MessageIsSystemMessage(SocketUserMessage discordMessage)
+        internal static bool MessageIsSystemMessage([NotNullWhen(false)] SocketUserMessage? discordMessage)
             => discordMessage == null;
 
     }

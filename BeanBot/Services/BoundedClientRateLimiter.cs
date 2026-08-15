@@ -18,17 +18,10 @@ namespace BeanBot.Services
         public BoundedClientRateLimiter(
             TimeSpan minimumPollInterval,
             int capacity,
-            Func<DateTimeOffset> getUtcNow = null)
+            Func<DateTimeOffset>? getUtcNow = null)
         {
-            if (minimumPollInterval <= TimeSpan.Zero)
-            {
-                throw new ArgumentOutOfRangeException(nameof(minimumPollInterval));
-            }
-
-            if (capacity <= 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(capacity));
-            }
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(minimumPollInterval, TimeSpan.Zero);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
 
             _minimumPollInterval = minimumPollInterval;
             _retentionPeriod = minimumPollInterval.Ticks <= TimeSpan.MaxValue.Ticks / 2

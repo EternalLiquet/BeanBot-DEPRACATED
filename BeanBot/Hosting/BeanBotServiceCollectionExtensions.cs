@@ -94,7 +94,7 @@ namespace BeanBot.Hosting
                     provider.GetRequiredService<IRecoveryDelay>());
             });
 
-            services.AddSingleton<FortuneAnswerQueue>();
+            services.AddSingleton<FortuneAnswerStore>();
             services.AddSingleton<DiscordMessageWaiter>();
             services.AddSingleton<DiscordPaginatorService>();
             services.AddSingleton<RoleReactRepository>();

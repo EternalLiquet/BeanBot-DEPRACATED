@@ -1,5 +1,6 @@
 using Discord;
 using Discord.Commands;
+using Discord.Rest;
 using Discord.WebSocket;
 
 using Serilog;
@@ -51,10 +52,7 @@ namespace BeanBot.Services
             TimeSpan? timeout = null)
         {
             ThrowIfDisposed();
-            if (context == null)
-            {
-                throw new ArgumentNullException(nameof(context));
-            }
+            ArgumentNullException.ThrowIfNull(context);
 
             var pageList = pages?.Where(page => page != null).ToList()
                 ?? throw new ArgumentNullException(nameof(pages));
@@ -78,8 +76,8 @@ namespace BeanBot.Services
                 }
             }
 
-            IUserMessage message = null;
-            PaginationSession session = null;
+            RestUserMessage? message = null;
+            PaginationSession? session = null;
             var sessionRegistered = false;
             var sessionAccessHeld = false;
             try
@@ -107,12 +105,11 @@ namespace BeanBot.Services
                     await message.AddReactionAsync(control, CreateRequestOptions(_shutdown.Token));
                 }
 
-                if (!_sessions.TryGetValue(message.Id, out var currentSession)
-                    || !ReferenceEquals(currentSession, session)
-                    || session.CompletionStarted)
-                {
-                    throw new ObjectDisposedException(nameof(DiscordPaginatorService));
-                }
+                ObjectDisposedException.ThrowIf(
+                    !_sessions.TryGetValue(message.Id, out var currentSession)
+                        || !ReferenceEquals(currentSession, session)
+                        || session.CompletionStarted,
+                    this);
 
                 return message;
             }
@@ -122,7 +119,7 @@ namespace BeanBot.Services
                 {
                     ReleaseAvailableSlot();
                 }
-                else
+                else if (message is not null && session is not null)
                 {
                     if (sessionAccessHeld)
                     {
@@ -138,7 +135,7 @@ namespace BeanBot.Services
             {
                 if (sessionAccessHeld)
                 {
-                    session.Access.Release();
+                    session?.Access.Release();
                 }
             }
         }
@@ -352,7 +349,7 @@ namespace BeanBot.Services
             }
         }
 
-        private void ReleaseAvailableSlot(PaginationSession session = null)
+        private void ReleaseAvailableSlot(PaginationSession? session = null)
         {
             lock (_syncRoot)
             {
@@ -478,10 +475,7 @@ namespace BeanBot.Services
 
         private void ThrowIfDisposed()
         {
-            if (Volatile.Read(ref _disposed) != 0)
-            {
-                throw new ObjectDisposedException(nameof(DiscordPaginatorService));
-            }
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         }
 
         private sealed class PaginationSession
@@ -582,10 +576,7 @@ namespace BeanBot.Services
     {
         public PaginationCursor(int pageCount)
         {
-            if (pageCount <= 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(pageCount));
-            }
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageCount);
 
             PageCount = pageCount;
         }

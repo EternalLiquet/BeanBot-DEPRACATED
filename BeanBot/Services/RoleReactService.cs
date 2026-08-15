@@ -6,31 +6,84 @@ using Serilog;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace BeanBot.Services
 {
-    public class RoleReactService
+    public class RoleReactService : IDisposable, IAsyncDisposable
     {
+        private static readonly TimeSpan DefaultShutdownDrainTimeout = TimeSpan.FromSeconds(5);
         private readonly RoleReactRepository _roleReactRepository;
-        private readonly DiscordSocketClient _client;
+        private readonly DiscordSocketClient? _client;
         private readonly SemaphoreSlim _cacheLock = new SemaphoreSlim(1, 1);
         private readonly ConcurrentDictionary<string, RoleSettings> _roleSettings = new ConcurrentDictionary<string, RoleSettings>();
+        private readonly object _operationSync = new();
+        private readonly HashSet<Task> _inFlightOperations = new();
+        private readonly TimeSpan _shutdownDrainTimeout;
+        private readonly TaskCompletionSource _disposeCompletion = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         private volatile bool _cacheLoaded;
+        private bool _stopping;
+        private int _disposeStarted;
 
-        public RoleReactService(RoleReactRepository roleReactRepository, DiscordSocketClient client = null)
+        public RoleReactService(RoleReactRepository roleReactRepository, DiscordSocketClient? client = null)
+            : this(roleReactRepository, client, DefaultShutdownDrainTimeout)
         {
+        }
+
+        internal RoleReactService(
+            RoleReactRepository roleReactRepository,
+            DiscordSocketClient? client,
+            TimeSpan shutdownDrainTimeout)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(shutdownDrainTimeout, TimeSpan.Zero);
             _roleReactRepository = roleReactRepository ?? throw new ArgumentNullException(nameof(roleReactRepository));
             _client = client;
+            _shutdownDrainTimeout = shutdownDrainTimeout;
         }
 
         public Task HandleReact(Cacheable<IUserMessage, ulong> message, Cacheable<IMessageChannel, ulong> channel, SocketReaction reaction)
-            => HandleReactionAsync(message, channel, reaction, addRole: true);
+            => TrackHandlerAsync(() => HandleReactionAsync(message, channel, reaction, addRole: true));
 
         public Task HandleRemoveReact(Cacheable<IUserMessage, ulong> message, Cacheable<IMessageChannel, ulong> channel, SocketReaction reaction)
-            => HandleReactionAsync(message, channel, reaction, addRole: false);
+            => TrackHandlerAsync(() => HandleReactionAsync(message, channel, reaction, addRole: false));
+
+        internal Task TrackHandlerAsync(Func<Task> beginOperation)
+        {
+            ArgumentNullException.ThrowIfNull(beginOperation);
+
+            Task operation;
+            lock (_operationSync)
+            {
+                if (_stopping)
+                {
+                    return Task.CompletedTask;
+                }
+
+                operation = beginOperation();
+                _inFlightOperations.Add(operation);
+            }
+
+            return ObserveHandlerAsync(operation);
+        }
+
+        private async Task ObserveHandlerAsync(Task operation)
+        {
+            try
+            {
+                await operation;
+            }
+            finally
+            {
+                lock (_operationSync)
+                {
+                    _inFlightOperations.Remove(operation);
+                }
+            }
+        }
 
         private async Task HandleReactionAsync(
             Cacheable<IUserMessage, ulong> message,
@@ -65,7 +118,8 @@ namespace BeanBot.Services
 
                 var roleSetting = await GetCachedRoleSettingAsync(message.Id, cachedMessage);
                 var pair = roleSetting?.roleEmotePair?
-                    .FirstOrDefault(candidate => candidate.emojiId == customEmote.Id.ToString());
+                    .FirstOrDefault(candidate =>
+                        candidate.emojiId == customEmote.Id.ToString(CultureInfo.InvariantCulture));
                 if (pair == null || !ulong.TryParse(pair.roleId, out var roleId))
                 {
                     return;
@@ -94,10 +148,10 @@ namespace BeanBot.Services
             }
         }
 
-        private async Task<RoleSettings> GetCachedRoleSettingAsync(ulong messageId, IUserMessage message)
+        private async Task<RoleSettings?> GetCachedRoleSettingAsync(ulong messageId, IUserMessage message)
         {
             await EnsureCacheLoadedAsync();
-            var messageIdText = messageId.ToString();
+            var messageIdText = messageId.ToString(CultureInfo.InvariantCulture);
             if (_roleSettings.TryGetValue(messageIdText, out var cached))
             {
                 return cached;
@@ -151,11 +205,64 @@ namespace BeanBot.Services
 
             var settings = new RoleSettings(
                 roleEmotePair,
-                textChannel.Guild.Id.ToString(),
-                messageToListen.Channel.Id.ToString(),
-                messageToListen.Id.ToString());
+                textChannel.Guild.Id.ToString(CultureInfo.InvariantCulture),
+                messageToListen.Channel.Id.ToString(CultureInfo.InvariantCulture),
+                messageToListen.Id.ToString(CultureInfo.InvariantCulture));
             await _roleReactRepository.InsertNewRoleSettings(settings);
             _roleSettings[settings.messageId] = settings;
+        }
+
+        public void Dispose()
+        {
+            DisposeAsync().AsTask().GetAwaiter().GetResult();
+            GC.SuppressFinalize(this);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
+            {
+                await _disposeCompletion.Task;
+                return;
+            }
+
+            try
+            {
+                Task[] inFlightOperations;
+                lock (_operationSync)
+                {
+                    _stopping = true;
+                    inFlightOperations = _inFlightOperations.ToArray();
+                }
+
+                if (inFlightOperations.Length > 0)
+                {
+                    try
+                    {
+                        await Task.WhenAll(inFlightOperations).WaitAsync(_shutdownDrainTimeout);
+                    }
+                    catch (TimeoutException)
+                    {
+                        Log.Warning(
+                            "Timed out draining {InFlightReactionHandlerCount} reaction-role handler(s); leaving the cache lock for process exit",
+                            inFlightOperations.Length);
+                        return;
+                    }
+                    catch (Exception exception)
+                    {
+                        Log.Warning(
+                            exception,
+                            "A reaction-role handler failed while shutdown was draining in-flight work");
+                    }
+                }
+
+                _cacheLock.Dispose();
+                GC.SuppressFinalize(this);
+            }
+            finally
+            {
+                _disposeCompletion.TrySetResult();
+            }
         }
     }
 }

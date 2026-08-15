@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using Serilog;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Threading.Tasks;
 
 namespace BeanBot.Repository
@@ -48,11 +49,12 @@ namespace BeanBot.Repository
             }
         }
 
-        public async Task<RoleSettings> GetRoleSetting(IUserMessage message)
+        public async Task<RoleSettings?> GetRoleSetting(IUserMessage message)
         {
             try
             {
-                var filterByMessageId = Builders<RoleSettings>.Filter.Where(doc => doc.messageId == message.Id.ToString());
+                var messageId = message.Id.ToString(CultureInfo.InvariantCulture);
+                var filterByMessageId = Builders<RoleSettings>.Filter.Where(doc => doc.messageId == messageId);
                 return await _roleSettings.Find(filterByMessageId).FirstOrDefaultAsync();
             }
             catch (Exception e)

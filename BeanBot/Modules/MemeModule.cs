@@ -24,12 +24,12 @@ namespace BeanBot.Modules
         private static readonly HttpClient HttpClient = new HttpClient();
         private readonly MemeMachine _memeMachine = new MemeMachine();
         private readonly BeanBotOptions _options;
-        private readonly FortuneAnswerQueue _fortuneAnswers;
+        private readonly FortuneAnswerStore _fortuneAnswers;
         private readonly DiscordPaginatorService _paginator;
 
         public MemeModule(
             BeanBotOptions options,
-            FortuneAnswerQueue fortuneAnswers,
+            FortuneAnswerStore fortuneAnswers,
             DiscordPaginatorService paginator)
         {
             _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -165,7 +165,7 @@ namespace BeanBot.Modules
         }
         private async Task InvokeMemeApi(string subreddit)
         {
-            Meme meme;
+            Meme? meme;
             try
             {
                 if (string.IsNullOrEmpty(subreddit))

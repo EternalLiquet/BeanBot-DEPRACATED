@@ -101,20 +101,20 @@ public class DiscordOutageRecoveryNotifierTests
         public Task<DiscordOutage?> ReadAsync(CancellationToken cancellationToken = default)
             => Task.FromResult(CurrentOutage);
 
-        public Task OpenAsync(DateTimeOffset disconnectedAtUtc, string reason, CancellationToken cancellationToken = default)
+        public Task OpenAsync(DateTimeOffset disconnectedAtUtc, string? reason, CancellationToken cancellationToken = default)
         {
             CurrentOutage ??= new DiscordOutage
             {
                 DisconnectedAtUtc = disconnectedAtUtc,
-                MostRecentDisconnectReason = reason
+                MostRecentDisconnectReason = reason ?? "Discord gateway disconnected."
             };
             return Task.CompletedTask;
         }
 
-        public Task MarkManualRecoveryAttemptedAsync(DateTimeOffset disconnectedAtUtc, string reason, CancellationToken cancellationToken = default)
+        public Task MarkManualRecoveryAttemptedAsync(DateTimeOffset disconnectedAtUtc, string? reason, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public Task MarkProcessRestartRequestedAsync(DateTimeOffset disconnectedAtUtc, string reason, CancellationToken cancellationToken = default)
+        public Task MarkProcessRestartRequestedAsync(DateTimeOffset disconnectedAtUtc, string? reason, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
         public Task ClearAsync(CancellationToken cancellationToken = default)

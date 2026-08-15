@@ -12,7 +12,7 @@ namespace BeanBot.Services
         private DateTimeOffset? _lastReadyAtUtc;
         private DateTimeOffset? _lastDisconnectedAtUtc;
         private DateTimeOffset? _unhealthySinceAtUtc;
-        private string _mostRecentDisconnectReason;
+        private string? _mostRecentDisconnectReason;
 
         public void MarkReady()
         {
@@ -24,7 +24,7 @@ namespace BeanBot.Services
             }
         }
 
-        public void MarkDisconnected(Exception exception)
+        public void MarkDisconnected(Exception? exception)
         {
             lock (_syncRoot)
             {
@@ -94,7 +94,7 @@ namespace BeanBot.Services
             DateTimeOffset? lastReadyAtUtc,
             DateTimeOffset? lastDisconnectedAtUtc,
             DateTimeOffset? unhealthySinceAtUtc,
-            string mostRecentDisconnectReason)
+            string? mostRecentDisconnectReason)
         {
             IsHealthy = isHealthy;
             StatusMessage = statusMessage;
@@ -113,6 +113,6 @@ namespace BeanBot.Services
         public DateTimeOffset? LastReadyAtUtc { get; }
         public DateTimeOffset? LastDisconnectedAtUtc { get; }
         public DateTimeOffset? UnhealthySinceAtUtc { get; }
-        public string MostRecentDisconnectReason { get; }
+        public string? MostRecentDisconnectReason { get; }
     }
 }

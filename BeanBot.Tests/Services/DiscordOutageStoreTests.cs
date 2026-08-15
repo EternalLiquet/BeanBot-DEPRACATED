@@ -96,6 +96,50 @@ public sealed class DiscordOutageStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task ReadAsync_MissingReasonUsesStableFallback()
+    {
+        var outagePath = Path.Combine(_temporaryDirectory, DiscordOutageStore.OutageFileName);
+        await File.WriteAllTextAsync(
+            outagePath,
+            "{\"DisconnectedAtUtc\":\"2026-08-12T07:42:15+00:00\"}");
+        using var store = new DiscordOutageStore(_temporaryDirectory);
+
+        var outage = await store.ReadAsync();
+
+        Assert.NotNull(outage);
+        Assert.Equal("Discord gateway disconnected.", outage.MostRecentDisconnectReason);
+        Assert.True(File.Exists(outagePath));
+    }
+
+    [Fact]
+    public async Task ReadAsync_ExplicitNullReasonUsesStableFallback()
+    {
+        var outagePath = Path.Combine(_temporaryDirectory, DiscordOutageStore.OutageFileName);
+        await File.WriteAllTextAsync(
+            outagePath,
+            "{\"DisconnectedAtUtc\":\"2026-08-12T07:42:15+00:00\",\"MostRecentDisconnectReason\":null}");
+        using var store = new DiscordOutageStore(_temporaryDirectory);
+
+        var outage = await store.ReadAsync();
+
+        Assert.NotNull(outage);
+        Assert.Equal("Discord gateway disconnected.", outage.MostRecentDisconnectReason);
+        Assert.True(File.Exists(outagePath));
+    }
+
+    [Fact]
+    public async Task OpenAsync_NullReasonPersistsStableFallback()
+    {
+        using var store = new DiscordOutageStore(_temporaryDirectory);
+
+        await store.OpenAsync(DateTimeOffset.UtcNow, null);
+        var outage = await store.ReadAsync();
+
+        Assert.NotNull(outage);
+        Assert.Equal("Discord gateway disconnected.", outage.MostRecentDisconnectReason);
+    }
+
+    [Fact]
     public async Task WriteAsync_LeavesCompleteFinalFileAndNoTemporaryFile()
     {
         using var store = new DiscordOutageStore(_temporaryDirectory);

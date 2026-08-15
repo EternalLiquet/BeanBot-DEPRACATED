@@ -14,15 +14,12 @@ namespace BeanBot.Services
         internal const int MaximumPendingWaits = 64;
         private readonly BoundedMessageWaiter<SocketMessage> _waiter = new(MaximumPendingWaits);
 
-        public Task<SocketMessage> WaitForNextMessageAsync(
+        public Task<SocketMessage?> WaitForNextMessageAsync(
             SocketCommandContext context,
             TimeSpan timeout,
             CancellationToken cancellationToken = default)
         {
-            if (context == null)
-            {
-                throw new ArgumentNullException(nameof(context));
-            }
+            ArgumentNullException.ThrowIfNull(context);
 
             return _waiter.WaitAsync(
                 context.User.Id,
@@ -57,29 +54,23 @@ namespace BeanBot.Services
 
         public BoundedMessageWaiter(int maximumPendingWaits)
         {
-            if (maximumPendingWaits <= 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(maximumPendingWaits));
-            }
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumPendingWaits);
 
             _availableSlots = new SemaphoreSlim(maximumPendingWaits, maximumPendingWaits);
         }
 
         internal int PendingCount => _pending.Count;
 
-        public async Task<TMessage> WaitAsync(
+        public async Task<TMessage?> WaitAsync(
             ulong userId,
             ulong channelId,
             TimeSpan timeout,
             CancellationToken cancellationToken = default)
         {
             ThrowIfDisposed();
-            if (timeout <= TimeSpan.Zero)
-            {
-                throw new ArgumentOutOfRangeException(nameof(timeout));
-            }
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
 
-            if (!_availableSlots.Wait(0))
+            if (!_availableSlots.Wait(0, cancellationToken))
             {
                 throw new InvalidOperationException("Too many Discord message waits are already active.");
             }
@@ -152,10 +143,9 @@ namespace BeanBot.Services
 
         private void ThrowIfDisposed()
         {
-            if (Volatile.Read(ref _disposed) != 0)
-            {
-                throw new ObjectDisposedException(nameof(BoundedMessageWaiter<TMessage>));
-            }
+            ObjectDisposedException.ThrowIf(
+                Volatile.Read(ref _disposed) != 0,
+                this);
         }
 
         private void RemovePendingWait(MessageWaitKey key, PendingWait pending)

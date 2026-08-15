@@ -8,6 +8,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -45,8 +46,8 @@ namespace BeanBot.Services
         private int _activeClientHandlers;
         private int _peakActiveClientHandlers;
         private int _disposed;
-        private TcpListener _listener;
-        private Task _listenerLoop;
+        private TcpListener? _listener;
+        private Task? _listenerLoop;
 
         public HealthCheckServer(
             HealthCheckOptions options,
@@ -56,10 +57,7 @@ namespace BeanBot.Services
             int maximumConcurrentClients = DefaultMaximumConcurrentClients,
             int maximumTrackedRateLimitClients = DefaultMaximumTrackedRateLimitClients)
         {
-            if (maximumConcurrentClients <= 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(maximumConcurrentClients));
-            }
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumConcurrentClients);
 
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
@@ -69,7 +67,7 @@ namespace BeanBot.Services
             _clientCapacity = new SemaphoreSlim(maximumConcurrentClients, maximumConcurrentClients);
         }
 
-        public static HealthCheckServer Create(
+        public static HealthCheckServer? Create(
             HealthCheckOptions options,
             DiscordSocketClient discordClient,
             DiscordConnectionHealth discordConnectionHealth)
@@ -86,10 +84,7 @@ namespace BeanBot.Services
                 return;
             }
 
-            if (Volatile.Read(ref _disposed) != 0)
-            {
-                throw new ObjectDisposedException(nameof(HealthCheckServer));
-            }
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
             if (_listener is not null)
             {
@@ -175,15 +170,16 @@ namespace BeanBot.Services
 
         private async Task AcceptLoopAsync(CancellationToken cancellationToken)
         {
+            var listener = _listener ?? throw new InvalidOperationException("The health check listener has not been started.");
             while (!cancellationToken.IsCancellationRequested)
             {
-                TcpClient client = null;
+                TcpClient? client = null;
                 try
                 {
-                    client = await _listener.AcceptTcpClientAsync(cancellationToken);
+                    client = await listener.AcceptTcpClientAsync(cancellationToken);
                     RemoveCompletedClientTasks();
 
-                    if (!_clientCapacity.Wait(0))
+                    if (!_clientCapacity.Wait(0, cancellationToken))
                     {
                         // Capacity is enforced before a handler task is created. Closing
                         // here bounds sockets, tasks, and queued work during connection bursts.
@@ -199,10 +195,12 @@ namespace BeanBot.Services
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
+                    client?.Dispose();
                     break;
                 }
                 catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
                 {
+                    client?.Dispose();
                     break;
                 }
                 catch (Exception exception)
@@ -287,7 +285,7 @@ namespace BeanBot.Services
                     client.ReceiveTimeout = 5000;
                     client.SendTimeout = 5000;
 
-                    string requestLine;
+                    string? requestLine;
                     try
                     {
                         requestLine = await reader.ReadLineAsync(MaxRequestLineLength, requestToken);
@@ -423,7 +421,7 @@ namespace BeanBot.Services
             }
         }
 
-        private bool IsAuthorized(IReadOnlyDictionary<string, string> headers)
+        private bool IsAuthorized(Dictionary<string, string> headers)
         {
             if (string.IsNullOrWhiteSpace(_options.BearerToken))
             {
@@ -451,7 +449,7 @@ namespace BeanBot.Services
             var headerCount = 0;
             while (true)
             {
-                string headerLine;
+                string? headerLine;
                 try
                 {
                     headerLine = await reader.ReadLineAsync(MaxHeaderLineLength, cancellationToken);
@@ -512,7 +510,10 @@ namespace BeanBot.Services
             }
         }
 
-        internal static bool TryParseRequestLine(string requestLine, out string method, out string target)
+        internal static bool TryParseRequestLine(
+            string requestLine,
+            [NotNullWhen(true)] out string? method,
+            [NotNullWhen(true)] out string? target)
         {
             method = null;
             target = null;
@@ -530,7 +531,7 @@ namespace BeanBot.Services
             return true;
         }
 
-        internal static bool TryExtractPath(string requestTarget, out string path)
+        internal static bool TryExtractPath(string? requestTarget, [NotNullWhen(true)] out string? path)
         {
             path = null;
             if (requestTarget == null)

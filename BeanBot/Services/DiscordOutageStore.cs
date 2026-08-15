@@ -11,25 +11,25 @@ namespace BeanBot.Services
     internal sealed class DiscordOutage
     {
         public DateTimeOffset DisconnectedAtUtc { get; set; }
-        public string MostRecentDisconnectReason { get; set; }
+        public string MostRecentDisconnectReason { get; set; } = "Discord gateway disconnected.";
         public bool ManualRecoveryAttempted { get; set; }
         public bool ProcessRestartRequested { get; set; }
     }
 
     internal interface IDiscordOutageStore
     {
-        Task<DiscordOutage> ReadAsync(CancellationToken cancellationToken = default);
+        Task<DiscordOutage?> ReadAsync(CancellationToken cancellationToken = default);
         Task OpenAsync(
             DateTimeOffset disconnectedAtUtc,
-            string mostRecentDisconnectReason,
+            string? mostRecentDisconnectReason,
             CancellationToken cancellationToken = default);
         Task MarkManualRecoveryAttemptedAsync(
             DateTimeOffset disconnectedAtUtc,
-            string mostRecentDisconnectReason,
+            string? mostRecentDisconnectReason,
             CancellationToken cancellationToken = default);
         Task MarkProcessRestartRequestedAsync(
             DateTimeOffset disconnectedAtUtc,
-            string mostRecentDisconnectReason,
+            string? mostRecentDisconnectReason,
             CancellationToken cancellationToken = default);
         Task ClearAsync(CancellationToken cancellationToken = default);
     }
@@ -51,7 +51,7 @@ namespace BeanBot.Services
             _outageFilePath = Path.Combine(persistentDataDirectory, OutageFileName);
         }
 
-        public async Task<DiscordOutage> ReadAsync(CancellationToken cancellationToken = default)
+        public async Task<DiscordOutage?> ReadAsync(CancellationToken cancellationToken = default)
         {
             await _fileAccess.WaitAsync(cancellationToken);
             try
@@ -66,7 +66,7 @@ namespace BeanBot.Services
 
         public async Task OpenAsync(
             DateTimeOffset disconnectedAtUtc,
-            string mostRecentDisconnectReason,
+            string? mostRecentDisconnectReason,
             CancellationToken cancellationToken = default)
         {
             await UpdateAsync(
@@ -81,7 +81,7 @@ namespace BeanBot.Services
 
         public async Task MarkManualRecoveryAttemptedAsync(
             DateTimeOffset disconnectedAtUtc,
-            string mostRecentDisconnectReason,
+            string? mostRecentDisconnectReason,
             CancellationToken cancellationToken = default)
         {
             await UpdateAsync(
@@ -101,7 +101,7 @@ namespace BeanBot.Services
 
         public async Task MarkProcessRestartRequestedAsync(
             DateTimeOffset disconnectedAtUtc,
-            string mostRecentDisconnectReason,
+            string? mostRecentDisconnectReason,
             CancellationToken cancellationToken = default)
         {
             await UpdateAsync(
@@ -135,7 +135,7 @@ namespace BeanBot.Services
         }
 
         private async Task UpdateAsync(
-            Func<DiscordOutage, DiscordOutage> updateOutage,
+            Func<DiscordOutage?, DiscordOutage> updateOutage,
             CancellationToken cancellationToken)
         {
             await _fileAccess.WaitAsync(cancellationToken);
@@ -154,7 +154,7 @@ namespace BeanBot.Services
             }
         }
 
-        private async Task<DiscordOutage> ReadWithoutLockAsync(CancellationToken cancellationToken)
+        private async Task<DiscordOutage?> ReadWithoutLockAsync(CancellationToken cancellationToken)
         {
             if (!File.Exists(_outageFilePath))
             {
@@ -177,6 +177,8 @@ namespace BeanBot.Services
                 {
                     throw new JsonException("The persisted Discord outage is missing required data.");
                 }
+
+                outage.MostRecentDisconnectReason = NormalizeReason(outage.MostRecentDisconnectReason);
 
                 Log.Information(
                     "Persisted Discord outage loaded. DisconnectedAtUtc={DisconnectedAtUtc}, ManualRecoveryAttempted={ManualRecoveryAttempted}, ProcessRestartRequested={ProcessRestartRequested}",
@@ -253,14 +255,14 @@ namespace BeanBot.Services
 
         private static DiscordOutage CreateOutage(
             DateTimeOffset disconnectedAtUtc,
-            string mostRecentDisconnectReason)
+            string? mostRecentDisconnectReason)
             => new()
             {
                 DisconnectedAtUtc = disconnectedAtUtc.ToUniversalTime(),
                 MostRecentDisconnectReason = NormalizeReason(mostRecentDisconnectReason)
             };
 
-        private static string NormalizeReason(string disconnectReason)
+        private static string NormalizeReason(string? disconnectReason)
             => string.IsNullOrWhiteSpace(disconnectReason)
                 ? "Discord gateway disconnected."
                 : disconnectReason;

@@ -1,4 +1,3 @@
-#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -7,7 +6,7 @@ using System.Text.RegularExpressions;
 
 namespace BeanBot.Util
 {
-    public static class FortuneResponseOverrides
+    public static partial class FortuneResponseOverrides
     {
         public const string ShowerResponse = "Yes. Go take a shower.";
 
@@ -319,9 +318,10 @@ namespace BeanBot.Util
             "yes"
         };
 
-        private static readonly Regex WordRegex = new Regex(
+        [GeneratedRegex(
             @"[\p{L}\p{N}]+(?:['\u2019][\p{L}\p{N}]+)*",
-            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+            RegexOptions.CultureInvariant)]
+        private static partial Regex WordRegex();
 
         public static string? GetResponse(string? question)
         {
@@ -340,7 +340,7 @@ namespace BeanBot.Util
                 : null;
         }
 
-        private static bool IsPersonalShowerAdvice(IReadOnlyList<string> words)
+        private static bool IsPersonalShowerAdvice(List<string> words)
         {
             for (var subjectIndex = 0; subjectIndex < words.Count; subjectIndex++)
             {
@@ -371,7 +371,7 @@ namespace BeanBot.Util
             return false;
         }
 
-        private static bool IsImpersonalShowerAdvice(IReadOnlyList<string> words)
+        private static bool IsImpersonalShowerAdvice(List<string> words)
         {
             for (var cueIndex = 0; cueIndex < words.Count; cueIndex++)
             {
@@ -400,7 +400,7 @@ namespace BeanBot.Util
         }
 
         private static bool HasPersonalAdviceFrame(
-            IReadOnlyList<string> words,
+            List<string> words,
             int subjectIndex,
             int actionIndex)
         {
@@ -448,7 +448,7 @@ namespace BeanBot.Util
         }
 
         private static bool HasAllowedPathToAction(
-            IReadOnlyList<string> words,
+            List<string> words,
             int startIndex,
             int actionIndex)
         {
@@ -463,7 +463,7 @@ namespace BeanBot.Util
             return true;
         }
 
-        private static bool IsReflexiveBathingConstruction(IReadOnlyList<string> words, int actionIndex)
+        private static bool IsReflexiveBathingConstruction(List<string> words, int actionIndex)
         {
             if (actionIndex < words.Count - 1 && IsReflexive(words[actionIndex + 1]))
             {
@@ -485,7 +485,7 @@ namespace BeanBot.Util
         }
 
         private static bool IsCoordinatedBathingConstruction(
-            IReadOnlyList<string> words,
+            List<string> words,
             int startIndex,
             int actionIndex)
         {
@@ -506,7 +506,7 @@ namespace BeanBot.Util
         }
 
         private static bool IsExplicitBathingConstruction(
-            IReadOnlyList<string> words,
+            List<string> words,
             int startIndex,
             int actionIndex)
         {
@@ -523,7 +523,7 @@ namespace BeanBot.Util
         }
 
         private static bool IsBathingActionConstruction(
-            IReadOnlyList<string> words,
+            List<string> words,
             int startIndex,
             int actionIndex)
         {
@@ -555,7 +555,7 @@ namespace BeanBot.Util
         }
 
         private static bool TryFindBoundBathingAction(
-            IReadOnlyList<string> words,
+            List<string> words,
             int startIndex,
             bool validateFollowingWord,
             out int actionIndex)
@@ -586,7 +586,7 @@ namespace BeanBot.Util
             return false;
         }
 
-        private static bool IsSelfBathingUse(IReadOnlyList<string> words, int actionIndex)
+        private static bool IsSelfBathingUse(List<string> words, int actionIndex)
         {
             if (actionIndex == words.Count - 1 || IsReflexive(words[actionIndex + 1]))
             {
@@ -596,7 +596,7 @@ namespace BeanBot.Util
             return AllowedAfterAction.Contains(words[actionIndex + 1]);
         }
 
-        private static bool HasEvaluationCueAfter(IReadOnlyList<string> words, int actionIndex)
+        private static bool HasEvaluationCueAfter(List<string> words, int actionIndex)
         {
             var endIndex = Math.Min(words.Count - 1, actionIndex + 8);
             for (var index = actionIndex + 1; index <= endIndex; index++)
@@ -610,7 +610,7 @@ namespace BeanBot.Util
             return false;
         }
 
-        private static bool IsEvaluatedBathingUse(IReadOnlyList<string> words, int actionIndex)
+        private static bool IsEvaluatedBathingUse(List<string> words, int actionIndex)
         {
             if (actionIndex >= words.Count - 1 || !HasEvaluationCueAfter(words, actionIndex))
             {
@@ -634,7 +634,7 @@ namespace BeanBot.Util
 
         private static List<string> GetWords(string text)
         {
-            var matches = WordRegex.Matches(text);
+            var matches = WordRegex().Matches(text);
             var words = new List<string>(matches.Count);
 
             foreach (Match match in matches)

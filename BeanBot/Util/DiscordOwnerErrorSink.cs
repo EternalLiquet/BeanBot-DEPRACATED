@@ -3,6 +3,7 @@ using Discord.WebSocket;
 using Serilog.Core;
 using Serilog.Events;
 using System;
+using System.Globalization;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -40,10 +41,10 @@ namespace BeanBot.Util
         {
             const int maximumLength = 1900;
             var exception = logEvent.Exception == null ? string.Empty : $"\n{logEvent.Exception}";
-            var alert = $"BeanBot {logEvent.Level} at {logEvent.Timestamp:O}\n{logEvent.RenderMessage()}{exception}";
+            var alert = $"BeanBot {logEvent.Level} at {logEvent.Timestamp:O}\n{logEvent.RenderMessage(CultureInfo.InvariantCulture)}{exception}";
             return alert.Length <= maximumLength
                 ? alert
-                : alert.Substring(0, maximumLength - 15) + "\n...(truncated)";
+                : string.Concat(alert.AsSpan(0, maximumLength - 15), "\n...(truncated)");
         }
     }
 
@@ -66,7 +67,7 @@ namespace BeanBot.Util
 
         internal DiscordOwnerErrorNotifier(
             IOwnerAlertDelivery delivery,
-            Func<int, TimeSpan> retryDelay = null,
+            Func<int, TimeSpan>? retryDelay = null,
             TimeSpan? shutdownFlushTimeout = null)
         {
             _delivery = delivery ?? throw new ArgumentNullException(nameof(delivery));

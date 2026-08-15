@@ -24,15 +24,8 @@ namespace BeanBot.Services
             TimeSpan lifecycleOperationTimeout,
             Func<int, TimeSpan> retryDelay)
         {
-            if (maximumAttempts <= 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(maximumAttempts));
-            }
-
-            if (lifecycleOperationTimeout <= TimeSpan.Zero)
-            {
-                throw new ArgumentOutOfRangeException(nameof(lifecycleOperationTimeout));
-            }
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumAttempts);
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(lifecycleOperationTimeout, TimeSpan.Zero);
 
             MaximumAttempts = maximumAttempts;
             LifecycleOperationTimeout = lifecycleOperationTimeout;
@@ -71,7 +64,7 @@ namespace BeanBot.Services
         private readonly Func<Task> _setPresence;
         private readonly TimeSpan _operationTimeout;
         private readonly Action<Exception, string> _lateFailureObserver;
-        private Task _unfinishedOperation;
+        private Task? _unfinishedOperation;
 
         public DiscordStartupLifecycle(
             DiscordSocketClient client,
@@ -92,7 +85,7 @@ namespace BeanBot.Services
             Func<Task> start,
             Func<Task> setPresence,
             TimeSpan operationTimeout,
-            Action<Exception, string> lateFailureObserver = null)
+            Action<Exception, string>? lateFailureObserver = null)
         {
             _login = login ?? throw new ArgumentNullException(nameof(login));
             _start = start ?? throw new ArgumentNullException(nameof(start));
@@ -167,7 +160,7 @@ namespace BeanBot.Services
                 {
                     if (completedTask.IsFaulted)
                     {
-                        _lateFailureObserver(completedTask.Exception, operationName);
+                            _lateFailureObserver(completedTask.Exception!, operationName);
                     }
 
                     lock (_syncRoot)
@@ -198,8 +191,8 @@ namespace BeanBot.Services
 
         public DiscordStartupService(
             IDiscordStartupLifecycle lifecycle,
-            DiscordStartupOptions options = null,
-            IDiscordStartupDelay delay = null)
+            DiscordStartupOptions? options = null,
+            IDiscordStartupDelay? delay = null)
         {
             _lifecycle = lifecycle ?? throw new ArgumentNullException(nameof(lifecycle));
             _options = options ?? DiscordStartupOptions.Default;

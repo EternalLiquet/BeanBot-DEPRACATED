@@ -12,7 +12,7 @@ namespace BeanBot.Services
             Action<Exception> onCompensationFailure)
             where TMessage : class
         {
-            TMessage message = null;
+            TMessage? message = null;
             try
             {
                 message = await createMessage();

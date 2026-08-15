@@ -11,15 +11,23 @@ namespace BeanBot.Services
     {
         internal const int MaximumBulkDeleteCount = 100;
         private static readonly TimeSpan MaximumBulkDeleteAge = TimeSpan.FromDays(14) - TimeSpan.FromMinutes(5);
+        private readonly Func<DateTimeOffset> _getUtcNow;
+
+        public DiscordMessageCleanupService()
+            : this(() => DateTimeOffset.UtcNow)
+        {
+        }
+
+        internal DiscordMessageCleanupService(Func<DateTimeOffset> getUtcNow)
+        {
+            _getUtcNow = getUtcNow ?? throw new ArgumentNullException(nameof(getUtcNow));
+        }
 
         public Task DeleteAsync(ITextChannel channel, IReadOnlyCollection<IMessage> messages)
         {
-            if (channel == null)
-            {
-                throw new ArgumentNullException(nameof(channel));
-            }
+            ArgumentNullException.ThrowIfNull(channel);
 
-            var plan = CreatePlan(messages, message => message.Timestamp, DateTimeOffset.UtcNow);
+            var plan = CreatePlan(messages, message => message.Timestamp, _getUtcNow());
             return ExecutePlanAsync(
                 plan,
                 batch => channel.DeleteMessagesAsync(batch),
@@ -36,15 +44,8 @@ namespace BeanBot.Services
             Func<T, DateTimeOffset> getTimestamp,
             DateTimeOffset now)
         {
-            if (messages == null)
-            {
-                throw new ArgumentNullException(nameof(messages));
-            }
-
-            if (getTimestamp == null)
-            {
-                throw new ArgumentNullException(nameof(getTimestamp));
-            }
+            ArgumentNullException.ThrowIfNull(messages);
+            ArgumentNullException.ThrowIfNull(getTimestamp);
 
             var oldestBulkDeleteTimestamp = now.Subtract(MaximumBulkDeleteAge);
             var recent = messages.Where(message => getTimestamp(message) >= oldestBulkDeleteTimestamp).ToList();
