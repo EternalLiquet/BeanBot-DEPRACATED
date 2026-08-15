@@ -19,6 +19,7 @@ namespace BeanBot.EventHandlers
         private readonly ulong _generalChannelId;
         private readonly CancellationTokenSource _tokenSource = new();
         private Task _runner;
+        private int _disposed;
 
         private static readonly TimeSpan PostTimeLocal = new TimeSpan(16, 20, 0);
 
@@ -31,6 +32,11 @@ namespace BeanBot.EventHandlers
 
         public void Start()
         {
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                throw new ObjectDisposedException(nameof(PunHandler));
+            }
+
             if (_runner is not null)
             {
                 throw new InvalidOperationException("The daily pun service has already been started.");
@@ -173,6 +179,11 @@ namespace BeanBot.EventHandlers
 
         public async ValueTask DisposeAsync()
         {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                return;
+            }
+
             try
             {
                 _tokenSource.Cancel();
