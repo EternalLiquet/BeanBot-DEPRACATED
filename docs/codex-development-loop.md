@@ -22,7 +22,7 @@ Run commands from any directory; each script resolves the repository root itself
 /path/to/BeanBot-DEPRACATED/scripts/verify.sh full
 ```
 
-`fast` is the normal implementation loop. It tests the verifier's orchestration and failure propagation, validates Codex/CI configuration, restores the solution, builds Release without a second restore, runs Release tests without a second build, and checks committed, staged, and unstaged diffs for whitespace errors.
+`fast` is the normal implementation loop. It tests the verifier's orchestration and failure propagation, validates Codex/CI configuration, restores the solution, verifies `.editorconfig` formatting and warning-level analyzers without another restore, builds Release, runs Release tests without a second build, and checks committed, staged, and unstaged diffs for whitespace errors.
 
 `full` runs every fast gate once, then requests a machine-readable report for direct and transitive NuGet dependencies across the complete solution, fails explicitly if that report contains a known vulnerability, and builds the Docker image. The internal `build-test` mode gives the master-only release workflow the same orchestration self-test, validation, restore, Release build, Release test, and diff gates without duplicating full-only Docker and vulnerability work.
 
@@ -36,7 +36,7 @@ The gates have these dependencies:
 - GitHub evaluates Actions syntax/triggers and supplies exact-head required-check evidence.
 - Real Discord, production MongoDB, deployment health, and post-deployment behavior remain manual. Tests must not connect to them.
 
-Formatting is not a mandatory gate because the repository has no established formatting baseline. No coverage threshold is imposed.
+Formatting and warning-level analyzer conventions are mandatory gates backed by the repository's `.editorconfig`. No coverage threshold is imposed.
 
 ## Repair and infrastructure failures
 

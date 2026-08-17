@@ -160,7 +160,7 @@ namespace BeanBot.Services
                 {
                     if (completedTask.IsFaulted)
                     {
-                            _lateFailureObserver(completedTask.Exception!, operationName);
+                        _lateFailureObserver(completedTask.Exception!, operationName);
                     }
 
                     lock (_syncRoot)

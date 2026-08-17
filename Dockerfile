@@ -1,6 +1,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
+COPY ["Directory.Build.props", "Directory.Packages.props", "global.json", "./"]
 COPY ["BeanBot/BeanBot.csproj", "BeanBot/"]
 RUN dotnet restore "BeanBot/BeanBot.csproj"
 

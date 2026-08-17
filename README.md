@@ -49,7 +49,9 @@ If you bind the endpoint to anything other than `127.0.0.1`, set `BEANBOT_HEALTH
 
 ## Local Development
 
-Install the .NET 10 SDK, then restore, build, and run the test suite from the repo root:
+Install a stable .NET 10 SDK. The repository's `global.json` accepts SDK 10.0.100 or
+newer .NET 10 patches and feature bands while excluding preview and other major SDKs.
+Then restore, build, and run the test suite from the repo root:
 
 ```powershell
 dotnet restore BeanBot.sln
@@ -58,6 +60,11 @@ dotnet test BeanBot.sln --configuration Release --no-build
 ```
 
 Repository changes use a Codex-native Planner → Implementer → Verifier → Reviewer loop with one writer and independent verification/review. See [Codex development loop](docs/codex-development-loop.md) for role handoffs and the shared fast/full verification commands.
+
+Repository-wide compiler settings are defined in `Directory.Build.props`, package
+versions in `Directory.Packages.props`, and formatting and naming conventions in
+`.editorconfig`. Run `./scripts/verify.sh fast` before submitting changes; it checks
+formatting and analyzers in addition to building and testing the solution.
 
 To start the bot:
 
