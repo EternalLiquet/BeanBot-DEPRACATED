@@ -1,380 +1,297 @@
 using BeanBot.Configuration;
 using BeanBot.Services;
-using BeanBot.Util;
-using Discord.WebSocket;
-using Serilog;
+
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
+
 using Xunit;
 
 namespace BeanBot.Tests.Services;
 
-[Collection("Serilog global logger")]
 public class HealthCheckServerTests
 {
-    [Theory]
-    [InlineData("GET /healthz HTTP/1.1", "GET", "/healthz")]
-    [InlineData("HEAD /healthz?probe=1 HTTP/1.0", "HEAD", "/healthz?probe=1")]
-    public void TryParseRequestLine_AcceptsSupportedHttpVersions(string request, string expectedMethod, string expectedTarget)
-    {
-        Assert.True(HealthCheckServer.TryParseRequestLine(request, out var method, out var target));
-        Assert.Equal(expectedMethod, method);
-        Assert.Equal(expectedTarget, target);
-    }
+    private static readonly DiscordHealthSnapshot UnhealthySnapshot = new(
+        false,
+        "Discord gateway has not reached the Ready state yet.",
+        "LoggedOut",
+        "Disconnected",
+        null,
+        null,
+        null,
+        null);
 
-    [Theory]
-    [InlineData("GET /healthz")]
-    [InlineData("GET /healthz HTTP/2")]
-    [InlineData("GET /healthz HTTP/1.1 extra")]
-    public void TryParseRequestLine_RejectsMalformedRequests(string request)
+    [Fact]
+    public async Task Get_UnhealthySnapshot_ReturnsExistingHealthContract()
     {
-        Assert.False(HealthCheckServer.TryParseRequestLine(request, out _, out _));
-    }
+        await using var server = CreateServer(() => UnhealthySnapshot);
+        await server.StartAsync(CancellationToken.None);
+        using var client = CreateClient(server);
 
-    [Theory]
-    [InlineData("/healthz", "/healthz")]
-    [InlineData("/healthz?probe=1", "/healthz")]
-    [InlineData("/health%7A", "/healthz")]
-    [InlineData("/health%7A/%41%42", "/healthz/AB")]
-    [InlineData("", "/")]
-    public void TryExtractPath_RemovesQueryAndDecodesValidPath(string target, string expected)
-    {
-        Assert.True(HealthCheckServer.TryExtractPath(target, out var path));
-        Assert.Equal(expected, path);
-    }
+        using var response = await client.GetAsync("/healthz");
+        var body = await response.Content.ReadAsStringAsync();
+        using var payload = JsonDocument.Parse(body);
 
-    [Theory]
-    [InlineData("/%")]
-    [InlineData("/%7")]
-    [InlineData("/%ZZ")]
-    [InlineData("/%41/%ZZ")]
-    [InlineData("/%ZZ/%41")]
-    public void TryExtractPath_RejectsMalformedPercentEscapes(string target)
-    {
-        Assert.False(HealthCheckServer.TryExtractPath(target, out var path));
-        Assert.Null(path);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("unhealthy", payload.RootElement.GetProperty("status").GetString());
+        Assert.False(payload.RootElement.GetProperty("discordConnected").GetBoolean());
+        Assert.Equal("LoggedOut", payload.RootElement.GetProperty("loginState").GetString());
+        Assert.Equal("Disconnected", payload.RootElement.GetProperty("connectionState").GetString());
+        Assert.Equal(JsonValueKind.Null, payload.RootElement.GetProperty("lastReadyAtUtc").ValueKind);
+        Assert.Equal(JsonValueKind.Null, payload.RootElement.GetProperty("lastDisconnectedAtUtc").ValueKind);
+        Assert.Equal(JsonValueKind.Null, payload.RootElement.GetProperty("unhealthySinceAtUtc").ValueKind);
+        Assert.Equal(JsonValueKind.Null, payload.RootElement.GetProperty("mostRecentDisconnectReason").ValueKind);
+        Assert.False(payload.RootElement.TryGetProperty("lastDisconnectReason", out _));
     }
 
     [Fact]
-    public async Task RequestLine_ExactlyAtLimit_IsAccepted()
+    public async Task Get_HealthySnapshot_ReturnsOkAndHealthDetails()
     {
-        const string prefix = "GET /";
-        const string suffix = " HTTP/1.1";
-        var padding = new string('a', HealthCheckServer.MaxRequestLineLength - prefix.Length - suffix.Length);
+        var readyAt = new DateTimeOffset(2026, 8, 17, 12, 0, 0, TimeSpan.Zero);
+        var snapshot = new DiscordHealthSnapshot(
+            true,
+            "BeanBot is connected to Discord.",
+            "LoggedIn",
+            "Connected",
+            readyAt,
+            null,
+            null,
+            null);
+        await using var server = CreateServer(() => snapshot);
+        await server.StartAsync(CancellationToken.None);
+        using var client = CreateClient(server);
 
-        var response = await SendRequestAsync($"{prefix}{padding}{suffix}\r\n\r\n");
+        using var response = await client.GetAsync("/healthz?probe=1");
+        using var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
-        Assert.StartsWith("HTTP/1.1 404 Not Found", response);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("ok", payload.RootElement.GetProperty("status").GetString());
+        Assert.True(payload.RootElement.GetProperty("discordConnected").GetBoolean());
+        Assert.Equal(readyAt, payload.RootElement.GetProperty("lastReadyAtUtc").GetDateTimeOffset());
     }
 
     [Fact]
-    public async Task RequestLine_OneCharacterOverLimit_Returns414()
+    public async Task Head_ReturnsGetContentLengthWithoutBody()
     {
-        const string prefix = "GET /";
-        const string suffix = " HTTP/1.1";
-        var padding = new string('a', HealthCheckServer.MaxRequestLineLength - prefix.Length - suffix.Length + 1);
+        await using var server = CreateServer(() => UnhealthySnapshot);
+        await server.StartAsync(CancellationToken.None);
+        using var client = CreateClient(server);
+        using var expectedGet = await client.GetAsync("/not-healthz");
+        var expectedLength = expectedGet.Content.Headers.ContentLength;
 
-        var response = await SendRequestAsync($"{prefix}{padding}{suffix}\r\n\r\n");
+        using var request = new HttpRequestMessage(HttpMethod.Head, "/not-healthz");
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(expectedLength, response.Content.Headers.ContentLength);
+        Assert.Empty(await response.Content.ReadAsByteArrayAsync());
+    }
+
+    [Fact]
+    public async Task EncodedHealthPath_ResolvesToConfiguredEndpoint()
+    {
+        await using var server = CreateServer(() => UnhealthySnapshot);
+        await server.StartAsync(CancellationToken.None);
+        using var client = CreateClient(server);
+
+        using var response = await client.GetAsync("/health%7A");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UnknownPathAndUnsupportedMethod_PreserveRoutingContract()
+    {
+        await using var server = CreateServer(() => UnhealthySnapshot);
+        await server.StartAsync(CancellationToken.None);
+        using var client = CreateClient(server);
+
+        using var notFound = await client.GetAsync("/missing");
+        using var methodNotAllowed = await client.PostAsync("/healthz", null);
+
+        Assert.Equal(HttpStatusCode.NotFound, notFound.StatusCode);
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, methodNotAllowed.StatusCode);
+        Assert.Contains("GET", methodNotAllowed.Content.Headers.Allow);
+        Assert.Contains("HEAD", methodNotAllowed.Content.Headers.Allow);
+    }
+
+    [Fact]
+    public async Task BearerAuthentication_RejectsMissingAndInvalidTokensWithoutConsumingRateLimit()
+    {
+        await using var server = CreateServer(() => UnhealthySnapshot, bearerToken: "health-secret");
+        await server.StartAsync(CancellationToken.None);
+        using var client = CreateClient(server);
+
+        using var missing = await client.GetAsync("/healthz");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "wrong-secret");
+        using var invalid = await client.GetAsync("/healthz");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "health-secret");
+        using var valid = await client.GetAsync("/healthz");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, missing.StatusCode);
+        Assert.Contains("Bearer", missing.Headers.WwwAuthenticate.Select(value => value.Scheme));
+        Assert.Equal(HttpStatusCode.Unauthorized, invalid.StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, valid.StatusCode);
+    }
+
+    [Fact]
+    public async Task RepeatedAuthorizedPoll_ReturnsBoundedRateLimitContract()
+    {
+        await using var server = CreateServer(() => UnhealthySnapshot, bearerToken: "health-secret");
+        await server.StartAsync(CancellationToken.None);
+        using var client = CreateClient(server);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "health-secret");
+
+        using var first = await client.GetAsync("/healthz");
+        using var second = await client.GetAsync("/healthz");
+        using var payload = JsonDocument.Parse(await second.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, first.StatusCode);
+        Assert.Equal(HttpStatusCode.TooManyRequests, second.StatusCode);
+        Assert.NotNull(second.Headers.RetryAfter?.Delta);
+        Assert.Equal("rate_limited", payload.RootElement.GetProperty("status").GetString());
+        Assert.True(payload.RootElement.GetProperty("retryAfterSeconds").GetInt32() > 0);
+    }
+
+    [Fact]
+    public async Task OversizedRequestLine_IsRejectedByKestrelAndServerRemainsAvailable()
+    {
+        await using var server = CreateServer(() => UnhealthySnapshot);
+        await server.StartAsync(CancellationToken.None);
+        var oversizedPath = "/" + new string('a', HealthCheckServer.MaxRequestLineLength);
+
+        var response = await SendRawRequestAsync(
+            server,
+            $"GET {oversizedPath} HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        using var client = CreateClient(server);
+        using var nextResponse = await client.GetAsync("/healthz");
 
         Assert.StartsWith("HTTP/1.1 414 URI Too Long", response);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, nextResponse.StatusCode);
     }
 
     [Fact]
-    public async Task SingleOversizedHeader_Returns431()
+    public async Task OversizedHeaders_AreRejectedByKestrelAndServerRemainsAvailable()
     {
-        var oversizedHeader = "X-Test: " + new string('a', HealthCheckServer.MaxHeaderLineLength);
+        await using var server = CreateServer(() => UnhealthySnapshot);
+        await server.StartAsync(CancellationToken.None);
+        var oversizedHeader = new string('a', HealthCheckServer.MaxHeaderCharacters);
 
-        var response = await SendRequestAsync($"GET /healthz HTTP/1.1\r\n{oversizedHeader}\r\n\r\n");
+        var response = await SendRawRequestAsync(
+            server,
+            $"GET /healthz HTTP/1.1\r\nHost: localhost\r\nX-Test: {oversizedHeader}\r\n\r\n");
+        using var client = CreateClient(server);
+        using var nextResponse = await client.GetAsync("/healthz");
 
         Assert.StartsWith("HTTP/1.1 431 Request Header Fields Too Large", response);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, nextResponse.StatusCode);
     }
 
     [Fact]
-    public async Task HeaderLine_ExactlyAtLimit_IsAccepted()
+    public async Task PartialHeaders_TimeOutAndServerRemainsAvailable()
     {
-        const string prefix = "X-Test: ";
-        var header = prefix + new string('a', HealthCheckServer.MaxHeaderLineLength - prefix.Length);
+        await using var server = CreateServer(
+            () => UnhealthySnapshot,
+            requestHeadersTimeout: TimeSpan.FromMilliseconds(100));
+        await server.StartAsync(CancellationToken.None);
 
-        var response = await SendRequestAsync($"GET /healthz HTTP/1.1\r\n{header}\r\n\r\n");
-
-        Assert.StartsWith("HTTP/1.1 503 Service Unavailable", response);
-    }
-
-    [Fact]
-    public async Task HeadersExceedingTotalCharacterLimit_Return431()
-    {
-        var headers = string.Join("\r\n", Enumerable.Range(0, 5)
-            .Select(index => $"X-{index}: {new string('a', 7000)}"));
-
-        var response = await SendRequestAsync($"GET /healthz HTTP/1.1\r\n{headers}\r\n\r\n");
-
-        Assert.StartsWith("HTTP/1.1 431 Request Header Fields Too Large", response);
-    }
-
-    [Fact]
-    public async Task TooManyHeaders_Returns431()
-    {
-        var headers = string.Join("\r\n", Enumerable.Range(0, HealthCheckServer.MaxHeaderCount + 1)
-            .Select(index => $"X-{index}: value"));
-
-        var response = await SendRequestAsync($"GET /healthz HTTP/1.1\r\n{headers}\r\n\r\n");
-
-        Assert.StartsWith("HTTP/1.1 431 Request Header Fields Too Large", response);
-    }
-
-    [Fact]
-    public async Task PartialRequestWithoutLineTerminator_Returns408AfterTimeout()
-    {
-        var response = await SendRequestAsync(
-            "GET /healthz HTTP/1.1",
-            requestTimeout: TimeSpan.FromMilliseconds(100));
+        var response = await SendRawRequestAsync(server, "GET /healthz HTTP/1.1\r\nHost: localhost");
+        using var client = CreateClient(server);
+        using var nextResponse = await client.GetAsync("/healthz");
 
         Assert.StartsWith("HTTP/1.1 408 Request Timeout", response);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, nextResponse.StatusCode);
     }
 
     [Fact]
-    public async Task ValidRequest_ReturnsHealthPayload()
-    {
-        var response = await SendRequestAsync("GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n");
-
-        Assert.StartsWith("HTTP/1.1 503 Service Unavailable", response);
-        Assert.Contains("\"status\":\"unhealthy\"", response);
-        Assert.Contains("\"mostRecentDisconnectReason\":null", response);
-        Assert.DoesNotContain("\"lastDisconnectReason\"", response);
-    }
-
-    [Fact]
-    public async Task ValidEncodedHealthTarget_ResolvesToConfiguredPath()
-    {
-        var response = await SendRequestAsync("GET /health%7A HTTP/1.1\r\nHost: localhost\r\n\r\n");
-
-        Assert.StartsWith("HTTP/1.1 503 Service Unavailable", response);
-        Assert.Contains("\"status\":\"unhealthy\"", response);
-    }
-
-    [Theory]
-    [InlineData("/%")]
-    [InlineData("/%7")]
-    [InlineData("/%ZZ")]
-    [InlineData("/%41/%ZZ")]
-    public async Task MalformedTarget_Returns400WithoutOwnerNotification(string target)
-    {
-        var previousLogger = Log.Logger;
-        var notifier = new CapturingOwnerNotifier();
-        var logger = new LoggerConfiguration()
-            .MinimumLevel.Verbose()
-            .WriteTo.Sink(new DiscordOwnerErrorSink(notifier))
-            .CreateLogger();
-        Log.Logger = logger;
-        try
-        {
-            var response = await SendRequestAsync($"GET {target} HTTP/1.1\r\nHost: localhost\r\n\r\n");
-
-            Assert.StartsWith("HTTP/1.1 400 Bad Request", response);
-            Assert.Empty(notifier.Alerts);
-        }
-        finally
-        {
-            Log.Logger = previousLogger;
-            logger.Dispose();
-        }
-    }
-
-    [Fact]
-    public async Task HeadRequest_PreservesGetContentLengthWithoutSendingBody()
-    {
-        var response = await SendRequestAsync("HEAD /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n");
-        var parts = response.Split("\r\n\r\n", 2);
-
-        Assert.StartsWith("HTTP/1.1 503 Service Unavailable", response);
-        Assert.Contains("Content-Length:", parts[0]);
-        Assert.Equal(string.Empty, parts[1]);
-    }
-
-    [Fact]
-    public async Task ConnectionBurst_NeverExceedsCapacityAndRejectsExcessClient()
-    {
-        using var discordClient = new DiscordSocketClient();
-        await using var server = CreateServer(discordClient, TimeSpan.FromSeconds(5), maximumConcurrentClients: 2);
-        server.Start();
-        using var first = await ConnectAsync(server);
-        using var second = await ConnectAsync(server);
-        await WaitUntilAsync(() => server.ActiveClientHandlerCount == 2);
-
-        using var excess = await ConnectAsync(server);
-
-        Assert.True(await IsConnectionClosedAsync(excess));
-        Assert.Equal(2, server.PeakActiveClientHandlers);
-        Assert.InRange(server.ActiveClientTaskCount, 0, 2);
-    }
-
-    [Fact]
-    public async Task CompletedRequest_ReleasesClientCapacity()
-    {
-        using var discordClient = new DiscordSocketClient();
-        await using var server = CreateServer(discordClient, TimeSpan.FromSeconds(2), maximumConcurrentClients: 1);
-        server.Start();
-
-        var firstResponse = await SendRequestToServerAsync(server, "GET /healthz HTTP/1.1\r\n\r\n");
-        var secondResponse = await SendRequestToServerAsync(server, "GET /healthz HTTP/1.1\r\n\r\n");
-
-        Assert.StartsWith("HTTP/1.1 503 Service Unavailable", firstResponse);
-        Assert.StartsWith("HTTP/1.1 429 Too Many Requests", secondResponse);
-        Assert.Equal(1, server.PeakActiveClientHandlers);
-    }
-
-    [Fact]
-    public async Task DisconnectedRequest_ReleasesClientCapacity()
-    {
-        using var discordClient = new DiscordSocketClient();
-        await using var server = CreateServer(discordClient, TimeSpan.FromSeconds(2), maximumConcurrentClients: 1);
-        server.Start();
-        var disconnectedClient = await ConnectAsync(server);
-        await WaitUntilAsync(() => server.ActiveClientHandlerCount == 1);
-
-        disconnectedClient.Dispose();
-        await WaitUntilAsync(() => server.ActiveClientHandlerCount == 0);
-        var response = await SendRequestToServerAsync(server, "GET /healthz HTTP/1.1\r\n\r\n");
-
-        Assert.StartsWith("HTTP/1.1 503 Service Unavailable", response);
-    }
-
-    [Fact]
-    public async Task TimedOutRequest_ReleasesClientCapacity()
-    {
-        using var discordClient = new DiscordSocketClient();
-        await using var server = CreateServer(discordClient, TimeSpan.FromMilliseconds(100), maximumConcurrentClients: 1);
-        server.Start();
-        using var timedOutClient = await ConnectAsync(server);
-        await using var timedOutStream = timedOutClient.GetStream();
-        await timedOutStream.WriteAsync(Encoding.ASCII.GetBytes("GET /healthz HTTP/1.1"));
-        await timedOutStream.FlushAsync();
-        using var timedOutReader = new StreamReader(timedOutStream, Encoding.ASCII, leaveOpen: true);
-
-        var timeoutResponse = await timedOutReader.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(2));
-        await WaitUntilAsync(() => server.ActiveClientHandlerCount == 0);
-        var nextResponse = await SendRequestToServerAsync(server, "GET /healthz HTTP/1.1\r\n\r\n");
-
-        Assert.StartsWith("HTTP/1.1 408 Request Timeout", timeoutResponse);
-        Assert.StartsWith("HTTP/1.1 503 Service Unavailable", nextResponse);
-    }
-
-    [Fact]
-    public async Task Shutdown_WithCapacityExhausted_CancelsHandlersAndEmptiesTaskCollection()
-    {
-        using var discordClient = new DiscordSocketClient();
-        var server = CreateServer(discordClient, TimeSpan.FromSeconds(30), maximumConcurrentClients: 1);
-        server.Start();
-        using var activeClient = await ConnectAsync(server);
-        await WaitUntilAsync(() => server.ActiveClientHandlerCount == 1);
-        using var excessClient = await ConnectAsync(server);
-        Assert.True(await IsConnectionClosedAsync(excessClient));
-
-        await server.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
-
-        Assert.Equal(0, server.ActiveClientHandlerCount);
-        Assert.Equal(0, server.ActiveClientTaskCount);
-    }
-
-    private static async Task<string> SendRequestAsync(
-        string request,
-        TimeSpan? requestTimeout = null)
+    public async Task DisabledServer_DoesNotBindAListener()
     {
         var options = new HealthCheckOptions(
-            true,
+            false,
             IPAddress.Loopback,
             0,
             null,
-            TimeSpan.FromSeconds(1));
-        using var discordClient = new DiscordSocketClient();
-        await using var server = new HealthCheckServer(
-            options,
-            discordClient,
-            new DiscordConnectionHealth(),
-            requestTimeout ?? TimeSpan.FromSeconds(2));
-        server.Start();
+            TimeSpan.FromSeconds(90));
+        await using var server = new HealthCheckServer(options, () => UnhealthySnapshot);
 
+        await server.StartAsync(CancellationToken.None);
+
+        Assert.Equal(0, server.BoundPort);
+    }
+
+    [Fact]
+    public async Task StartTwice_IsRejectedAndStopIsIdempotent()
+    {
+        await using var server = CreateServer(() => UnhealthySnapshot);
+        await server.StartAsync(CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => server.StartAsync(CancellationToken.None));
+        await server.StopAsync(CancellationToken.None);
+        await server.StopAsync(CancellationToken.None);
+
+        Assert.Equal(0, server.BoundPort);
+    }
+
+    [Fact]
+    public async Task Shutdown_CancelsIncompleteRequestWithinDeadline()
+    {
+        var server = CreateServer(
+            () => UnhealthySnapshot,
+            requestHeadersTimeout: TimeSpan.FromSeconds(30));
+        await server.StartAsync(CancellationToken.None);
         using var client = new TcpClient();
         await client.ConnectAsync(IPAddress.Loopback, server.BoundPort);
-        await using var stream = client.GetStream();
-        var requestBytes = Encoding.ASCII.GetBytes(request);
-        await stream.WriteAsync(requestBytes);
-        await stream.FlushAsync();
+        await client.GetStream().WriteAsync(Encoding.ASCII.GetBytes("GET /healthz HTTP/1.1"));
 
-        using var reader = new StreamReader(stream, Encoding.ASCII, leaveOpen: true);
-        return await reader.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(3));
+        await server.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+        await server.DisposeAsync();
+
+        Assert.Equal(0, server.BoundPort);
     }
 
     private static HealthCheckServer CreateServer(
-        DiscordSocketClient discordClient,
-        TimeSpan requestTimeout,
-        int maximumConcurrentClients)
+        Func<DiscordHealthSnapshot> createSnapshot,
+        string? bearerToken = null,
+        TimeSpan? requestHeadersTimeout = null)
     {
         var options = new HealthCheckOptions(
             true,
             IPAddress.Loopback,
             0,
-            null,
-            TimeSpan.FromSeconds(1));
+            bearerToken,
+            TimeSpan.FromSeconds(30));
         return new HealthCheckServer(
             options,
-            discordClient,
-            new DiscordConnectionHealth(),
-            requestTimeout,
-            maximumConcurrentClients);
+            createSnapshot,
+            requestHeadersTimeout,
+            maximumConcurrentClients: 2,
+            maximumTrackedRateLimitClients: 10);
     }
 
-    private static async Task<TcpClient> ConnectAsync(HealthCheckServer server)
+    private static HttpClient CreateClient(HealthCheckServer server)
     {
-        var client = new TcpClient();
+        var handler = new SocketsHttpHandler
+        {
+            UseProxy = false
+        };
+        return new HttpClient(handler)
+        {
+            BaseAddress = new Uri($"http://127.0.0.1:{server.BoundPort}")
+        };
+    }
+
+    private static async Task<string> SendRawRequestAsync(HealthCheckServer server, string request)
+    {
+        using var client = new TcpClient();
         await client.ConnectAsync(IPAddress.Loopback, server.BoundPort);
-        return client;
-    }
-
-    private static async Task<string> SendRequestToServerAsync(HealthCheckServer server, string request)
-    {
-        using var client = await ConnectAsync(server);
         await using var stream = client.GetStream();
         await stream.WriteAsync(Encoding.ASCII.GetBytes(request));
         await stream.FlushAsync();
         using var reader = new StreamReader(stream, Encoding.ASCII, leaveOpen: true);
         return await reader.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(3));
     }
-
-    private static async Task<bool> IsConnectionClosedAsync(TcpClient client)
-    {
-        try
-        {
-            var buffer = new byte[1];
-            return await client.GetStream().ReadAsync(buffer).AsTask().WaitAsync(TimeSpan.FromSeconds(2)) == 0;
-        }
-        catch (Exception exception) when (exception is IOException || exception is SocketException)
-        {
-            return true;
-        }
-    }
-
-    private static async Task WaitUntilAsync(Func<bool> condition)
-    {
-        var timeoutAt = DateTimeOffset.UtcNow.AddSeconds(2);
-        while (!condition() && DateTimeOffset.UtcNow < timeoutAt)
-        {
-            await Task.Delay(TimeSpan.FromMilliseconds(10));
-        }
-
-        Assert.True(condition(), "Condition was not reached before the test timeout.");
-    }
-
-    private sealed class CapturingOwnerNotifier : IOwnerErrorNotifier
-    {
-        public List<string> Alerts { get; } = new List<string>();
-
-        public void Enqueue(string alert) => Alerts.Add(alert);
-    }
-}
-
-[CollectionDefinition("Serilog global logger", DisableParallelization = true)]
-public sealed class SerilogGlobalLoggerCollection
-{
 }

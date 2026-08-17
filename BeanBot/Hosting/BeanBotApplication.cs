@@ -10,7 +10,7 @@ namespace BeanBot.Hosting
     {
         bool HasUnfinishedDiscordStartupOperation { get; }
         void SubscribeApplicationEvents();
-        void StartHealthServer();
+        Task StartHealthServerAsync(CancellationToken cancellationToken);
         Task StartDiscordAsync(CancellationToken cancellationToken);
         void StartGatewayRecovery();
         Task StartCommandServicesAsync();
@@ -18,7 +18,7 @@ namespace BeanBot.Hosting
         void StopEventAndCommandServices();
         Task StopGatewayRecoveryAsync();
         void UnsubscribeApplicationEvents();
-        Task StopBackgroundServicesAsync();
+        Task StopBackgroundServicesAsync(CancellationToken cancellationToken);
         Task FlushOwnerAlertsAsync();
         Task StopDiscordAsync(CancellationToken cancellationToken);
         void DisposeDiscordClient();
@@ -43,7 +43,7 @@ namespace BeanBot.Hosting
             }
 
             _runtime.SubscribeApplicationEvents();
-            _runtime.StartHealthServer();
+            await _runtime.StartHealthServerAsync(cancellationToken);
             await _runtime.StartDiscordAsync(cancellationToken);
             _runtime.StartGatewayRecovery();
             await _runtime.StartCommandServicesAsync();
@@ -60,7 +60,7 @@ namespace BeanBot.Hosting
             _runtime.StopEventAndCommandServices();
             await _runtime.StopGatewayRecoveryAsync();
             _runtime.UnsubscribeApplicationEvents();
-            await _runtime.StopBackgroundServicesAsync();
+            await _runtime.StopBackgroundServicesAsync(cancellationToken);
 
             await _runtime.FlushOwnerAlertsAsync();
             if (_runtime.HasUnfinishedDiscordStartupOperation)

@@ -2,16 +2,17 @@ using BeanBot.Configuration;
 
 using Discord.WebSocket;
 
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
+
 using Serilog;
 
 using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Globalization;
-using System.Diagnostics.CodeAnalysis;
-using System.IO;
+using System.Linq;
 using System.Net;
-using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -23,61 +24,82 @@ namespace BeanBot.Services
     public sealed class HealthCheckServer : IAsyncDisposable
     {
         internal const int MaxRequestLineLength = 2048;
-        internal const int MaxHeaderLineLength = 8 * 1024;
         internal const int MaxHeaderCount = 100;
         internal const int MaxHeaderCharacters = 32 * 1024;
         internal const int DefaultMaximumConcurrentClients = 64;
         internal const int DefaultMaximumTrackedRateLimitClients = 4096;
-        private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan DefaultRequestHeadersTimeout = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan DefaultShutdownTimeout = TimeSpan.FromSeconds(1);
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         };
 
+        private readonly object _syncRoot = new();
         private readonly HealthCheckOptions _options;
-        private readonly DiscordSocketClient _discordClient;
-        private readonly DiscordConnectionHealth _discordConnectionHealth;
-        private readonly TimeSpan _requestTimeout;
+        private readonly Func<DiscordHealthSnapshot> _createHealthSnapshot;
+        private readonly TimeSpan _requestHeadersTimeout;
+        private readonly TimeSpan _shutdownTimeout;
+        private readonly int _maximumConcurrentClients;
         private readonly BoundedClientRateLimiter _rateLimiter;
-        private readonly SemaphoreSlim _clientCapacity;
-        private readonly ConcurrentDictionary<int, Task> _clientTasks = new();
-        private readonly CancellationTokenSource _shutdown = new();
-        private int _nextClientTaskId;
-        private int _activeClientHandlers;
-        private int _peakActiveClientHandlers;
+        private WebApplication? _application;
         private int _disposed;
-        private TcpListener? _listener;
-        private Task? _listenerLoop;
 
         public HealthCheckServer(
             HealthCheckOptions options,
             DiscordSocketClient discordClient,
-            DiscordConnectionHealth discordConnectionHealth,
-            TimeSpan? requestTimeout = null,
-            int maximumConcurrentClients = DefaultMaximumConcurrentClients,
-            int maximumTrackedRateLimitClients = DefaultMaximumTrackedRateLimitClients)
-        {
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumConcurrentClients);
-
-            _options = options ?? throw new ArgumentNullException(nameof(options));
-            _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
-            _discordConnectionHealth = discordConnectionHealth ?? throw new ArgumentNullException(nameof(discordConnectionHealth));
-            _requestTimeout = requestTimeout ?? DefaultRequestTimeout;
-            _rateLimiter = new BoundedClientRateLimiter(options.MinimumPollInterval, maximumTrackedRateLimitClients);
-            _clientCapacity = new SemaphoreSlim(maximumConcurrentClients, maximumConcurrentClients);
-        }
-
-        public static HealthCheckServer? Create(
-            HealthCheckOptions options,
-            DiscordSocketClient discordClient,
             DiscordConnectionHealth discordConnectionHealth)
+            : this(
+                options,
+                CreateSnapshotFactory(discordClient, discordConnectionHealth),
+                DefaultRequestHeadersTimeout,
+                DefaultMaximumConcurrentClients,
+                DefaultMaximumTrackedRateLimitClients,
+                DefaultShutdownTimeout)
         {
-            return options.Enabled
-                ? new HealthCheckServer(options, discordClient, discordConnectionHealth)
-                : null;
         }
 
-        public void Start()
+        internal HealthCheckServer(
+            HealthCheckOptions options,
+            Func<DiscordHealthSnapshot> createHealthSnapshot,
+            TimeSpan? requestHeadersTimeout = null,
+            int maximumConcurrentClients = DefaultMaximumConcurrentClients,
+            int maximumTrackedRateLimitClients = DefaultMaximumTrackedRateLimitClients,
+            TimeSpan? shutdownTimeout = null)
+        {
+            ArgumentNullException.ThrowIfNull(options);
+            ArgumentNullException.ThrowIfNull(createHealthSnapshot);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumConcurrentClients);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumTrackedRateLimitClients);
+
+            var effectiveRequestHeadersTimeout = requestHeadersTimeout ?? DefaultRequestHeadersTimeout;
+            var effectiveShutdownTimeout = shutdownTimeout ?? DefaultShutdownTimeout;
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(effectiveRequestHeadersTimeout, TimeSpan.Zero);
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(effectiveShutdownTimeout, TimeSpan.Zero);
+
+            _options = options;
+            _createHealthSnapshot = createHealthSnapshot;
+            _requestHeadersTimeout = effectiveRequestHeadersTimeout;
+            _shutdownTimeout = effectiveShutdownTimeout;
+            _maximumConcurrentClients = maximumConcurrentClients;
+            _rateLimiter = new BoundedClientRateLimiter(
+                options.MinimumPollInterval,
+                maximumTrackedRateLimitClients);
+        }
+
+        internal int BoundPort
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    var address = _application?.Urls.SingleOrDefault();
+                    return Uri.TryCreate(address, UriKind.Absolute, out var uri) ? uri.Port : 0;
+                }
+            }
+        }
+
+        public async Task StartAsync(CancellationToken cancellationToken)
         {
             if (!_options.Enabled)
             {
@@ -86,19 +108,40 @@ namespace BeanBot.Services
 
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
-            if (_listener is not null)
+            WebApplication application;
+            lock (_syncRoot)
             {
-                throw new InvalidOperationException("The health check server has already been started.");
+                if (_application is not null)
+                {
+                    throw new InvalidOperationException("The health check server has already been started.");
+                }
+
+                application = CreateApplication();
+                _application = application;
             }
 
-            _listener = new TcpListener(_options.BindAddress, _options.Port);
-            _listener.Start();
-            _listenerLoop = Task.Run(() => AcceptLoopAsync(_shutdown.Token));
+            try
+            {
+                await application.StartAsync(cancellationToken);
+            }
+            catch
+            {
+                lock (_syncRoot)
+                {
+                    if (ReferenceEquals(_application, application))
+                    {
+                        _application = null;
+                    }
+                }
+
+                await application.DisposeAsync();
+                throw;
+            }
 
             Log.Information(
                 "Health check endpoint listening on {BindAddress}:{Port}{Path} with a {RateLimitSeconds}s per-client poll limit",
                 _options.BindAddress,
-                _options.Port,
+                BoundPort,
                 _options.Path,
                 (int)_options.MinimumPollInterval.TotalSeconds);
 
@@ -109,15 +152,45 @@ namespace BeanBot.Services
                 Log.Warning(
                     "Health check endpoint is listening without a bearer token on {BindAddress}:{Port}{Path}",
                     _options.BindAddress,
-                    _options.Port,
+                    BoundPort,
                     _options.Path);
             }
         }
 
-        internal int BoundPort => (_listener?.LocalEndpoint as IPEndPoint)?.Port ?? 0;
-        internal int ActiveClientTaskCount => _clientTasks.Count;
-        internal int ActiveClientHandlerCount => Volatile.Read(ref _activeClientHandlers);
-        internal int PeakActiveClientHandlers => Volatile.Read(ref _peakActiveClientHandlers);
+        public async Task StopAsync(CancellationToken cancellationToken)
+        {
+            WebApplication? application;
+            lock (_syncRoot)
+            {
+                application = _application;
+                _application = null;
+            }
+
+            if (application is null)
+            {
+                return;
+            }
+
+            try
+            {
+                using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                shutdown.CancelAfter(_shutdownTimeout);
+                try
+                {
+                    await application.StopAsync(shutdown.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    Log.Warning(
+                        "Health check endpoint exceeded its {ShutdownTimeoutSeconds}s shutdown timeout; aborting remaining requests",
+                        _shutdownTimeout.TotalSeconds);
+                }
+            }
+            finally
+            {
+                await application.DisposeAsync();
+            }
+        }
 
         public async ValueTask DisposeAsync()
         {
@@ -126,310 +199,124 @@ namespace BeanBot.Services
                 return;
             }
 
-            if (_listener is null)
+            await StopAsync(CancellationToken.None);
+        }
+
+        private static Func<DiscordHealthSnapshot> CreateSnapshotFactory(
+            DiscordSocketClient discordClient,
+            DiscordConnectionHealth discordConnectionHealth)
+        {
+            ArgumentNullException.ThrowIfNull(discordClient);
+            ArgumentNullException.ThrowIfNull(discordConnectionHealth);
+            return () => discordConnectionHealth.CreateSnapshot(discordClient);
+        }
+
+        private WebApplication CreateApplication()
+        {
+            var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
             {
-                _clientCapacity.Dispose();
-                _shutdown.Dispose();
+                Args = Array.Empty<string>(),
+                ApplicationName = typeof(HealthCheckServer).Assembly.GetName().Name
+            });
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(serverOptions =>
+            {
+                serverOptions.Listen(_options.BindAddress, _options.Port);
+                serverOptions.Limits.MaxConcurrentConnections = _maximumConcurrentClients;
+                serverOptions.Limits.MaxRequestLineSize = MaxRequestLineLength;
+                serverOptions.Limits.MaxRequestHeaderCount = MaxHeaderCount;
+                serverOptions.Limits.MaxRequestHeadersTotalSize = MaxHeaderCharacters;
+                serverOptions.Limits.RequestHeadersTimeout = _requestHeadersTimeout;
+            });
+
+            var application = builder.Build();
+            application.Run(HandleRequestAsync);
+            return application;
+        }
+
+        private async Task HandleRequestAsync(HttpContext context)
+        {
+            context.Response.Headers.Connection = "close";
+            var isHeadRequest = HttpMethods.IsHead(context.Request.Method);
+            if (!HttpMethods.IsGet(context.Request.Method) && !isHeadRequest)
+            {
+                context.Response.Headers.Allow = "GET, HEAD";
+                await WritePlainTextResponseAsync(
+                    context,
+                    StatusCodes.Status405MethodNotAllowed,
+                    "Only GET and HEAD are supported.",
+                    suppressBody: false);
                 return;
             }
 
-            _shutdown.Cancel();
-            _listener.Stop();
-
-            if (_listenerLoop is not null)
+            if (!string.Equals(context.Request.Path.Value, _options.Path, StringComparison.OrdinalIgnoreCase))
             {
-                try
-                {
-                    await _listenerLoop;
-                }
-                catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
-                {
-                }
-                catch (ObjectDisposedException)
-                {
-                }
+                await WritePlainTextResponseAsync(
+                    context,
+                    StatusCodes.Status404NotFound,
+                    "Not Found",
+                    isHeadRequest);
+                return;
             }
 
-            try
+            if (!IsAuthorized(context.Request))
             {
-                await Task.WhenAll(_clientTasks.Values);
+                context.Response.Headers.WWWAuthenticate = "Bearer";
+                await WritePlainTextResponseAsync(
+                    context,
+                    StatusCodes.Status401Unauthorized,
+                    "Missing or invalid bearer token.",
+                    isHeadRequest);
+                return;
             }
-            catch (Exception exception)
+
+            var clientIdentifier = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            if (_rateLimiter.IsRateLimited(clientIdentifier, out var retryAfterSeconds))
             {
-                // Client handlers normally absorb connection failures. A task escaping
-                // faulted indicates an implementation failure and should remain visible.
-                Log.Error(exception, "A health check client task failed during shutdown.");
+                context.Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+                await WriteJsonResponseAsync(
+                    context,
+                    StatusCodes.Status429TooManyRequests,
+                    new
+                    {
+                        status = "rate_limited",
+                        message = $"Wait {retryAfterSeconds} more seconds before polling {_options.Path} again.",
+                        retryAfterSeconds
+                    },
+                    isHeadRequest);
+                return;
             }
-            finally
-            {
-                RemoveCompletedClientTasks(logFaults: false);
-                _clientCapacity.Dispose();
-                _shutdown.Dispose();
-            }
+
+            var healthSnapshot = _createHealthSnapshot();
+            await WriteJsonResponseAsync(
+                context,
+                healthSnapshot.IsHealthy
+                    ? StatusCodes.Status200OK
+                    : StatusCodes.Status503ServiceUnavailable,
+                new
+                {
+                    status = healthSnapshot.IsHealthy ? "ok" : "unhealthy",
+                    discordConnected = healthSnapshot.IsHealthy,
+                    message = healthSnapshot.StatusMessage,
+                    loginState = healthSnapshot.LoginState,
+                    connectionState = healthSnapshot.ConnectionState,
+                    lastReadyAtUtc = healthSnapshot.LastReadyAtUtc,
+                    lastDisconnectedAtUtc = healthSnapshot.LastDisconnectedAtUtc,
+                    unhealthySinceAtUtc = healthSnapshot.UnhealthySinceAtUtc,
+                    mostRecentDisconnectReason = healthSnapshot.MostRecentDisconnectReason
+                },
+                isHeadRequest);
         }
 
-        private async Task AcceptLoopAsync(CancellationToken cancellationToken)
-        {
-            var listener = _listener ?? throw new InvalidOperationException("The health check listener has not been started.");
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                TcpClient? client = null;
-                try
-                {
-                    client = await listener.AcceptTcpClientAsync(cancellationToken);
-                    RemoveCompletedClientTasks();
-
-                    if (!_clientCapacity.Wait(0, cancellationToken))
-                    {
-                        // Capacity is enforced before a handler task is created. Closing
-                        // here bounds sockets, tasks, and queued work during connection bursts.
-                        client.Dispose();
-                        client = null;
-                        continue;
-                    }
-
-                    var taskId = Interlocked.Increment(ref _nextClientTaskId);
-                    _clientTasks[taskId] = HandleClientWithCapacityAsync(client, cancellationToken);
-                    RemoveCompletedClientTasks();
-                    client = null;
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    client?.Dispose();
-                    break;
-                }
-                catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
-                {
-                    client?.Dispose();
-                    break;
-                }
-                catch (Exception exception)
-                {
-                    client?.Dispose();
-                    Log.Error(exception, "Health check listener failed while accepting a connection.");
-
-                    try
-                    {
-                        await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
-                    }
-                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                    {
-                        break;
-                    }
-                }
-            }
-        }
-
-        private async Task HandleClientWithCapacityAsync(TcpClient client, CancellationToken cancellationToken)
-        {
-            var activeHandlers = Interlocked.Increment(ref _activeClientHandlers);
-            UpdatePeakActiveClientHandlers(activeHandlers);
-            try
-            {
-                await HandleClientAsync(client, cancellationToken);
-            }
-            finally
-            {
-                Interlocked.Decrement(ref _activeClientHandlers);
-                _clientCapacity.Release();
-            }
-        }
-
-        private void UpdatePeakActiveClientHandlers(int activeHandlers)
-        {
-            var observedPeak = Volatile.Read(ref _peakActiveClientHandlers);
-            while (activeHandlers > observedPeak)
-            {
-                var priorPeak = Interlocked.CompareExchange(
-                    ref _peakActiveClientHandlers,
-                    activeHandlers,
-                    observedPeak);
-                if (priorPeak == observedPeak)
-                {
-                    return;
-                }
-
-                observedPeak = priorPeak;
-            }
-        }
-
-        private void RemoveCompletedClientTasks(bool logFaults = true)
-        {
-            foreach (var clientTask in _clientTasks)
-            {
-                if (clientTask.Value.IsCompleted && _clientTasks.TryRemove(clientTask.Key, out var completedTask))
-                {
-                    if (logFaults && completedTask.IsFaulted)
-                    {
-                        // Reading Exception observes the fault before the task leaves the
-                        // active collection. Routine connection errors are handled inside
-                        // HandleClientAsync and never arrive here.
-                        Log.Error(completedTask.Exception, "A health check client task failed unexpectedly.");
-                    }
-                }
-            }
-        }
-
-        private async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)
-        {
-            using (client)
-            {
-                await using var stream = client.GetStream();
-                var reader = new BoundedLineReader(stream);
-                using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                requestTimeout.CancelAfter(_requestTimeout);
-                var requestToken = requestTimeout.Token;
-
-                try
-                {
-                    client.ReceiveTimeout = 5000;
-                    client.SendTimeout = 5000;
-
-                    string? requestLine;
-                    try
-                    {
-                        requestLine = await reader.ReadLineAsync(MaxRequestLineLength, requestToken);
-                    }
-                    catch (HttpLineTooLongException)
-                    {
-                        await WritePlainTextResponseAsync(stream, 414, "URI Too Long", "Request line is too long.", false, requestToken);
-                        return;
-                    }
-
-                    if (string.IsNullOrWhiteSpace(requestLine))
-                    {
-                        return;
-                    }
-
-                    Dictionary<string, string> headers;
-                    try
-                    {
-                        headers = await ReadHeadersAsync(reader, requestToken);
-                    }
-                    catch (HttpHeadersTooLargeException)
-                    {
-                        await WritePlainTextResponseAsync(stream, 431, "Request Header Fields Too Large", "Request headers are too large.", false, requestToken);
-                        return;
-                    }
-                    catch (MalformedHttpHeaderException)
-                    {
-                        await WritePlainTextResponseAsync(stream, 400, "Bad Request", "Malformed HTTP request headers.", false, requestToken);
-                        return;
-                    }
-                    if (!TryParseRequestLine(requestLine, out var method, out var target))
-                    {
-                        await WritePlainTextResponseAsync(stream, 400, "Bad Request", "Malformed HTTP request.", false, requestToken);
-                        return;
-                    }
-
-                    if (!TryExtractPath(target, out var path))
-                    {
-                        await WritePlainTextResponseAsync(stream, 400, "Bad Request", "Malformed request target.", false, requestToken);
-                        return;
-                    }
-
-                    var isHeadRequest = string.Equals(method, "HEAD", StringComparison.OrdinalIgnoreCase);
-                    if (!string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) && !isHeadRequest)
-                    {
-                        await WritePlainTextResponseAsync(
-                            stream,
-                            405,
-                            "Method Not Allowed",
-                            "Only GET and HEAD are supported.",
-                            false,
-                            requestToken,
-                            ("Allow", "GET, HEAD"));
-                        return;
-                    }
-
-                    if (!string.Equals(path, _options.Path, StringComparison.OrdinalIgnoreCase))
-                    {
-                        await WritePlainTextResponseAsync(stream, 404, "Not Found", "Not Found", isHeadRequest, requestToken);
-                        return;
-                    }
-
-                    if (!IsAuthorized(headers))
-                    {
-                        await WritePlainTextResponseAsync(
-                            stream,
-                            401,
-                            "Unauthorized",
-                            "Missing or invalid bearer token.",
-                            isHeadRequest,
-                            requestToken,
-                            ("WWW-Authenticate", "Bearer"));
-                        return;
-                    }
-
-                    var clientIdentifier = GetClientIdentifier(client);
-                    if (IsRateLimited(clientIdentifier, out var retryAfter))
-                    {
-                        await WriteJsonResponseAsync(
-                            stream,
-                            429,
-                            "Too Many Requests",
-                            new
-                            {
-                                status = "rate_limited",
-                                message = $"Wait {retryAfter} more seconds before polling {path} again.",
-                                retryAfterSeconds = retryAfter
-                            },
-                            isHeadRequest,
-                            requestToken,
-                            ("Retry-After", retryAfter.ToString(CultureInfo.InvariantCulture)));
-                        return;
-                    }
-
-                    var healthSnapshot = _discordConnectionHealth.CreateSnapshot(_discordClient);
-                    await WriteJsonResponseAsync(
-                        stream,
-                        healthSnapshot.IsHealthy ? 200 : 503,
-                        healthSnapshot.IsHealthy ? "OK" : "Service Unavailable",
-                        new
-                        {
-                            status = healthSnapshot.IsHealthy ? "ok" : "unhealthy",
-                            discordConnected = healthSnapshot.IsHealthy,
-                            message = healthSnapshot.StatusMessage,
-                            loginState = healthSnapshot.LoginState,
-                            connectionState = healthSnapshot.ConnectionState,
-                            lastReadyAtUtc = healthSnapshot.LastReadyAtUtc,
-                            lastDisconnectedAtUtc = healthSnapshot.LastDisconnectedAtUtc,
-                            unhealthySinceAtUtc = healthSnapshot.UnhealthySinceAtUtc,
-                            mostRecentDisconnectReason = healthSnapshot.MostRecentDisconnectReason
-                        },
-                        isHeadRequest,
-                        requestToken);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                }
-                catch (OperationCanceledException)
-                {
-                    Log.Debug("Health check client exceeded the {TimeoutSeconds}s request timeout", _requestTimeout.TotalSeconds);
-                    await TryWriteRequestTimeoutAsync(stream, cancellationToken);
-                }
-                catch (IOException)
-                {
-                }
-                catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
-                {
-                }
-                catch (Exception exception)
-                {
-                    Log.Error(exception, "Failed to process a health check request.");
-                }
-            }
-        }
-
-        private bool IsAuthorized(Dictionary<string, string> headers)
+        private bool IsAuthorized(HttpRequest request)
         {
             if (string.IsNullOrWhiteSpace(_options.BearerToken))
             {
                 return true;
             }
 
-            if (!headers.TryGetValue("Authorization", out var authorizationHeader)
-                || !authorizationHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            var authorizationHeader = request.Headers.Authorization.ToString();
+            if (!authorizationHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
@@ -439,206 +326,48 @@ namespace BeanBot.Services
             return CryptographicOperations.FixedTimeEquals(providedToken, expectedToken);
         }
 
-        private bool IsRateLimited(string clientIdentifier, out int retryAfterSeconds)
-            => _rateLimiter.IsRateLimited(clientIdentifier, out retryAfterSeconds);
-
-        private static async Task<Dictionary<string, string>> ReadHeadersAsync(BoundedLineReader reader, CancellationToken cancellationToken)
-        {
-            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var totalCharacters = 0;
-            var headerCount = 0;
-            while (true)
-            {
-                string? headerLine;
-                try
-                {
-                    headerLine = await reader.ReadLineAsync(MaxHeaderLineLength, cancellationToken);
-                }
-                catch (HttpLineTooLongException exception)
-                {
-                    throw new HttpHeadersTooLargeException("An HTTP header line exceeded the configured limit.", exception);
-                }
-
-                if (headerLine == null)
-                {
-                    throw new MalformedHttpHeaderException("HTTP headers ended before the terminating blank line.");
-                }
-
-                if (headerLine.Length == 0)
-                {
-                    return headers;
-                }
-
-                totalCharacters += headerLine.Length;
-                headerCount++;
-                if (headerCount > MaxHeaderCount || totalCharacters > MaxHeaderCharacters)
-                {
-                    throw new HttpHeadersTooLargeException("HTTP request headers exceeded the configured limit.");
-                }
-
-                var separatorIndex = headerLine.IndexOf(':');
-                if (separatorIndex <= 0)
-                {
-                    throw new MalformedHttpHeaderException("An HTTP header was missing its name or separator.");
-                }
-
-                var headerName = headerLine.Substring(0, separatorIndex).Trim();
-                var headerValue = headerLine.Substring(separatorIndex + 1).Trim();
-                headers[headerName] = headerValue;
-            }
-        }
-
-        private static async Task TryWriteRequestTimeoutAsync(NetworkStream stream, CancellationToken shutdownToken)
-        {
-            using var responseTimeout = CancellationTokenSource.CreateLinkedTokenSource(shutdownToken);
-            responseTimeout.CancelAfter(TimeSpan.FromSeconds(1));
-            try
-            {
-                await WritePlainTextResponseAsync(
-                    stream,
-                    408,
-                    "Request Timeout",
-                    "The health request timed out.",
-                    false,
-                    responseTimeout.Token);
-            }
-            catch (Exception exception) when (
-                exception is IOException ||
-                exception is ObjectDisposedException ||
-                exception is OperationCanceledException)
-            {
-            }
-        }
-
-        internal static bool TryParseRequestLine(
-            string requestLine,
-            [NotNullWhen(true)] out string? method,
-            [NotNullWhen(true)] out string? target)
-        {
-            method = null;
-            target = null;
-
-            var parts = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length != 3 ||
-                (!string.Equals(parts[2], "HTTP/1.1", StringComparison.OrdinalIgnoreCase) &&
-                 !string.Equals(parts[2], "HTTP/1.0", StringComparison.OrdinalIgnoreCase)))
-            {
-                return false;
-            }
-
-            method = parts[0];
-            target = parts[1];
-            return true;
-        }
-
-        internal static bool TryExtractPath(string? requestTarget, [NotNullWhen(true)] out string? path)
-        {
-            path = null;
-            if (requestTarget == null)
-            {
-                return false;
-            }
-
-            var encodedPath = requestTarget;
-            var queryIndex = encodedPath.IndexOf('?');
-            if (queryIndex >= 0)
-            {
-                encodedPath = encodedPath.Substring(0, queryIndex);
-            }
-
-            for (var index = 0; index < encodedPath.Length; index++)
-            {
-                if (encodedPath[index] != '%')
-                {
-                    continue;
-                }
-
-                if (index + 2 >= encodedPath.Length ||
-                    !Uri.IsHexDigit(encodedPath[index + 1]) ||
-                    !Uri.IsHexDigit(encodedPath[index + 2]))
-                {
-                    return false;
-                }
-
-                index += 2;
-            }
-
-            try
-            {
-                path = string.IsNullOrWhiteSpace(encodedPath)
-                    ? "/"
-                    : Uri.UnescapeDataString(encodedPath);
-                return true;
-            }
-            catch (UriFormatException)
-            {
-                return false;
-            }
-        }
-
-        private static string GetClientIdentifier(TcpClient client)
-        {
-            return (client.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "unknown";
-        }
-
         private static Task WritePlainTextResponseAsync(
-            NetworkStream stream,
+            HttpContext context,
             int statusCode,
-            string reasonPhrase,
             string body,
-            bool suppressBody,
-            CancellationToken cancellationToken,
-            params (string Name, string Value)[] extraHeaders)
+            bool suppressBody)
         {
-            return WriteResponseAsync(stream, statusCode, reasonPhrase, "text/plain; charset=utf-8", body, suppressBody, cancellationToken, extraHeaders);
+            return WriteResponseAsync(
+                context,
+                statusCode,
+                "text/plain; charset=utf-8",
+                Encoding.UTF8.GetBytes(body),
+                suppressBody);
         }
 
         private static Task WriteJsonResponseAsync(
-            NetworkStream stream,
+            HttpContext context,
             int statusCode,
-            string reasonPhrase,
             object payload,
-            bool suppressBody,
-            CancellationToken cancellationToken,
-            params (string Name, string Value)[] extraHeaders)
+            bool suppressBody)
         {
-            var body = JsonSerializer.Serialize(payload, JsonOptions);
-            return WriteResponseAsync(stream, statusCode, reasonPhrase, "application/json; charset=utf-8", body, suppressBody, cancellationToken, extraHeaders);
+            return WriteResponseAsync(
+                context,
+                statusCode,
+                "application/json; charset=utf-8",
+                JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions),
+                suppressBody);
         }
 
         private static async Task WriteResponseAsync(
-            NetworkStream stream,
+            HttpContext context,
             int statusCode,
-            string reasonPhrase,
             string contentType,
-            string body,
-            bool suppressBody,
-            CancellationToken cancellationToken,
-            params (string Name, string Value)[] extraHeaders)
+            byte[] body,
+            bool suppressBody)
         {
-            var bodyBytes = Encoding.UTF8.GetBytes(body ?? string.Empty);
-            var responseBuilder = new StringBuilder()
-                .Append("HTTP/1.1 ").Append(statusCode).Append(' ').Append(reasonPhrase).Append("\r\n")
-                .Append("Content-Type: ").Append(contentType).Append("\r\n")
-                .Append("Content-Length: ").Append(bodyBytes.Length.ToString(CultureInfo.InvariantCulture)).Append("\r\n")
-                .Append("Connection: close\r\n");
-
-            foreach (var header in extraHeaders)
+            context.Response.StatusCode = statusCode;
+            context.Response.ContentType = contentType;
+            context.Response.ContentLength = body.Length;
+            if (!suppressBody)
             {
-                responseBuilder.Append(header.Name).Append(": ").Append(header.Value).Append("\r\n");
+                await context.Response.Body.WriteAsync(body, context.RequestAborted);
             }
-
-            responseBuilder.Append("\r\n");
-
-            var headerBytes = Encoding.ASCII.GetBytes(responseBuilder.ToString());
-            await stream.WriteAsync(headerBytes.AsMemory(), cancellationToken);
-            if (!suppressBody && bodyBytes.Length > 0)
-            {
-                await stream.WriteAsync(bodyBytes.AsMemory(), cancellationToken);
-            }
-
-            await stream.FlushAsync(cancellationToken);
         }
     }
-
 }

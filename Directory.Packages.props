@@ -11,9 +11,6 @@
     <PackageVersion Include="Discord.Net.Webhook" Version="3.20.1" />
     <PackageVersion Include="Discord.Net.WebSocket" Version="3.20.1" />
     <PackageVersion Include="LQ.MemeApiDotNetWrapper" Version="1.5.1" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
-    <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.10" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="MongoDB.Bson" Version="2.30.0" />
     <PackageVersion Include="MongoDB.Driver" Version="2.30.0" />
