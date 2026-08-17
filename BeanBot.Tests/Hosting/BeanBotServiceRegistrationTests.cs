@@ -4,8 +4,10 @@ using BeanBot.Services;
 
 using Discord.WebSocket;
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 
 using Xunit;
 
@@ -17,11 +19,13 @@ public class BeanBotServiceRegistrationTests
     public void AddBeanBot_RegistersOneHostedServiceAndHostOwnedDependencies()
     {
         var services = new ServiceCollection();
+        var configuration = new ConfigurationManager();
 
-        services.AddBeanBot();
+        services.AddBeanBot(configuration);
 
         Assert.Single(services, descriptor => descriptor.ServiceType == typeof(IHostedService));
         AssertSingleton<BeanBotOptions>(services);
+        AssertSingleton<IValidateOptions<BeanBotSettings>>(services);
         AssertSingleton<IBeanBotRuntime>(services);
         AssertSingleton<IBeanBotApplication>(services);
         AssertSingleton<BeanBotHostedService>(services);

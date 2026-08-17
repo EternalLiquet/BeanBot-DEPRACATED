@@ -1,4 +1,5 @@
 using BeanBot.Hosting;
+using BeanBot.Configuration;
 using BeanBot.Util;
 
 using Microsoft.Extensions.DependencyInjection;
@@ -25,10 +26,11 @@ namespace BeanBot
                 DirectorySetup.MakeSureAllDirectoriesExist();
 
                 var builder = Host.CreateApplicationBuilder(args);
+                builder.Configuration.AddBeanBotConfiguration();
                 builder.Logging.ClearProviders();
                 builder.Services.Configure<HostOptions>(options =>
                     options.ShutdownTimeout = HostShutdownTimeout);
-                builder.Services.AddBeanBot();
+                builder.Services.AddBeanBot(builder.Configuration);
 
                 host = builder.Build();
                 LogHandler.CreateLoggerConfiguration(
