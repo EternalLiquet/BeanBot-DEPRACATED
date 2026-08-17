@@ -17,7 +17,7 @@ BEANBOT_HATOETE_URL=
 BEANBOT_YOSHIMARU_URL=
 ```
 
-For backwards compatibility, the legacy variable names (`botToken`, `mongoConnectionString`, and so on) are still accepted, but the `BEANBOT_*` names are the intended format. Real environment variables take precedence over values from `.env`.
+Configuration is bound through the .NET configuration and Options pipeline and validated when the host starts. Missing or malformed settings stop startup with messages that name the affected variable without printing its value. For backwards compatibility, the legacy variable names (`botToken`, `mongoConnectionString`, and so on) are still accepted, but the `BEANBOT_*` names are the intended format. Canonical names take precedence over legacy aliases, and real environment variables take precedence over values from `.env`.
 
 ### Discord Gateway Intents
 

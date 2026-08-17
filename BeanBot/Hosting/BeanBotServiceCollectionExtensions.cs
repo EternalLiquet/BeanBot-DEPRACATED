@@ -8,8 +8,10 @@ using Discord;
 using Discord.Commands;
 using Discord.WebSocket;
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 
 using MongoDB.Driver;
 
@@ -20,9 +22,12 @@ namespace BeanBot.Hosting
 {
     internal static class BeanBotServiceCollectionExtensions
     {
-        internal static IServiceCollection AddBeanBot(this IServiceCollection services)
+        internal static IServiceCollection AddBeanBot(
+            this IServiceCollection services,
+            IConfiguration configuration)
         {
             ArgumentNullException.ThrowIfNull(services);
+            ArgumentNullException.ThrowIfNull(configuration);
 
             // Register the client as an existing singleton so the host container does not
             // dispose it automatically. BeanBotApplication owns its conditional teardown
@@ -30,7 +35,12 @@ namespace BeanBot.Hosting
             var discordClient = new DiscordSocketClient(DiscordSocketConfiguration.Create());
             services.AddSingleton(discordClient);
 
-            services.AddSingleton(_ => BeanBotOptionsLoader.LoadFromEnvironment());
+            services.AddSingleton<IValidateOptions<BeanBotSettings>, BeanBotSettingsValidator>();
+            services.AddOptions<BeanBotSettings>()
+                .Bind(configuration.GetSection(BeanBotSettings.SectionName))
+                .ValidateOnStart();
+            services.AddSingleton(provider => BeanBotOptionsFactory.Create(
+                provider.GetRequiredService<IOptions<BeanBotSettings>>().Value));
             services.AddSingleton(_ => new CommandService(new CommandServiceConfig
             {
                 LogLevel = LogSeverity.Verbose,
