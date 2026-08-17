@@ -133,6 +133,8 @@ def validate_policy_and_scripts() -> None:
     verifier = (REPOSITORY_ROOT / "scripts" / "verify.sh").read_text(encoding="utf-8")
     if 'run_stage "Test verification orchestration" scripts/test-verification.sh' not in verifier:
         fail("scripts/verify.sh must run the orchestration self-test")
+    if "dotnet format BeanBot.sln --verify-no-changes --no-restore --severity warn" not in verifier:
+        fail("repository verification must enforce .NET formatting and analyzer conventions")
     if "--vulnerable --include-transitive" not in verifier or "--format json --output-version 1" not in verifier:
         fail("full verification must request a machine-readable solution vulnerability report")
     if "scripts/check-vulnerable-packages.py" not in verifier:

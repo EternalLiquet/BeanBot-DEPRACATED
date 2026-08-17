@@ -46,6 +46,8 @@ self_test_workflow() {
 
 build_and_test() {
   run_stage "Restore .NET dependencies" dotnet restore BeanBot.sln
+  run_stage "Verify .NET formatting and analyzers" \
+    dotnet format BeanBot.sln --verify-no-changes --no-restore --severity warn
   run_stage "Build Release" dotnet build BeanBot.sln --configuration Release --no-restore
   run_stage "Run Release tests" dotnet test BeanBot.sln --configuration Release --no-build
 }

@@ -81,6 +81,7 @@ fast_log="$temporary_directory/fast.log"
     BEANBOT_VERIFY_SKIP_SELF_TEST=1 "$verify_script" fast
 )
 assert_contains "$repository_root|dotnet|restore BeanBot.sln" "$fast_log"
+assert_contains "$repository_root|dotnet|format BeanBot.sln --verify-no-changes --no-restore --severity warn" "$fast_log"
 assert_contains "$repository_root|dotnet|test BeanBot.sln --configuration Release --no-build" "$fast_log"
 assert_not_contains "|dotnet|list " "$fast_log"
 assert_not_contains "|docker|" "$fast_log"
@@ -96,6 +97,7 @@ assert_contains "$repository_root|dotnet|list BeanBot.sln package --vulnerable -
 assert_contains "$repository_root|docker|build --tag beanbot-verification:local ." "$full_log"
 assert_count 1 "|python3|scripts/validate-workflow.py" "$full_log"
 assert_count 1 "|dotnet|restore BeanBot.sln" "$full_log"
+assert_count 1 "|dotnet|format BeanBot.sln --verify-no-changes --no-restore --severity warn" "$full_log"
 assert_count 1 "|dotnet|build BeanBot.sln --configuration Release --no-restore" "$full_log"
 assert_count 1 "|dotnet|test BeanBot.sln --configuration Release --no-build" "$full_log"
 assert_count 1 "|dotnet|list BeanBot.sln package --vulnerable --include-transitive --format json --output-version 1" "$full_log"
@@ -108,6 +110,17 @@ if PATH="$stub_directory:$PATH" BEANBOT_VERIFY_TEST_LOG="$invalid_log" \
   exit 1
 fi
 assert_contains "Unknown verification mode: unsupported" "$temporary_directory/invalid.out"
+
+format_failure_log="$temporary_directory/format-failure.log"
+if PATH="$stub_directory:$PATH" BEANBOT_VERIFY_TEST_LOG="$format_failure_log" \
+  BEANBOT_VERIFY_TEST_FAIL="dotnet format BeanBot.sln" BEANBOT_VERIFY_SKIP_SELF_TEST=1 \
+  "$verify_script" fast; then
+  echo "Injected formatter failure unexpectedly succeeded" >&2
+  exit 1
+fi
+assert_contains "|dotnet|format BeanBot.sln --verify-no-changes --no-restore --severity warn" "$format_failure_log"
+assert_not_contains "|dotnet|build " "$format_failure_log"
+assert_not_contains "|dotnet|test " "$format_failure_log"
 
 failure_log="$temporary_directory/failure.log"
 if PATH="$stub_directory:$PATH" BEANBOT_VERIFY_TEST_LOG="$failure_log" \
