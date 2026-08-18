@@ -150,10 +150,10 @@ namespace BeanBot.Services
                 }
 
                 var roleSetting = await GetCachedRoleSettingAsync(message.Id, cancellationToken);
-                var pair = roleSetting?.roleEmotePair?
+                var pair = roleSetting?.RoleEmotePairs?
                     .FirstOrDefault(candidate =>
-                        candidate.emojiId == customEmote.Id.ToString(CultureInfo.InvariantCulture));
-                if (pair == null || !ulong.TryParse(pair.roleId, out var roleId))
+                        candidate.EmojiId == customEmote.Id.ToString(CultureInfo.InvariantCulture));
+                if (pair == null || !ulong.TryParse(pair.RoleId, out var roleId))
                 {
                     return;
                 }
@@ -201,9 +201,9 @@ namespace BeanBot.Services
             }
 
             var roleSetting = await _roleReactRepository.GetRoleSetting(messageId, cancellationToken);
-            if (roleSetting != null && !string.IsNullOrWhiteSpace(roleSetting.messageId))
+            if (roleSetting != null && !string.IsNullOrWhiteSpace(roleSetting.MessageId))
             {
-                _roleSettings[roleSetting.messageId] = roleSetting;
+                _roleSettings[roleSetting.MessageId] = roleSetting;
             }
 
             return roleSetting;
@@ -226,9 +226,9 @@ namespace BeanBot.Services
 
                 foreach (var setting in await _roleReactRepository.GetRecentRoleSettings(cancellationToken))
                 {
-                    if (!string.IsNullOrWhiteSpace(setting.messageId))
+                    if (!string.IsNullOrWhiteSpace(setting.MessageId))
                     {
-                        _roleSettings[setting.messageId] = setting;
+                        _roleSettings[setting.MessageId] = setting;
                     }
                 }
                 _cacheLoaded = true;
@@ -278,7 +278,7 @@ namespace BeanBot.Services
             CancellationToken cancellationToken)
         {
             await _roleReactRepository.InsertNewRoleSettings(settings, cancellationToken);
-            _roleSettings[settings.messageId] = settings;
+            _roleSettings[settings.MessageId] = settings;
         }
 
         public void Dispose()
