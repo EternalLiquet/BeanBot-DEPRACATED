@@ -1,8 +1,9 @@
 ﻿using BeanBot.Entities;
 using BeanBot.Configuration;
+using BeanBot.Util;
 using CsvHelper;
 using Discord.WebSocket;
-using Serilog;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Globalization;
 using System.IO;
@@ -17,17 +18,22 @@ namespace BeanBot.EventHandlers
     {
         private readonly DiscordSocketClient _discordClient;
         private readonly ulong _generalChannelId;
+        private readonly ILogger<PunHandler> _logger;
         private readonly CancellationTokenSource _tokenSource = new();
         private Task? _runner;
         private int _disposed;
 
         private static readonly TimeSpan PostTimeLocal = new TimeSpan(16, 20, 0);
 
-        public PunHandler(DiscordSocketClient discordSocketClient, BeanBotOptions options)
+        public PunHandler(
+            DiscordSocketClient discordSocketClient,
+            BeanBotOptions options,
+            ILogger<PunHandler> logger)
         {
-            Log.Information("Initializing Daily Pun Posting Service");
             _discordClient = discordSocketClient ?? throw new ArgumentNullException(nameof(discordSocketClient));
             _generalChannelId = (options ?? throw new ArgumentNullException(nameof(options))).GeneralChannelId;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            BeanBotLog.PunServiceInitializing(_logger);
         }
 
         public void Start()
@@ -58,10 +64,19 @@ namespace BeanBot.EventHandlers
                     }
 
                     var chicagoNow = GetChicagoNow(timezone);
-                    Log.Information("Next pun scheduled for {NextLocal} Chicago ({NextUtc} UTC). Now: {NowLocal} Chicago",
-                        TimeZoneInfo.ConvertTime(nextRunUtc, timezone).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
-                        nextRunUtc.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
-                        chicagoNow.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
+                    if (_logger.IsEnabled(LogLevel.Information))
+                    {
+                        var nextLocal = TimeZoneInfo.ConvertTime(nextRunUtc, timezone)
+                            .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                        var nextUtc = nextRunUtc.UtcDateTime
+                            .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                        var nowLocal = chicagoNow.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                        BeanBotLog.PunScheduled(
+                            _logger,
+                            nextLocal,
+                            nextUtc,
+                            nowLocal);
+                    }
 
                     await Task.Delay(delay, token);
 
@@ -69,11 +84,11 @@ namespace BeanBot.EventHandlers
                 }
                 catch (OperationCanceledException)
                 {
-                    Log.Warning("Shutting down pun service");
+                    BeanBotLog.PunServiceShuttingDown(_logger);
                 }
                 catch (Exception ex)
                 {
-                    Log.Error(ex, "Error in PunHandler loop; retrying in 30s");
+                    BeanBotLog.PunLoopFailed(_logger, ex);
                     await Task.Delay(TimeSpan.FromSeconds(30), token);
                 }
             }
@@ -82,12 +97,12 @@ namespace BeanBot.EventHandlers
         private async Task PostDailyAsync(TimeZoneInfo timezone, CancellationToken token)
         {
             var chicagoNow = GetChicagoNow(timezone);
-            Log.Information("Posting daily pun at {LocalTime} Chicago", chicagoNow);
+            BeanBotLog.PunPosting(_logger, chicagoNow);
 
             var channel = _discordClient.GetChannel(_generalChannelId) as SocketTextChannel;
             if (channel is null)
             {
-                Log.Error("Could not find general channel with ID {ChannelId} to post daily pun", _generalChannelId);
+                BeanBotLog.PunChannelMissing(_logger, _generalChannelId);
                 return;
             }
 
@@ -104,7 +119,7 @@ namespace BeanBot.EventHandlers
 
                 if (puns.Count == 0)
                 {
-                    Log.Error("No puns found in puns.csv");
+                    BeanBotLog.PunFileEmpty(_logger);
                     return;
                 }
 
@@ -115,11 +130,11 @@ namespace BeanBot.EventHandlers
             }
             catch (FileNotFoundException)
             {
-                Log.Error("puns.csv file not found; cannot post daily pun");
+                BeanBotLog.PunFileMissing(_logger);
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Error occurred while posting daily pun");
+                BeanBotLog.PunPostingFailed(_logger, ex);
             }
         }
 

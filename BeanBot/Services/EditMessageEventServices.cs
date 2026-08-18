@@ -1,6 +1,7 @@
+using BeanBot.Util;
 using Discord;
 using Discord.WebSocket;
-using Serilog;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Buffers;
 using System.Linq;
@@ -13,10 +14,14 @@ namespace BeanBot.Services
         private const string EditWarning = "Do not edit your 8ball requests in my presence, mortal.";
         private static readonly SearchValues<char> CommandSeparators = SearchValues.Create(" \t\r\n");
         private readonly DiscordSocketClient _discordClient;
+        private readonly ILogger<EditMessageEventServices> _logger;
 
-        public EditMessageEventServices(DiscordSocketClient discordClient)
+        public EditMessageEventServices(
+            DiscordSocketClient discordClient,
+            ILogger<EditMessageEventServices> logger)
         {
             _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public async Task HandleUpdate(
@@ -41,7 +46,7 @@ namespace BeanBot.Services
 
             if (botResponse == null)
             {
-                Log.Debug("Could not find a cached fortune response for edited message {MessageId}", newMessage.Id);
+                BeanBotLog.FortuneResponseMissing(_logger, newMessage.Id);
                 return;
             }
 
@@ -82,7 +87,7 @@ namespace BeanBot.Services
                    string.Equals(command, "fortune", StringComparison.OrdinalIgnoreCase);
         }
 
-        private static async Task ReplaceResponseAsync(SocketUserMessage botResponse)
+        private async Task ReplaceResponseAsync(SocketUserMessage botResponse)
         {
             const int maxAttempts = 3;
             for (var attempt = 1; attempt <= maxAttempts; attempt++)
@@ -94,12 +99,12 @@ namespace BeanBot.Services
                 }
                 catch (Exception exception) when (attempt < maxAttempts)
                 {
-                    Log.Debug(exception, "Attempt {Attempt} to replace an edited fortune response failed", attempt);
+                    BeanBotLog.FortuneResponseReplaceAttemptFailed(_logger, attempt, exception);
                     await Task.Delay(TimeSpan.FromMilliseconds(100 * attempt));
                 }
                 catch (Exception exception)
                 {
-                    Log.Warning(exception, "Could not replace the response to edited fortune message {MessageId}", botResponse.Id);
+                    BeanBotLog.FortuneResponseReplaceFailed(_logger, botResponse.Id, exception);
                 }
             }
         }

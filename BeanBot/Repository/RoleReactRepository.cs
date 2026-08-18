@@ -1,7 +1,8 @@
 ﻿using BeanBot.Entities;
+using BeanBot.Util;
 using Discord;
+using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
-using Serilog;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -12,9 +13,13 @@ namespace BeanBot.Repository
     public class RoleReactRepository
     {
         private readonly IMongoCollection<RoleSettings> _roleSettings;
+        private readonly ILogger<RoleReactRepository> _logger;
 
-        public RoleReactRepository(IMongoDatabase database)
+        public RoleReactRepository(
+            IMongoDatabase database,
+            ILogger<RoleReactRepository> logger)
         {
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _roleSettings = (database ?? throw new ArgumentNullException(nameof(database)))
                 .GetCollection<RoleSettings>("roleSettings");
         }
@@ -25,11 +30,11 @@ namespace BeanBot.Repository
             {
                 roleSettings.lastAccessed = DateTime.UtcNow;
                 await _roleSettings.InsertOneAsync(roleSettings);
-                Log.Information("Reaction-role settings successfully created for message {MessageId}", roleSettings.messageId);
+                BeanBotLog.ReactionRoleSettingsCreated(_logger, roleSettings.messageId);
             }
             catch (Exception e)
             {
-                Log.Error(e, "Error inserting reaction-role settings into the database");
+                BeanBotLog.ReactionRoleInsertFailed(_logger, e);
                 throw;
             }
         }
@@ -44,7 +49,7 @@ namespace BeanBot.Repository
             }
             catch (Exception e)
             {
-                Log.Error(e, "Error retrieving recent reaction-role settings from the database");
+                BeanBotLog.RecentReactionRoleReadFailed(_logger, e);
                 throw;
             }
         }
@@ -59,7 +64,7 @@ namespace BeanBot.Repository
             }
             catch (Exception e)
             {
-                Log.Error(e, "Error retrieving reaction-role settings for message {MessageId}", message.Id);
+                BeanBotLog.ReactionRoleReadFailed(_logger, message.Id, e);
                 return null;
             }
         }

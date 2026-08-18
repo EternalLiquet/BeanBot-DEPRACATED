@@ -1,7 +1,11 @@
 ﻿using Discord;
 using Discord.Commands;
 using Discord.WebSocket;
+
+using Microsoft.Extensions.Logging;
+
 using Serilog;
+using Serilog.Events;
 
 using System.Globalization;
 using System.IO;
@@ -9,68 +13,100 @@ using System.Threading.Tasks;
 
 namespace BeanBot.Util
 {
-    public static class LogHandler
+    public sealed class LogHandler
     {
-        internal static void CreateLoggerConfiguration(IOwnerErrorNotifier ownerErrorNotifier)
+        private readonly ILogger<LogHandler> _logger;
+
+        public LogHandler(ILogger<LogHandler> logger)
         {
-            Log.Logger = new LoggerConfiguration()
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        }
+
+        internal static Serilog.ILogger CreateBootstrapLogger()
+            => new LoggerConfiguration()
                 .MinimumLevel.Verbose()
+                .WriteTo.Console(formatProvider: CultureInfo.InvariantCulture)
+                .CreateBootstrapLogger();
+
+        internal static void ConfigureLogger(
+            LoggerConfiguration loggerConfiguration,
+            IOwnerErrorNotifier ownerErrorNotifier)
+        {
+            ArgumentNullException.ThrowIfNull(loggerConfiguration);
+            ArgumentNullException.ThrowIfNull(ownerErrorNotifier);
+
+            loggerConfiguration
+                .MinimumLevel.Verbose()
+                .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+                .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
+                .MinimumLevel.Override("System", LogEventLevel.Warning)
                 .WriteTo.Console(formatProvider: CultureInfo.InvariantCulture)
                 .WriteTo.Async(a => a.File(
                     Path.Combine(DirectorySetup.botBaseDirectory, "Logs", "BeanBotLogs.txt"),
                     formatProvider: CultureInfo.InvariantCulture,
                     rollingInterval: RollingInterval.Day))
-                .WriteTo.Sink(new DiscordOwnerErrorSink(ownerErrorNotifier))
-                .CreateLogger();
-            Log.Information("Logger Configuration complete");
+                .WriteTo.Sink(new DiscordOwnerErrorSink(ownerErrorNotifier));
         }
 
-        public static Task LogMessages(LogMessage messages)
+        public Task LogMessages(LogMessage messages)
         {
             var formattedMessage = string.IsNullOrWhiteSpace(messages.Source)
                 ? messages.Message ?? messages.ToString()
                 : $"Discord:\t{messages.Source}\t{messages.Message}";
 
-            switch (messages.Severity)
+            var severity = messages.Severity;
+            var logLevel = severity switch
             {
-                case LogSeverity.Critical:
-                    Log.Fatal(messages.Exception, "{DiscordMessage}", formattedMessage);
-                    break;
-                case LogSeverity.Error:
-                    Log.Error(messages.Exception, "{DiscordMessage}", formattedMessage);
-                    break;
-                case LogSeverity.Warning:
-                    Log.Warning(messages.Exception, "{DiscordMessage}", formattedMessage);
-                    break;
-                case LogSeverity.Info:
-                    Log.Information(messages.Exception, "{DiscordMessage}", formattedMessage);
-                    break;
-                case LogSeverity.Verbose:
-                    Log.Verbose(messages.Exception, "{DiscordMessage}", formattedMessage);
-                    break;
-                case LogSeverity.Debug:
-                    Log.Debug(messages.Exception, "{DiscordMessage}", formattedMessage);
-                    break;
-                default:
-                    Log.Information(messages.Exception, "Discord log ({Severity}): {DiscordMessage}", messages.Severity, formattedMessage);
-                    break;
+                LogSeverity.Critical => LogLevel.Critical,
+                LogSeverity.Error => LogLevel.Error,
+                LogSeverity.Warning => LogLevel.Warning,
+                LogSeverity.Info => LogLevel.Information,
+                LogSeverity.Verbose => LogLevel.Trace,
+                LogSeverity.Debug => LogLevel.Debug,
+                _ => LogLevel.None
+            };
+            if (logLevel == LogLevel.None)
+            {
+                if (_logger.IsEnabled(LogLevel.Information))
+                {
+                    BeanBotLog.DiscordMessageFallback(
+                        _logger,
+                        severity,
+                        formattedMessage,
+                        messages.Exception);
+                }
+            }
+            else
+            {
+                BeanBotLog.DiscordMessage(
+                    _logger,
+                    logLevel,
+                    formattedMessage,
+                    messages.Exception);
             }
 
             return Task.CompletedTask;
         }
 
-        public static Task LogNewMember(SocketGuildUser newUser)
+        public Task LogNewMember(SocketGuildUser newUser)
         {
-            Log.Information("Discord user {Username} ({UserId}) joined {Guild}", newUser.Username, newUser.Id, newUser.Guild);
+            BeanBotLog.DiscordUserJoined(
+                _logger,
+                newUser.Username,
+                newUser.Id,
+                newUser.Guild);
             return Task.CompletedTask;
         }
 
-        public static Task LogCommands(Optional<CommandInfo> command, ICommandContext context, IResult result)
+        public Task LogCommands(Optional<CommandInfo> command, ICommandContext context, IResult result)
         {
+            ArgumentNullException.ThrowIfNull(context);
+            ArgumentNullException.ThrowIfNull(result);
+
             var commandName = command.IsSpecified ? command.Value.Name : "Unspecified Command";
             if (result.IsSuccess)
             {
-                Log.Information("Discord command {CommandName} was executed", commandName);
+                BeanBotLog.DiscordCommandExecuted(_logger, commandName);
             }
             else
             {
@@ -82,21 +118,19 @@ namespace BeanBot.Util
                     result.Error == CommandError.UnmetPrecondition;
                 if (isExpectedUserError)
                 {
-                    Log.Warning(
-                        "Discord command {CommandName} was rejected with {Error}: {Reason}. Input: {Input}",
+                    BeanBotLog.DiscordCommandRejected(
+                        _logger,
                         commandName,
                         result.Error,
-                        result.ErrorReason,
-                        context.Message);
+                        result.ErrorReason);
                 }
                 else
                 {
-                    Log.Error(
-                        "Discord command {CommandName} failed with {Error}: {Reason}. Input: {Input}",
+                    BeanBotLog.DiscordCommandFailed(
+                        _logger,
                         commandName,
                         result.Error,
-                        result.ErrorReason,
-                        context.Message);
+                        result.ErrorReason);
                 }
             }
             return Task.CompletedTask;

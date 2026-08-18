@@ -2,6 +2,7 @@ using BeanBot.Services;
 
 using Discord;
 using Discord.WebSocket;
+using Microsoft.Extensions.Logging.Abstractions;
 
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -180,8 +181,16 @@ public class DiscordPaginatorServiceTests
         var recorder = (ReactionRemovalMessageProxy)message;
         var control = new Emoji("▶");
 
-        await DiscordPaginatorService.TryRemoveUserReactionAsync(message, control, 42);
-        await DiscordPaginatorService.TryRemoveUserReactionAsync(message, control, 42);
+        await DiscordPaginatorService.TryRemoveUserReactionAsync(
+            message,
+            control,
+            42,
+            NullLogger<DiscordPaginatorService>.Instance);
+        await DiscordPaginatorService.TryRemoveUserReactionAsync(
+            message,
+            control,
+            42,
+            NullLogger<DiscordPaginatorService>.Instance);
 
         Assert.Equal(new ulong[] { 42, 42 }, recorder.RemovedUserIds);
         Assert.All(recorder.RemovedEmotes, emote => Assert.Equal(control, emote));
@@ -207,7 +216,9 @@ public class DiscordPaginatorServiceTests
     public void Dispose_DisposesOwnedSlotSemaphore()
     {
         using var client = new DiscordSocketClient();
-        var paginator = new DiscordPaginatorService(client);
+        var paginator = new DiscordPaginatorService(
+            client,
+            NullLogger<DiscordPaginatorService>.Instance);
         var slotsField = typeof(DiscordPaginatorService).GetField(
             "_availableSlots",
             BindingFlags.Instance | BindingFlags.NonPublic);

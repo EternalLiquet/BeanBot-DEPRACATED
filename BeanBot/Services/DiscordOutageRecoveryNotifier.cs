@@ -1,6 +1,6 @@
 using BeanBot.Util;
 
-using Serilog;
+using Microsoft.Extensions.Logging;
 
 using System;
 using System.Globalization;
@@ -19,16 +19,19 @@ namespace BeanBot.Services
         private readonly IOwnerAlertDelivery _ownerAlertDelivery;
         private readonly Func<int, TimeSpan> _retryDelay;
         private readonly TimeSpan _deliveryTimeout;
+        private readonly ILogger<DiscordOutageRecoveryNotifier> _logger;
         private readonly SemaphoreSlim _notificationAccess = new(1, 1);
 
         public DiscordOutageRecoveryNotifier(
             IDiscordOutageStore outageStore,
             IOwnerAlertDelivery ownerAlertDelivery,
+            ILogger<DiscordOutageRecoveryNotifier> logger,
             Func<int, TimeSpan>? retryDelay = null,
             TimeSpan? deliveryTimeout = null)
         {
             _outageStore = outageStore ?? throw new ArgumentNullException(nameof(outageStore));
             _ownerAlertDelivery = ownerAlertDelivery ?? throw new ArgumentNullException(nameof(ownerAlertDelivery));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _retryDelay = retryDelay ?? (attempt => TimeSpan.FromSeconds(attempt));
             _deliveryTimeout = deliveryTimeout ?? DefaultDeliveryTimeout;
         }
@@ -46,23 +49,23 @@ namespace BeanBot.Services
                     return;
                 }
 
-                Log.Information(
-                    "Attempting Discord outage recovery notification. DisconnectedAtUtc={DisconnectedAtUtc}, ProcessRestartRequested={ProcessRestartRequested}",
+                BeanBotLog.OutageNotificationAttempting(
+                    _logger,
                     outage.DisconnectedAtUtc,
                     outage.ProcessRestartRequested);
 
                 var recoveryMessage = FormatRecoveryMessage(outage, recoveredAtUtc);
                 if (!await DeliverWithRetryAsync(recoveryMessage, cancellationToken))
                 {
-                    Log.Error(
-                        "Discord outage recovery notification failed after {DeliveryAttempts} attempts; persisted outage retained. DisconnectedAtUtc={DisconnectedAtUtc}",
+                    BeanBotLog.OutageNotificationFailed(
+                        _logger,
                         MaximumDeliveryAttempts,
                         outage.DisconnectedAtUtc);
                     return;
                 }
 
-                Log.Information(
-                    "Discord outage recovery notification delivered. DisconnectedAtUtc={DisconnectedAtUtc}",
+                BeanBotLog.OutageNotificationDelivered(
+                    _logger,
                     outage.DisconnectedAtUtc);
                 await _outageStore.ClearAsync(cancellationToken);
             }
@@ -131,11 +134,11 @@ namespace BeanBot.Services
                 }
                 catch (Exception exception)
                 {
-                    Log.Warning(
-                        exception,
-                        "Discord outage recovery notification delivery attempt failed. DeliveryAttempt={DeliveryAttempt}, MaximumDeliveryAttempts={MaximumDeliveryAttempts}",
+                    BeanBotLog.OutageNotificationDeliveryFailed(
+                        _logger,
                         attempt,
-                        MaximumDeliveryAttempts);
+                        MaximumDeliveryAttempts,
+                        exception);
 
                     if (attempt < MaximumDeliveryAttempts)
                     {

@@ -1,4 +1,5 @@
-using Serilog;
+using BeanBot.Util;
+using Microsoft.Extensions.Logging;
 
 using System;
 using System.Threading;
@@ -27,12 +28,16 @@ namespace BeanBot.Hosting
     internal sealed class BeanBotApplication : IBeanBotApplication
     {
         private readonly IBeanBotRuntime _runtime;
+        private readonly ILogger<BeanBotApplication> _logger;
         private int _startRequested;
         private int _stopRequested;
 
-        public BeanBotApplication(IBeanBotRuntime runtime)
+        public BeanBotApplication(
+            IBeanBotRuntime runtime,
+            ILogger<BeanBotApplication> logger)
         {
             _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public async Task StartAsync(CancellationToken cancellationToken)
@@ -65,8 +70,7 @@ namespace BeanBot.Hosting
             await _runtime.FlushOwnerAlertsAsync();
             if (_runtime.HasUnfinishedDiscordStartupOperation)
             {
-                Log.Warning(
-                    "Skipping Discord stop/logout and client disposal because a startup lifecycle operation is still running; process exit will reclaim it");
+                BeanBotLog.DiscordStopSkipped(_logger);
             }
             else
             {

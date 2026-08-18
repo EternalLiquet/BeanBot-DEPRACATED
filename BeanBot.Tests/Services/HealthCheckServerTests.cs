@@ -11,6 +11,7 @@ using System.Text.Json;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
+using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
 
@@ -221,7 +222,10 @@ public class HealthCheckServerTests
             0,
             null,
             TimeSpan.FromSeconds(90));
-        await using var server = new HealthCheckServer(options, () => UnhealthySnapshot);
+        await using var server = new HealthCheckServer(
+            options,
+            () => UnhealthySnapshot,
+            NullLogger<HealthCheckServer>.Instance);
 
         await server.StartAsync(CancellationToken.None);
 
@@ -338,6 +342,7 @@ public class HealthCheckServerTests
         return new HealthCheckServer(
             options,
             createSnapshot,
+            NullLogger<HealthCheckServer>.Instance,
             requestHeadersTimeout,
             maximumConcurrentClients: 2,
             maximumTrackedRateLimitClients: 10);

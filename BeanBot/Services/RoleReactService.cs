@@ -1,8 +1,9 @@
 using BeanBot.Entities;
 using BeanBot.Repository;
+using BeanBot.Util;
 using Discord;
 using Discord.WebSocket;
-using Serilog;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -25,24 +26,30 @@ namespace BeanBot.Services
         private readonly TimeSpan _shutdownDrainTimeout;
         private readonly TaskCompletionSource _disposeCompletion = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ILogger<RoleReactService> _logger;
         private volatile bool _cacheLoaded;
         private bool _stopping;
         private int _disposeStarted;
 
-        public RoleReactService(RoleReactRepository roleReactRepository, DiscordSocketClient? client = null)
-            : this(roleReactRepository, client, DefaultShutdownDrainTimeout)
+        public RoleReactService(
+            RoleReactRepository roleReactRepository,
+            ILogger<RoleReactService> logger,
+            DiscordSocketClient? client = null)
+            : this(roleReactRepository, client, DefaultShutdownDrainTimeout, logger)
         {
         }
 
         internal RoleReactService(
             RoleReactRepository roleReactRepository,
             DiscordSocketClient? client,
-            TimeSpan shutdownDrainTimeout)
+            TimeSpan shutdownDrainTimeout,
+            ILogger<RoleReactService> logger)
         {
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(shutdownDrainTimeout, TimeSpan.Zero);
             _roleReactRepository = roleReactRepository ?? throw new ArgumentNullException(nameof(roleReactRepository));
             _client = client;
             _shutdownDrainTimeout = shutdownDrainTimeout;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public Task HandleReact(Cacheable<IUserMessage, ulong> message, Cacheable<IMessageChannel, ulong> channel, SocketReaction reaction)
@@ -144,7 +151,11 @@ namespace BeanBot.Services
             }
             catch (Exception exception)
             {
-                Log.Error(exception, "Failed to {Action} a reaction role for message {MessageId}", addRole ? "add" : "remove", message.Id);
+                BeanBotLog.ReactionRoleActionFailed(
+                    _logger,
+                    addRole ? "add" : "remove",
+                    message.Id,
+                    exception);
             }
         }
 
@@ -243,16 +254,12 @@ namespace BeanBot.Services
                     }
                     catch (TimeoutException)
                     {
-                        Log.Warning(
-                            "Timed out draining {InFlightReactionHandlerCount} reaction-role handler(s); leaving the cache lock for process exit",
-                            inFlightOperations.Length);
+                        BeanBotLog.ReactionRoleDrainTimedOut(_logger, inFlightOperations.Length);
                         return;
                     }
                     catch (Exception exception)
                     {
-                        Log.Warning(
-                            exception,
-                            "A reaction-role handler failed while shutdown was draining in-flight work");
+                        BeanBotLog.ReactionRoleShutdownOperationFailed(_logger, exception);
                     }
                 }
 

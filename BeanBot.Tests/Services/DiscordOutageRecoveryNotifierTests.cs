@@ -1,5 +1,6 @@
 using BeanBot.Services;
 using BeanBot.Util;
+using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
 
@@ -83,7 +84,11 @@ public class DiscordOutageRecoveryNotifierTests
     private static DiscordOutageRecoveryNotifier CreateNotifier(
         InMemoryOutageStore store,
         RecordingDelivery delivery)
-        => new(store, delivery, _ => TimeSpan.Zero);
+        => new(
+            store,
+            delivery,
+            NullLogger<DiscordOutageRecoveryNotifier>.Instance,
+            _ => TimeSpan.Zero);
 
     private static DiscordOutage CreateOutage()
         => new()

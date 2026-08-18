@@ -10,10 +10,12 @@ namespace BeanBot.EventHandlers
         private readonly EditMessageEventServices _editMessageEventService;
         private bool _initialized;
 
-        public EditMessageHandler(DiscordSocketClient discordClient)
+        public EditMessageHandler(
+            DiscordSocketClient discordClient,
+            EditMessageEventServices editMessageEventService)
         {
             _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
-            _editMessageEventService = new EditMessageEventServices(_discordClient);
+            _editMessageEventService = editMessageEventService ?? throw new ArgumentNullException(nameof(editMessageEventService));
         }
 
         public void InitializeEventListener()

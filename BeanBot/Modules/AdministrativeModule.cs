@@ -1,10 +1,11 @@
 using BeanBot.Attributes;
 using BeanBot.Entities;
 using BeanBot.Services;
+using BeanBot.Util;
 using Discord;
 using Discord.Commands;
 using Discord.WebSocket;
-using Serilog;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -33,15 +34,18 @@ namespace BeanBot.Modules
         private readonly RoleReactService _roleReactService;
         private readonly DiscordMessageCleanupService _messageCleanupService;
         private readonly DiscordMessageWaiter _messageWaiter;
+        private readonly ILogger<AdministrativeModule> _logger;
 
         public AdministrativeModule(
             RoleReactService roleReactService,
             DiscordMessageCleanupService messageCleanupService,
-            DiscordMessageWaiter messageWaiter)
+            DiscordMessageWaiter messageWaiter,
+            ILogger<AdministrativeModule> logger)
         {
             _roleReactService = roleReactService ?? throw new ArgumentNullException(nameof(roleReactService));
             _messageCleanupService = messageCleanupService ?? throw new ArgumentNullException(nameof(messageCleanupService));
             _messageWaiter = messageWaiter ?? throw new ArgumentNullException(nameof(messageWaiter));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         [Command("role setting", RunMode = RunMode.Async)]
@@ -115,9 +119,7 @@ namespace BeanBot.Modules
                         await _roleReactService.SaveRoleSettings(roleEmotePairs, messageToListen);
                     },
                     messageToListen => messageToListen.DeleteAsync(),
-                    exception => Log.Warning(
-                        exception,
-                        "Could not delete incomplete reaction-role message after setup failed"));
+                    exception => BeanBotLog.IncompleteReactionRoleCleanupFailed(_logger, exception));
             }
             finally
             {
@@ -282,7 +284,7 @@ namespace BeanBot.Modules
             }
             catch (Exception exception)
             {
-                Log.Warning(exception, "Could not clean up the reaction-role setup messages");
+                BeanBotLog.ReactionRoleCleanupFailed(_logger, exception);
             }
         }
     }

@@ -2,6 +2,7 @@ using BeanBot.Configuration;
 using BeanBot.EventHandlers;
 
 using Discord.WebSocket;
+using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
 
@@ -20,7 +21,7 @@ public class PunHandlerTests
             new Uri("https://example.com/hatoete"),
             new Uri("https://example.com/yoshimaru"),
             HealthCheckOptions.Disabled);
-        var handler = new PunHandler(client, options);
+        var handler = new PunHandler(client, options, NullLogger<PunHandler>.Instance);
 
         await handler.DisposeAsync();
         await handler.DisposeAsync();

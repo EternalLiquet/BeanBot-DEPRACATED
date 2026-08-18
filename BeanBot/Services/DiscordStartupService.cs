@@ -1,7 +1,8 @@
+using BeanBot.Util;
 using Discord;
 using Discord.WebSocket;
 
-using Serilog;
+using Microsoft.Extensions.Logging;
 
 using System;
 using System.Net;
@@ -64,12 +65,14 @@ namespace BeanBot.Services
         private readonly Func<Task> _setPresence;
         private readonly TimeSpan _operationTimeout;
         private readonly Action<Exception, string> _lateFailureObserver;
+        private readonly ILogger<DiscordStartupLifecycle> _logger;
         private Task? _unfinishedOperation;
 
         public DiscordStartupLifecycle(
             DiscordSocketClient client,
             string botToken,
-            TimeSpan operationTimeout)
+            TimeSpan operationTimeout,
+            ILogger<DiscordStartupLifecycle> logger)
         {
             ArgumentNullException.ThrowIfNull(client);
             ArgumentNullException.ThrowIfNull(botToken);
@@ -77,6 +80,7 @@ namespace BeanBot.Services
             _start = client.StartAsync;
             _setPresence = () => client.SetGameAsync(GameStatus, null, ActivityType.Playing);
             _operationTimeout = operationTimeout;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _lateFailureObserver = LogLateFailure;
         }
 
@@ -85,12 +89,14 @@ namespace BeanBot.Services
             Func<Task> start,
             Func<Task> setPresence,
             TimeSpan operationTimeout,
+            ILogger<DiscordStartupLifecycle> logger,
             Action<Exception, string>? lateFailureObserver = null)
         {
             _login = login ?? throw new ArgumentNullException(nameof(login));
             _start = start ?? throw new ArgumentNullException(nameof(start));
             _setPresence = setPresence ?? throw new ArgumentNullException(nameof(setPresence));
             _operationTimeout = operationTimeout;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _lateFailureObserver = lateFailureObserver ?? LogLateFailure;
         }
 
@@ -176,11 +182,8 @@ namespace BeanBot.Services
                 TaskScheduler.Default);
         }
 
-        private static void LogLateFailure(Exception exception, string operationName)
-            => Log.Error(
-                exception,
-                "Discord {Operation} operation failed after its startup wait ended",
-                operationName);
+        private void LogLateFailure(Exception exception, string operationName)
+            => BeanBotLog.DiscordStartupLateFailure(_logger, operationName, exception);
     }
 
     internal sealed class DiscordStartupService
@@ -188,13 +191,16 @@ namespace BeanBot.Services
         private readonly IDiscordStartupLifecycle _lifecycle;
         private readonly DiscordStartupOptions _options;
         private readonly IDiscordStartupDelay _delay;
+        private readonly ILogger<DiscordStartupService> _logger;
 
         public DiscordStartupService(
             IDiscordStartupLifecycle lifecycle,
+            ILogger<DiscordStartupService> logger,
             DiscordStartupOptions? options = null,
             IDiscordStartupDelay? delay = null)
         {
             _lifecycle = lifecycle ?? throw new ArgumentNullException(nameof(lifecycle));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _options = options ?? DiscordStartupOptions.Default;
             _delay = delay ?? new DiscordStartupDelay();
         }
@@ -222,7 +228,7 @@ namespace BeanBot.Services
             {
                 // A completed presence failure is cosmetic and must not fail an
                 // otherwise valid gateway lifecycle.
-                Log.Warning(exception, "Discord started, but the initial presence could not be set");
+                BeanBotLog.DiscordPresenceFailed(_logger, exception);
             }
         }
 
@@ -231,16 +237,16 @@ namespace BeanBot.Services
             for (var attempt = 1; attempt <= _options.MaximumAttempts; attempt++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                Log.Information(
-                    "Attempting Discord login. Attempt={Attempt}, MaximumAttempts={MaximumAttempts}",
+                BeanBotLog.DiscordLoginAttempting(
+                    _logger,
                     attempt,
                     _options.MaximumAttempts);
 
                 try
                 {
                     await _lifecycle.LoginAsync(cancellationToken);
-                    Log.Information(
-                        "Discord login succeeded. Attempt={Attempt}, MaximumAttempts={MaximumAttempts}",
+                    BeanBotLog.DiscordLoginSucceeded(
+                        _logger,
                         attempt,
                         _options.MaximumAttempts);
                     return;
@@ -251,41 +257,41 @@ namespace BeanBot.Services
                 }
                 catch (Discord.Net.HttpException exception) when (exception.HttpCode == HttpStatusCode.Unauthorized)
                 {
-                    Log.Fatal(
-                        exception,
-                        "Discord rejected the configured bot token. Update BEANBOT_BOT_TOKEN and restart the process. Attempt={Attempt}, MaximumAttempts={MaximumAttempts}",
+                    BeanBotLog.DiscordTokenRejected(
+                        _logger,
                         attempt,
-                        _options.MaximumAttempts);
+                        _options.MaximumAttempts,
+                        exception);
                     throw;
                 }
                 catch (Discord.Net.HttpException exception)
                 {
                     if (attempt == _options.MaximumAttempts)
                     {
-                        Log.Fatal(
-                            exception,
-                            "Discord login failed after all startup attempts. Attempt={Attempt}, MaximumAttempts={MaximumAttempts}",
+                        BeanBotLog.DiscordLoginExhausted(
+                            _logger,
                             attempt,
-                            _options.MaximumAttempts);
+                            _options.MaximumAttempts,
+                            exception);
                         throw;
                     }
 
                     var retryDelay = _options.RetryDelay(attempt);
-                    Log.Warning(
-                        exception,
-                        "Discord login attempt failed; delaying before retry. Attempt={Attempt}, MaximumAttempts={MaximumAttempts}, RetryDelay={RetryDelay}",
+                    BeanBotLog.DiscordLoginRetrying(
+                        _logger,
                         attempt,
                         _options.MaximumAttempts,
-                        retryDelay);
+                        retryDelay,
+                        exception);
                     await _delay.DelayAsync(retryDelay, cancellationToken);
                 }
                 catch (Exception exception)
                 {
-                    Log.Fatal(
-                        exception,
-                        "Discord startup failed with a non-retryable login error. Attempt={Attempt}, MaximumAttempts={MaximumAttempts}",
+                    BeanBotLog.DiscordLoginFailed(
+                        _logger,
                         attempt,
-                        _options.MaximumAttempts);
+                        _options.MaximumAttempts,
+                        exception);
                     throw;
                 }
             }

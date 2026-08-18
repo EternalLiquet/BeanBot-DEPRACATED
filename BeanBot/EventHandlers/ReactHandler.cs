@@ -1,6 +1,7 @@
 using BeanBot.Services;
+using BeanBot.Util;
 using Discord.WebSocket;
-using Serilog;
+using Microsoft.Extensions.Logging;
 using System;
 
 namespace BeanBot.EventHandlers
@@ -9,13 +10,18 @@ namespace BeanBot.EventHandlers
     {
         private readonly DiscordSocketClient _discordClient;
         private readonly RoleReactService _roleService;
+        private readonly ILogger<ReactHandler> _logger;
         private bool _initialized;
 
-        public ReactHandler(DiscordSocketClient discordClient, RoleReactService roleReactService)
+        public ReactHandler(
+            DiscordSocketClient discordClient,
+            RoleReactService roleReactService,
+            ILogger<ReactHandler> logger)
         {
-            Log.Information("Instantiating React Handler");
             _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
             _roleService = roleReactService ?? throw new ArgumentNullException(nameof(roleReactService));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            BeanBotLog.ReactHandlerCreated(_logger);
         }
 
         public void InitializeReactDependentServices()
@@ -25,7 +31,7 @@ namespace BeanBot.EventHandlers
                 return;
             }
 
-            Log.Information("Instantiating Role Services");
+            BeanBotLog.RoleServicesCreated(_logger);
             _discordClient.ReactionAdded += _roleService.HandleReact;
             _discordClient.ReactionRemoved += _roleService.HandleRemoveReact;
             _initialized = true;

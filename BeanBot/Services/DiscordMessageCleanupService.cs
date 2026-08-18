@@ -1,5 +1,6 @@
+using BeanBot.Util;
 using Discord;
-using Serilog;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -12,15 +13,19 @@ namespace BeanBot.Services
         internal const int MaximumBulkDeleteCount = 100;
         private static readonly TimeSpan MaximumBulkDeleteAge = TimeSpan.FromDays(14) - TimeSpan.FromMinutes(5);
         private readonly Func<DateTimeOffset> _getUtcNow;
+        private readonly ILogger<DiscordMessageCleanupService> _logger;
 
-        public DiscordMessageCleanupService()
-            : this(() => DateTimeOffset.UtcNow)
+        public DiscordMessageCleanupService(ILogger<DiscordMessageCleanupService> logger)
+            : this(() => DateTimeOffset.UtcNow, logger)
         {
         }
 
-        internal DiscordMessageCleanupService(Func<DateTimeOffset> getUtcNow)
+        internal DiscordMessageCleanupService(
+            Func<DateTimeOffset> getUtcNow,
+            ILogger<DiscordMessageCleanupService> logger)
         {
             _getUtcNow = getUtcNow ?? throw new ArgumentNullException(nameof(getUtcNow));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public Task DeleteAsync(ITextChannel channel, IReadOnlyCollection<IMessage> messages)
@@ -32,11 +37,11 @@ namespace BeanBot.Services
                 plan,
                 batch => channel.DeleteMessagesAsync(batch),
                 message => message.DeleteAsync(),
-                (exception, itemCount, isBatch) => Log.Warning(
-                    exception,
-                    "Could not delete {MessageCount} setup message(s) using {DeleteMode}; continuing cleanup",
+                (exception, itemCount, isBatch) => BeanBotLog.MessageCleanupFailed(
+                    _logger,
                     itemCount,
-                    isBatch ? "bulk deletion" : "individual deletion"));
+                    isBatch ? "bulk deletion" : "individual deletion",
+                    exception));
         }
 
         internal static MessageCleanupPlan<T> CreatePlan<T>(

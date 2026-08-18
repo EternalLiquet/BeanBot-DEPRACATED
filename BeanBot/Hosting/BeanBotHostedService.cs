@@ -1,6 +1,6 @@
+using BeanBot.Util;
 using Microsoft.Extensions.Hosting;
-
-using Serilog;
+using Microsoft.Extensions.Logging;
 
 using System;
 using System.Threading;
@@ -18,13 +18,16 @@ namespace BeanBot.Hosting
     {
         private readonly IBeanBotApplication _application;
         private readonly IHostApplicationLifetime _hostLifetime;
+        private readonly ILogger<BeanBotHostedService> _logger;
 
         public BeanBotHostedService(
             IBeanBotApplication application,
-            IHostApplicationLifetime hostLifetime)
+            IHostApplicationLifetime hostLifetime,
+            ILogger<BeanBotHostedService> logger)
         {
             _application = application ?? throw new ArgumentNullException(nameof(application));
             _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public async Task StartAsync(CancellationToken cancellationToken)
@@ -44,9 +47,7 @@ namespace BeanBot.Hosting
                 }
                 catch (Exception cleanupException)
                 {
-                    Log.Error(
-                        cleanupException,
-                        "BeanBot cleanup failed after application startup did not complete");
+                    BeanBotLog.StartupCleanupFailed(_logger, cleanupException);
                 }
 
                 throw;
