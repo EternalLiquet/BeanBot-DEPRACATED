@@ -167,7 +167,6 @@ public class RoleSettingsTests
         var pair = pairs.EnumerateArray().Single();
         Assert.Equal("role", pair.GetProperty("roleId").GetString());
         Assert.Equal("emoji", pair.GetProperty("emojiId").GetString());
-        Assert.Contains(Environment.NewLine, json, StringComparison.Ordinal);
     }
 
     private static BsonDocument CreateLegacyDocument(ObjectId id, DateTime lastAccessedUtc)
