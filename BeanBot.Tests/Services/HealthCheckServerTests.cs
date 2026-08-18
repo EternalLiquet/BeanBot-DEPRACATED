@@ -4,13 +4,19 @@ using BeanBot.Services;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
+
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 using Xunit;
 
 namespace BeanBot.Tests.Services;
 
+[Collection("Serilog global logger")]
 public class HealthCheckServerTests
 {
     private static readonly DiscordHealthSnapshot UnhealthySnapshot = new(
@@ -237,6 +243,71 @@ public class HealthCheckServerTests
     }
 
     [Fact]
+    public void SelectBoundPort_MultipleAddresses_ReturnsLowestValidPort()
+    {
+        var addresses = new[]
+        {
+            "http://127.0.0.1:54321",
+            "not-an-address",
+            "http://[::1]:12345",
+            "http://127.0.0.1:23456"
+        };
+
+        var port = HealthCheckServer.SelectBoundPort(addresses);
+
+        Assert.Equal(12345, port);
+    }
+
+    [Fact]
+    public void SelectBoundPort_NoValidBoundAddress_ReturnsZero()
+    {
+        Assert.Equal(0, HealthCheckServer.SelectBoundPort(Array.Empty<string>()));
+        Assert.Equal(0, HealthCheckServer.SelectBoundPort(new[] { "not-an-address" }));
+    }
+
+    [Fact]
+    public async Task HandlerFailure_IsForwardedToExistingSerilogPipeline()
+    {
+        var previousLogger = Log.Logger;
+        var sink = new CapturingLogSink();
+        var logger = new LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        Log.Logger = logger;
+        try
+        {
+            await using var server = CreateServer(
+                () => throw new InvalidOperationException("health snapshot failed"));
+            await server.StartAsync(CancellationToken.None);
+            using var client = CreateClient(server);
+
+            try
+            {
+                using var response = await client.GetAsync("/healthz");
+            }
+            catch (HttpRequestException)
+            {
+                // Kestrel may abort a response whose handler failed before headers.
+            }
+
+            await WaitUntilAsync(() => sink.Events.Any(logEvent =>
+                logEvent.Level >= LogEventLevel.Error &&
+                logEvent.Exception?.Message == "health snapshot failed"));
+            Assert.DoesNotContain(
+                sink.Events,
+                logEvent =>
+                    logEvent.Properties.ContainsKey("SourceContext") &&
+                    logEvent.Level < LogEventLevel.Warning);
+        }
+        finally
+        {
+            Log.Logger = previousLogger;
+            logger.Dispose();
+        }
+    }
+
+    [Fact]
     public async Task Shutdown_CancelsIncompleteRequestWithinDeadline()
     {
         var server = CreateServer(
@@ -294,4 +365,27 @@ public class HealthCheckServerTests
         using var reader = new StreamReader(stream, Encoding.ASCII, leaveOpen: true);
         return await reader.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(3));
     }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var timeoutAt = DateTimeOffset.UtcNow.AddSeconds(2);
+        while (!condition() && DateTimeOffset.UtcNow < timeoutAt)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(10));
+        }
+
+        Assert.True(condition(), "Condition was not reached before the test timeout.");
+    }
+
+    private sealed class CapturingLogSink : ILogEventSink
+    {
+        public ConcurrentQueue<LogEvent> Events { get; } = new();
+
+        public void Emit(LogEvent logEvent) => Events.Enqueue(logEvent);
+    }
+}
+
+[CollectionDefinition("Serilog global logger", DisableParallelization = true)]
+public sealed class SerilogGlobalLoggerCollection
+{
 }

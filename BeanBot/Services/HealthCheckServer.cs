@@ -4,10 +4,14 @@ using Discord.WebSocket;
 
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 using Serilog;
+using Serilog.Extensions.Logging;
 
 using System;
 using System.Globalization;
@@ -43,6 +47,7 @@ namespace BeanBot.Services
         private readonly int _maximumConcurrentClients;
         private readonly BoundedClientRateLimiter _rateLimiter;
         private WebApplication? _application;
+        private int _boundPort;
         private int _disposed;
 
         public HealthCheckServer(
@@ -93,8 +98,7 @@ namespace BeanBot.Services
             {
                 lock (_syncRoot)
                 {
-                    var address = _application?.Urls.SingleOrDefault();
-                    return Uri.TryCreate(address, UriKind.Absolute, out var uri) ? uri.Port : 0;
+                    return _boundPort;
                 }
             }
         }
@@ -131,11 +135,20 @@ namespace BeanBot.Services
                     if (ReferenceEquals(_application, application))
                     {
                         _application = null;
+                        _boundPort = 0;
                     }
                 }
 
                 await application.DisposeAsync();
                 throw;
+            }
+
+            lock (_syncRoot)
+            {
+                if (ReferenceEquals(_application, application))
+                {
+                    _boundPort = FindBoundPort(application);
+                }
             }
 
             Log.Information(
@@ -164,6 +177,7 @@ namespace BeanBot.Services
             {
                 application = _application;
                 _application = null;
+                _boundPort = 0;
             }
 
             if (application is null)
@@ -219,6 +233,9 @@ namespace BeanBot.Services
                 ApplicationName = typeof(HealthCheckServer).Assembly.GetName().Name
             });
             builder.Logging.ClearProviders();
+            builder.Logging.AddSerilog(Log.Logger, dispose: false);
+            builder.Logging.AddFilter<SerilogLoggerProvider>(
+                (_, logLevel) => logLevel >= LogLevel.Warning);
             builder.WebHost.ConfigureKestrel(serverOptions =>
             {
                 serverOptions.Listen(_options.BindAddress, _options.Port);
@@ -232,6 +249,30 @@ namespace BeanBot.Services
             var application = builder.Build();
             application.Run(HandleRequestAsync);
             return application;
+        }
+
+        private static int FindBoundPort(WebApplication application)
+        {
+            var addresses = application.Services
+                .GetRequiredService<IServer>()
+                .Features
+                .Get<IServerAddressesFeature>()
+                ?.Addresses;
+            return SelectBoundPort(addresses ?? Array.Empty<string>());
+        }
+
+        internal static int SelectBoundPort(IEnumerable<string> addresses)
+        {
+            ArgumentNullException.ThrowIfNull(addresses);
+
+            // Kestrel normally exposes one address for this server. If hosting
+            // configuration adds more, the lowest actual TCP port is stable and
+            // avoids making lifecycle logging or test discovery order-dependent.
+            return addresses
+                .Select(address => Uri.TryCreate(address, UriKind.Absolute, out var uri) ? uri.Port : 0)
+                .Where(port => port > 0)
+                .DefaultIfEmpty(0)
+                .Min();
         }
 
         private async Task HandleRequestAsync(HttpContext context)

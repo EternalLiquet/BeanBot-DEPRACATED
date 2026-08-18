@@ -33,6 +33,7 @@
     <PackageReference Include="MongoDB.Driver.Core" />
     <PackageReference Include="Newtonsoft.Json" />
     <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Extensions.Logging" />
     <PackageReference Include="Serilog.Settings.Configuration" />
     <PackageReference Include="Serilog.Sinks.Async" />
     <PackageReference Include="Serilog.Sinks.Console" />
