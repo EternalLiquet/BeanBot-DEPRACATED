@@ -21,6 +21,7 @@ namespace BeanBot
         private static async Task<int> Main(string[] args)
         {
             IHost? host = null;
+            Log.Logger = LogHandler.CreateBootstrapLogger();
             try
             {
                 DirectorySetup.MakeSureAllDirectoriesExist();
@@ -31,10 +32,12 @@ namespace BeanBot
                 builder.Services.Configure<HostOptions>(options =>
                     options.ShutdownTimeout = HostShutdownTimeout);
                 builder.Services.AddBeanBot(builder.Configuration);
+                builder.Services.AddSerilog((services, loggerConfiguration) =>
+                    LogHandler.ConfigureLogger(
+                        loggerConfiguration,
+                        services.GetRequiredService<DiscordOwnerErrorNotifier>()));
 
                 host = builder.Build();
-                LogHandler.CreateLoggerConfiguration(
-                    host.Services.GetRequiredService<DiscordOwnerErrorNotifier>());
 
                 await host.RunAsync();
                 return 0;
@@ -67,7 +70,7 @@ namespace BeanBot
                 }
                 finally
                 {
-                    Log.CloseAndFlush();
+                    await Log.CloseAndFlushAsync();
                 }
             }
         }

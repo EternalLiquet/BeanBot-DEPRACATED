@@ -1,4 +1,5 @@
 using BeanBot.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
 
@@ -10,7 +11,7 @@ public class BeanBotApplicationTests
     public async Task StartAsync_StartsHealthBeforeDiscordAndInitializesInOrderOnce()
     {
         var runtime = new RecordingRuntime();
-        var application = new BeanBotApplication(runtime);
+        var application = new BeanBotApplication(runtime, NullLogger<BeanBotApplication>.Instance);
 
         await application.StartAsync(CancellationToken.None);
         await application.StartAsync(CancellationToken.None);
@@ -32,7 +33,7 @@ public class BeanBotApplicationTests
     public async Task StopAsync_NormalShutdown_CleansUpInOrderOnce()
     {
         var runtime = new RecordingRuntime();
-        var application = new BeanBotApplication(runtime);
+        var application = new BeanBotApplication(runtime, NullLogger<BeanBotApplication>.Instance);
 
         await application.StopAsync(CancellationToken.None);
         await application.StopAsync(CancellationToken.None);
@@ -59,7 +60,7 @@ public class BeanBotApplicationTests
         {
             HasUnfinishedDiscordStartupOperation = true
         };
-        var application = new BeanBotApplication(runtime);
+        var application = new BeanBotApplication(runtime, NullLogger<BeanBotApplication>.Instance);
 
         await application.StopAsync(CancellationToken.None);
 
@@ -75,7 +76,7 @@ public class BeanBotApplicationTests
     public async Task StartupFailure_AllowsCompletePartialStartupCleanup(string failingOperation)
     {
         var runtime = new RecordingRuntime { FailingOperation = failingOperation };
-        var application = new BeanBotApplication(runtime);
+        var application = new BeanBotApplication(runtime, NullLogger<BeanBotApplication>.Instance);
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => application.StartAsync(CancellationToken.None));

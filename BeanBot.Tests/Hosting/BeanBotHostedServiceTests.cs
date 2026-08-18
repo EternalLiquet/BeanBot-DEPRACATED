@@ -3,6 +3,7 @@ using BeanBot.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
 
@@ -46,7 +47,10 @@ public class BeanBotHostedServiceTests
     public async Task StartAsync_ForwardsCancellationToken()
     {
         var application = new RecordingApplication { BlockUntilCancelled = true };
-        var hostedService = new BeanBotHostedService(application, new RecordingHostLifetime());
+        var hostedService = new BeanBotHostedService(
+            application,
+            new RecordingHostLifetime(),
+            NullLogger<BeanBotHostedService>.Instance);
         using var cancellation = new CancellationTokenSource();
 
         var startup = hostedService.StartAsync(cancellation.Token);
@@ -62,7 +66,10 @@ public class BeanBotHostedServiceTests
     public async Task StopAsync_ForwardsCancellationToken()
     {
         var application = new RecordingApplication();
-        var hostedService = new BeanBotHostedService(application, new RecordingHostLifetime());
+        var hostedService = new BeanBotHostedService(
+            application,
+            new RecordingHostLifetime(),
+            NullLogger<BeanBotHostedService>.Instance);
         using var cancellation = new CancellationTokenSource();
 
         await hostedService.StopAsync(cancellation.Token);
@@ -75,7 +82,10 @@ public class BeanBotHostedServiceTests
     {
         var startupFailure = new InvalidOperationException("startup failed");
         var application = new RecordingApplication { StartFailure = startupFailure };
-        var hostedService = new BeanBotHostedService(application, new RecordingHostLifetime());
+        var hostedService = new BeanBotHostedService(
+            application,
+            new RecordingHostLifetime(),
+            NullLogger<BeanBotHostedService>.Instance);
 
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
             () => hostedService.StartAsync(CancellationToken.None));
@@ -94,7 +104,10 @@ public class BeanBotHostedServiceTests
             StartFailure = startupFailure,
             StopFailure = new InvalidOperationException("cleanup failed")
         };
-        var hostedService = new BeanBotHostedService(application, new RecordingHostLifetime());
+        var hostedService = new BeanBotHostedService(
+            application,
+            new RecordingHostLifetime(),
+            NullLogger<BeanBotHostedService>.Instance);
 
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
             () => hostedService.StartAsync(CancellationToken.None));

@@ -1,5 +1,7 @@
 using BeanBot.Services;
 
+using Microsoft.Extensions.Logging.Abstractions;
+
 using System.Net;
 
 using Xunit;
@@ -13,7 +15,7 @@ public class DiscordStartupServiceTests
     {
         var lifecycle = new FakeStartupLifecycle();
         var delay = new RecordingDelay();
-        var service = new DiscordStartupService(lifecycle, DiscordStartupOptions.Default, delay);
+        var service = CreateService(lifecycle, DiscordStartupOptions.Default, delay);
 
         await service.StartAsync(CancellationToken.None);
 
@@ -30,7 +32,7 @@ public class DiscordStartupServiceTests
             CreateHttpException(HttpStatusCode.ServiceUnavailable),
             null);
         var delay = new RecordingDelay();
-        var service = new DiscordStartupService(lifecycle, DiscordStartupOptions.Default, delay);
+        var service = CreateService(lifecycle, DiscordStartupOptions.Default, delay);
 
         await service.StartAsync(CancellationToken.None);
 
@@ -43,7 +45,7 @@ public class DiscordStartupServiceTests
     public async Task CancellationBeforeStartup_DoesNotAttemptLogin()
     {
         var lifecycle = new FakeStartupLifecycle();
-        var service = new DiscordStartupService(lifecycle, DiscordStartupOptions.Default, new RecordingDelay());
+        var service = CreateService(lifecycle, DiscordStartupOptions.Default, new RecordingDelay());
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
@@ -60,7 +62,7 @@ public class DiscordStartupServiceTests
         var lifecycle = new FakeStartupLifecycle(
             CreateHttpException(HttpStatusCode.ServiceUnavailable));
         var delay = new BlockingDelay();
-        var service = new DiscordStartupService(lifecycle, DiscordStartupOptions.Default, delay);
+        var service = CreateService(lifecycle, DiscordStartupOptions.Default, delay);
         using var cancellation = new CancellationTokenSource();
 
         var startup = service.StartAsync(cancellation.Token);
@@ -78,7 +80,7 @@ public class DiscordStartupServiceTests
         var unauthorized = CreateHttpException(HttpStatusCode.Unauthorized);
         var lifecycle = new FakeStartupLifecycle(unauthorized);
         var delay = new RecordingDelay();
-        var service = new DiscordStartupService(lifecycle, DiscordStartupOptions.Default, delay);
+        var service = CreateService(lifecycle, DiscordStartupOptions.Default, delay);
 
         var thrown = await Assert.ThrowsAsync<Discord.Net.HttpException>(
             () => service.StartAsync(CancellationToken.None));
@@ -98,7 +100,7 @@ public class DiscordStartupServiceTests
             CreateHttpException(HttpStatusCode.TooManyRequests),
             finalFailure);
         var delay = new RecordingDelay();
-        var service = new DiscordStartupService(lifecycle, DiscordStartupOptions.Default, delay);
+        var service = CreateService(lifecycle, DiscordStartupOptions.Default, delay);
 
         var thrown = await Assert.ThrowsAsync<Discord.Net.HttpException>(
             () => service.StartAsync(CancellationToken.None));
@@ -117,7 +119,7 @@ public class DiscordStartupServiceTests
         var timeout = new TimeoutException("Test timeout");
         var lifecycle = new FakeStartupLifecycle(timeout);
         var delay = new RecordingDelay();
-        var service = new DiscordStartupService(lifecycle, DiscordStartupOptions.Default, delay);
+        var service = CreateService(lifecycle, DiscordStartupOptions.Default, delay);
 
         var thrown = await Assert.ThrowsAsync<TimeoutException>(
             () => service.StartAsync(CancellationToken.None));
@@ -141,8 +143,9 @@ public class DiscordStartupServiceTests
                 return Task.CompletedTask;
             },
             () => Task.CompletedTask,
-            TimeSpan.FromMinutes(1));
-        var service = new DiscordStartupService(
+            TimeSpan.FromMinutes(1),
+            NullLogger<DiscordStartupLifecycle>.Instance);
+        var service = CreateService(
             lifecycle,
             DiscordStartupOptions.Default,
             new RecordingDelay());
@@ -171,6 +174,7 @@ public class DiscordStartupServiceTests
             () => Task.CompletedTask,
             () => Task.CompletedTask,
             TimeSpan.FromMilliseconds(20),
+            NullLogger<DiscordStartupLifecycle>.Instance,
             (exception, operation) => lateFailure.TrySetResult((exception, operation)));
 
         await Assert.ThrowsAsync<TimeoutException>(
@@ -193,7 +197,7 @@ public class DiscordStartupServiceTests
         {
             PresenceFailure = new InvalidOperationException("Test presence failure")
         };
-        var service = new DiscordStartupService(lifecycle, DiscordStartupOptions.Default, new RecordingDelay());
+        var service = CreateService(lifecycle, DiscordStartupOptions.Default, new RecordingDelay());
 
         await service.StartAsync(CancellationToken.None);
 
@@ -210,8 +214,9 @@ public class DiscordStartupServiceTests
             () => Task.CompletedTask,
             () => Task.CompletedTask,
             () => presence.Task,
-            TimeSpan.FromMilliseconds(20));
-        var service = new DiscordStartupService(
+            TimeSpan.FromMilliseconds(20),
+            NullLogger<DiscordStartupLifecycle>.Instance);
+        var service = CreateService(
             lifecycle,
             DiscordStartupOptions.Default,
             new RecordingDelay());
@@ -237,8 +242,9 @@ public class DiscordStartupServiceTests
                 presenceStarted.TrySetResult(true);
                 return presence.Task;
             },
-            TimeSpan.FromMinutes(1));
-        var service = new DiscordStartupService(
+            TimeSpan.FromMinutes(1),
+            NullLogger<DiscordStartupLifecycle>.Instance);
+        var service = CreateService(
             lifecycle,
             DiscordStartupOptions.Default,
             new RecordingDelay());
@@ -255,6 +261,16 @@ public class DiscordStartupServiceTests
         presence.TrySetResult(true);
         await WaitForNoUnfinishedOperationAsync(lifecycle);
     }
+
+    private static DiscordStartupService CreateService(
+        IDiscordStartupLifecycle lifecycle,
+        DiscordStartupOptions options,
+        IDiscordStartupDelay delay)
+        => new(
+            lifecycle,
+            NullLogger<DiscordStartupService>.Instance,
+            options,
+            delay);
 
     private static Discord.Net.HttpException CreateHttpException(HttpStatusCode statusCode)
         => new(statusCode, null, null, "Test Discord failure", null);

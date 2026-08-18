@@ -1,4 +1,5 @@
 using BeanBot.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 
 using System.Collections.Concurrent;
 
@@ -134,6 +135,7 @@ public class DiscordGatewayRecoveryServiceTests
             state.CreateSnapshot,
             lifecycle,
             outageStore,
+            NullLogger<DiscordGatewayRecoveryService>.Instance,
             TestOptions,
             delay,
             exitCode =>

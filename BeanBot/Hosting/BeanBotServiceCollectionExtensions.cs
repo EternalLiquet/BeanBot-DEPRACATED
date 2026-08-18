@@ -11,6 +11,7 @@ using Discord.WebSocket;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 using MongoDB.Driver;
@@ -60,7 +61,8 @@ namespace BeanBot.Hosting
                 return new DiscordStartupLifecycle(
                     provider.GetRequiredService<DiscordSocketClient>(),
                     provider.GetRequiredService<BeanBotOptions>().BotToken,
-                    options.LifecycleOperationTimeout);
+                    options.LifecycleOperationTimeout,
+                    provider.GetRequiredService<ILogger<DiscordStartupLifecycle>>());
             });
             services.AddSingleton<IDiscordStartupLifecycle>(provider =>
                 provider.GetRequiredService<DiscordStartupLifecycle>());
@@ -74,12 +76,14 @@ namespace BeanBot.Hosting
                 return new DiscordGatewayLifecycle(
                     provider.GetRequiredService<DiscordSocketClient>(),
                     provider.GetRequiredService<BeanBotOptions>().BotToken,
-                    options.LifecycleOperationTimeout);
+                    options.LifecycleOperationTimeout,
+                    provider.GetRequiredService<ILogger<DiscordGatewayLifecycle>>());
             });
             services.AddSingleton<IRecoveryDelay, TaskRecoveryDelay>();
 
-            services.AddSingleton<DiscordOutageStore>(_ => new DiscordOutageStore(
-                Path.GetFullPath(DirectorySetup.botBaseDirectory)));
+            services.AddSingleton<DiscordOutageStore>(provider => new DiscordOutageStore(
+                Path.GetFullPath(DirectorySetup.botBaseDirectory),
+                provider.GetRequiredService<ILogger<DiscordOutageStore>>()));
             services.AddSingleton<IDiscordOutageStore>(provider =>
                 provider.GetRequiredService<DiscordOutageStore>());
 
@@ -91,6 +95,7 @@ namespace BeanBot.Hosting
             services.AddSingleton<IOwnerErrorNotifier>(provider =>
                 provider.GetRequiredService<DiscordOwnerErrorNotifier>());
             services.AddSingleton<DiscordOutageRecoveryNotifier>();
+            services.AddSingleton<LogHandler>();
 
             services.AddSingleton<DiscordGatewayRecoveryService>(provider =>
             {
@@ -100,6 +105,7 @@ namespace BeanBot.Hosting
                     () => connectionHealth.CreateSnapshot(client),
                     provider.GetRequiredService<IDiscordGatewayLifecycle>(),
                     provider.GetRequiredService<IDiscordOutageStore>(),
+                    provider.GetRequiredService<ILogger<DiscordGatewayRecoveryService>>(),
                     provider.GetRequiredService<DiscordGatewayRecoveryOptions>(),
                     provider.GetRequiredService<IRecoveryDelay>());
             });
@@ -107,6 +113,7 @@ namespace BeanBot.Hosting
             services.AddSingleton<FortuneAnswerStore>();
             services.AddSingleton<DiscordMessageWaiter>();
             services.AddSingleton<DiscordPaginatorService>();
+            services.AddSingleton<EditMessageEventServices>();
             services.AddSingleton<RoleReactRepository>();
             services.AddSingleton<RoleReactService>();
             services.AddSingleton<DiscordMessageCleanupService>();
@@ -119,7 +126,8 @@ namespace BeanBot.Hosting
             services.AddSingleton<HealthCheckServer>(provider => new HealthCheckServer(
                 provider.GetRequiredService<BeanBotOptions>().HealthCheck,
                 provider.GetRequiredService<DiscordSocketClient>(),
-                provider.GetRequiredService<DiscordConnectionHealth>()));
+                provider.GetRequiredService<DiscordConnectionHealth>(),
+                provider.GetRequiredService<ILogger<HealthCheckServer>>()));
 
             services.AddSingleton<BeanBotRuntime>();
             services.AddSingleton<IBeanBotRuntime>(provider =>

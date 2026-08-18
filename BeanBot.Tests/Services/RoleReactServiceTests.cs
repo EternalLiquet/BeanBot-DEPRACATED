@@ -2,6 +2,7 @@ using BeanBot.Repository;
 using BeanBot.Services;
 
 using MongoDB.Driver;
+using Microsoft.Extensions.Logging.Abstractions;
 
 using System.Reflection;
 
@@ -56,9 +57,10 @@ public class RoleReactServiceTests
         var database = new MongoClient("mongodb://localhost:27017")
             .GetDatabase("BeanBotNullableTests");
         return new RoleReactService(
-            new RoleReactRepository(database),
+            new RoleReactRepository(database, NullLogger<RoleReactRepository>.Instance),
             client: null,
-            shutdownDrainTimeout);
+            shutdownDrainTimeout,
+            NullLogger<RoleReactService>.Instance);
     }
 
     private static SemaphoreSlim GetCacheLock(RoleReactService service)

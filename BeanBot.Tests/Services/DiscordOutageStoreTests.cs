@@ -1,4 +1,5 @@
 using BeanBot.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
 
@@ -15,7 +16,7 @@ public sealed class DiscordOutageStoreTests : IDisposable
     [Fact]
     public async Task OpenAsync_PersistsOutageStartAndReason()
     {
-        using var store = new DiscordOutageStore(_temporaryDirectory);
+        using var store = new DiscordOutageStore(_temporaryDirectory, NullLogger<DiscordOutageStore>.Instance);
         var disconnectedAtUtc = new DateTimeOffset(2026, 8, 12, 7, 42, 15, TimeSpan.Zero);
 
         await store.OpenAsync(disconnectedAtUtc, "Gateway timed out");
@@ -29,7 +30,7 @@ public sealed class DiscordOutageStoreTests : IDisposable
     [Fact]
     public async Task RepeatedOpenAsync_PreservesOriginalOutageStart()
     {
-        using var store = new DiscordOutageStore(_temporaryDirectory);
+        using var store = new DiscordOutageStore(_temporaryDirectory, NullLogger<DiscordOutageStore>.Instance);
         var originalDisconnect = new DateTimeOffset(2026, 8, 12, 7, 42, 15, TimeSpan.Zero);
 
         await store.OpenAsync(originalDisconnect, "First disconnect");
@@ -43,7 +44,7 @@ public sealed class DiscordOutageStoreTests : IDisposable
     [Fact]
     public async Task MarkManualRecoveryAttemptedAsync_OpensAndUpdatesOutage()
     {
-        using var store = new DiscordOutageStore(_temporaryDirectory);
+        using var store = new DiscordOutageStore(_temporaryDirectory, NullLogger<DiscordOutageStore>.Instance);
         var disconnectedAtUtc = new DateTimeOffset(2026, 8, 12, 7, 42, 15, TimeSpan.Zero);
 
         await store.OpenAsync(disconnectedAtUtc, "Initial disconnect");
@@ -59,7 +60,7 @@ public sealed class DiscordOutageStoreTests : IDisposable
     [Fact]
     public async Task MarkProcessRestartRequestedAsync_UpdatesExistingOutage()
     {
-        using var store = new DiscordOutageStore(_temporaryDirectory);
+        using var store = new DiscordOutageStore(_temporaryDirectory, NullLogger<DiscordOutageStore>.Instance);
         await store.MarkManualRecoveryAttemptedAsync(DateTimeOffset.UtcNow, "Initial reason");
 
         await store.MarkProcessRestartRequestedAsync(DateTimeOffset.UtcNow, "Ready timeout");
@@ -72,7 +73,7 @@ public sealed class DiscordOutageStoreTests : IDisposable
     [Fact]
     public async Task ClearAsync_RemovesPersistedOutage()
     {
-        using var store = new DiscordOutageStore(_temporaryDirectory);
+        using var store = new DiscordOutageStore(_temporaryDirectory, NullLogger<DiscordOutageStore>.Instance);
         await store.OpenAsync(DateTimeOffset.UtcNow, "Disconnect");
 
         await store.ClearAsync();
@@ -86,7 +87,7 @@ public sealed class DiscordOutageStoreTests : IDisposable
     {
         var outagePath = Path.Combine(_temporaryDirectory, DiscordOutageStore.OutageFileName);
         await File.WriteAllTextAsync(outagePath, "{ definitely not valid JSON");
-        using var store = new DiscordOutageStore(_temporaryDirectory);
+        using var store = new DiscordOutageStore(_temporaryDirectory, NullLogger<DiscordOutageStore>.Instance);
 
         var outage = await store.ReadAsync();
 
@@ -102,7 +103,7 @@ public sealed class DiscordOutageStoreTests : IDisposable
         await File.WriteAllTextAsync(
             outagePath,
             "{\"DisconnectedAtUtc\":\"2026-08-12T07:42:15+00:00\"}");
-        using var store = new DiscordOutageStore(_temporaryDirectory);
+        using var store = new DiscordOutageStore(_temporaryDirectory, NullLogger<DiscordOutageStore>.Instance);
 
         var outage = await store.ReadAsync();
 
@@ -118,7 +119,7 @@ public sealed class DiscordOutageStoreTests : IDisposable
         await File.WriteAllTextAsync(
             outagePath,
             "{\"DisconnectedAtUtc\":\"2026-08-12T07:42:15+00:00\",\"MostRecentDisconnectReason\":null}");
-        using var store = new DiscordOutageStore(_temporaryDirectory);
+        using var store = new DiscordOutageStore(_temporaryDirectory, NullLogger<DiscordOutageStore>.Instance);
 
         var outage = await store.ReadAsync();
 
@@ -130,7 +131,7 @@ public sealed class DiscordOutageStoreTests : IDisposable
     [Fact]
     public async Task OpenAsync_NullReasonPersistsStableFallback()
     {
-        using var store = new DiscordOutageStore(_temporaryDirectory);
+        using var store = new DiscordOutageStore(_temporaryDirectory, NullLogger<DiscordOutageStore>.Instance);
 
         await store.OpenAsync(DateTimeOffset.UtcNow, null);
         var outage = await store.ReadAsync();
@@ -142,7 +143,7 @@ public sealed class DiscordOutageStoreTests : IDisposable
     [Fact]
     public async Task WriteAsync_LeavesCompleteFinalFileAndNoTemporaryFile()
     {
-        using var store = new DiscordOutageStore(_temporaryDirectory);
+        using var store = new DiscordOutageStore(_temporaryDirectory, NullLogger<DiscordOutageStore>.Instance);
 
         await store.OpenAsync(DateTimeOffset.UtcNow, "Disconnect");
 

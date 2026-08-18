@@ -1,6 +1,7 @@
 using BeanBot.Configuration;
 using BeanBot.Hosting;
 using BeanBot.Services;
+using BeanBot.Util;
 
 using Discord.WebSocket;
 
@@ -30,6 +31,8 @@ public class BeanBotServiceRegistrationTests
         AssertSingleton<IBeanBotApplication>(services);
         AssertSingleton<BeanBotHostedService>(services);
         AssertSingleton<RoleReactService>(services);
+        AssertSingleton<EditMessageEventServices>(services);
+        AssertSingleton<LogHandler>(services);
 
         var clientDescriptor = Assert.Single(
             services,

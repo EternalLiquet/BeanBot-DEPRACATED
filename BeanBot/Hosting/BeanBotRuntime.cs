@@ -4,7 +4,7 @@ using BeanBot.Util;
 
 using Discord.WebSocket;
 
-using Serilog;
+using Microsoft.Extensions.Logging;
 
 using System;
 using System.Threading;
@@ -29,6 +29,8 @@ namespace BeanBot.Hosting
         private readonly ReactHandler _reactHandler;
         private readonly DiscordMessageWaiter _messageWaiter;
         private readonly DiscordPaginatorService _paginatorService;
+        private readonly LogHandler _logHandler;
+        private readonly ILogger<BeanBotRuntime> _logger;
 
         public BeanBotRuntime(
             DiscordSocketClient discordClient,
@@ -45,7 +47,9 @@ namespace BeanBot.Hosting
             NewMemberHandler newMemberHandler,
             ReactHandler reactHandler,
             DiscordMessageWaiter messageWaiter,
-            DiscordPaginatorService paginatorService)
+            DiscordPaginatorService paginatorService,
+            LogHandler logHandler,
+            ILogger<BeanBotRuntime> logger)
         {
             _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
             _discordConnectionHealth = discordConnectionHealth ?? throw new ArgumentNullException(nameof(discordConnectionHealth));
@@ -62,6 +66,8 @@ namespace BeanBot.Hosting
             _reactHandler = reactHandler ?? throw new ArgumentNullException(nameof(reactHandler));
             _messageWaiter = messageWaiter ?? throw new ArgumentNullException(nameof(messageWaiter));
             _paginatorService = paginatorService ?? throw new ArgumentNullException(nameof(paginatorService));
+            _logHandler = logHandler ?? throw new ArgumentNullException(nameof(logHandler));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public bool HasUnfinishedDiscordStartupOperation
@@ -85,13 +91,13 @@ namespace BeanBot.Hosting
 
         public async Task StartCommandServicesAsync()
         {
-            Log.Information("Instantiating Command Services");
+            BeanBotLog.CommandServicesCreated(_logger);
             await _commandHandler.InitializeCommandsAsync();
         }
 
         public void StartEventAndBackgroundServices()
         {
-            _discordClient.Log += LogHandler.LogMessages;
+            _discordClient.Log += _logHandler.LogMessages;
             _punHandler.Start();
             _editMessageHandler.InitializeEventListener();
             _newMemberHandler.InitializeNewMembers();
@@ -106,7 +112,7 @@ namespace BeanBot.Hosting
             _commandHandler.Dispose();
             _messageWaiter.Dispose();
             _paginatorService.Dispose();
-            _discordClient.Log -= LogHandler.LogMessages;
+            _discordClient.Log -= _logHandler.LogMessages;
         }
 
         public Task StopGatewayRecoveryAsync()
@@ -150,7 +156,7 @@ namespace BeanBot.Hosting
 
         public void DisposeDiscordClient() => _discordClient.Dispose();
 
-        private static async Task<bool> RunBoundedShutdownOperationAsync(
+        private async Task<bool> RunBoundedShutdownOperationAsync(
             Func<Task> beginOperation,
             string operationName,
             TimeSpan timeout,
@@ -158,9 +164,7 @@ namespace BeanBot.Hosting
         {
             if (cancellationToken.IsCancellationRequested)
             {
-                Log.Warning(
-                    "Skipping Discord {Operation} operation because the host shutdown deadline elapsed",
-                    operationName);
+                BeanBotLog.DiscordShutdownOperationSkipped(_logger, operationName);
                 return false;
             }
 
@@ -175,19 +179,16 @@ namespace BeanBot.Hosting
                 if (!operation.IsCompleted)
                 {
                     _ = operation.ContinueWith(
-                        completedTask => Log.Error(
-                            completedTask.Exception,
-                            "Discord {Operation} operation failed after its shutdown wait ended",
-                            operationName),
+                        completedTask => BeanBotLog.DiscordShutdownLateFailure(
+                            _logger,
+                            operationName,
+                            completedTask.Exception),
                         CancellationToken.None,
                         TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
                         TaskScheduler.Default);
                 }
 
-                Log.Error(
-                    exception,
-                    "Discord {Operation} operation did not complete during bounded shutdown",
-                    operationName);
+                BeanBotLog.DiscordShutdownOperationFailed(_logger, operationName, exception);
                 return false;
             }
         }
@@ -196,19 +197,22 @@ namespace BeanBot.Hosting
         {
             _discordConnectionHealth.MarkReady();
             _discordGatewayRecovery.NotifyReady();
-            Log.Information(
-                "BeanBot Discord gateway reached Ready. LoginState={LoginState}, ConnectionState={ConnectionState}",
-                _discordClient.LoginState,
-                _discordClient.ConnectionState);
+            if (_logger.IsEnabled(LogLevel.Information))
+            {
+                var loginState = _discordClient.LoginState;
+                var connectionState = _discordClient.ConnectionState;
+                BeanBotLog.DiscordReady(
+                    _logger,
+                    loginState,
+                    connectionState);
+            }
             try
             {
                 await _discordOutageRecoveryNotifier.NotifyIfOutageRecoveredAsync(DateTimeOffset.UtcNow);
             }
             catch (Exception exception)
             {
-                Log.Error(
-                    exception,
-                    "Discord reached Ready, but the persisted outage recovery notification could not be processed");
+                BeanBotLog.OutageRecoveryProcessingFailed(_logger, exception);
             }
         }
 
@@ -218,41 +222,41 @@ namespace BeanBot.Hosting
             var snapshot = _discordConnectionHealth.CreateSnapshot(_discordClient);
             if (exception is null)
             {
-                Log.Warning(
-                    "BeanBot disconnected from Discord. LoginState={LoginState}, ConnectionState={ConnectionState}, MostRecentDisconnectReason={MostRecentDisconnectReason}",
+                BeanBotLog.DiscordDisconnected(
+                    _logger,
                     snapshot.LoginState,
                     snapshot.ConnectionState,
                     snapshot.MostRecentDisconnectReason);
             }
             else
             {
-                Log.Warning(
-                    exception,
-                    "BeanBot disconnected from Discord. LoginState={LoginState}, ConnectionState={ConnectionState}, MostRecentDisconnectReason={MostRecentDisconnectReason}",
+                BeanBotLog.DiscordDisconnected(
+                    _logger,
                     snapshot.LoginState,
                     snapshot.ConnectionState,
-                    snapshot.MostRecentDisconnectReason);
+                    snapshot.MostRecentDisconnectReason,
+                    exception);
             }
 
             _discordGatewayRecovery.StartMonitoring();
             return Task.CompletedTask;
         }
 
-        private static void HandleUnhandledException(object sender, UnhandledExceptionEventArgs eventArgs)
+        private void HandleUnhandledException(object sender, UnhandledExceptionEventArgs eventArgs)
         {
             if (eventArgs.ExceptionObject is Exception exception)
             {
-                Log.Fatal(exception, "An unhandled application exception occurred");
+                BeanBotLog.UnhandledApplicationException(_logger, exception);
             }
             else
             {
-                Log.Fatal("An unhandled non-Exception error occurred: {Error}", eventArgs.ExceptionObject);
+                BeanBotLog.UnhandledApplicationError(_logger, eventArgs.ExceptionObject);
             }
         }
 
-        private static void HandleUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs eventArgs)
+        private void HandleUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs eventArgs)
         {
-            Log.Error(eventArgs.Exception, "An unobserved task exception occurred");
+            BeanBotLog.UnobservedTaskException(_logger, eventArgs.Exception);
             eventArgs.SetObserved();
         }
     }

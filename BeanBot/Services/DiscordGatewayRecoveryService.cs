@@ -1,7 +1,8 @@
+using BeanBot.Util;
 using Discord;
 using Discord.WebSocket;
 
-using Serilog;
+using Microsoft.Extensions.Logging;
 
 using System;
 using System.Diagnostics;
@@ -53,15 +54,18 @@ namespace BeanBot.Services
         private readonly DiscordSocketClient _client;
         private readonly string _botToken;
         private readonly TimeSpan _operationTimeout;
+        private readonly ILogger<DiscordGatewayLifecycle> _logger;
 
         public DiscordGatewayLifecycle(
             DiscordSocketClient client,
             string botToken,
-            TimeSpan operationTimeout)
+            TimeSpan operationTimeout,
+            ILogger<DiscordGatewayLifecycle> logger)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
             _botToken = botToken ?? throw new ArgumentNullException(nameof(botToken));
             _operationTimeout = operationTimeout;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public async Task ReconnectAsync(CancellationToken cancellationToken)
@@ -99,13 +103,13 @@ namespace BeanBot.Services
             }
         }
 
-        private static void ObserveLateFailure(Task operation, string operationName)
+        private void ObserveLateFailure(Task operation, string operationName)
         {
             _ = operation.ContinueWith(
-                completedTask => Log.Error(
-                    completedTask.Exception,
-                    "Discord gateway {Operation} operation failed after its recovery wait ended",
-                    operationName),
+                completedTask => BeanBotLog.DiscordRecoveryLateFailure(
+                    _logger,
+                    operationName,
+                    completedTask.Exception),
                 CancellationToken.None,
                 TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
@@ -121,6 +125,7 @@ namespace BeanBot.Services
         private readonly DiscordGatewayRecoveryOptions _options;
         private readonly IRecoveryDelay _delay;
         private readonly Action<int> _exitProcess;
+        private readonly ILogger<DiscordGatewayRecoveryService> _logger;
         private readonly CancellationTokenSource _shutdown = new();
         private TaskCompletionSource<bool>? _readySignal;
         private Task? _monitorTask;
@@ -130,6 +135,7 @@ namespace BeanBot.Services
             Func<DiscordHealthSnapshot> createHealthSnapshot,
             IDiscordGatewayLifecycle lifecycle,
             IDiscordOutageStore outageStore,
+            ILogger<DiscordGatewayRecoveryService> logger,
             DiscordGatewayRecoveryOptions? options = null,
             IRecoveryDelay? delay = null,
             Action<int>? exitProcess = null)
@@ -137,6 +143,7 @@ namespace BeanBot.Services
             _createHealthSnapshot = createHealthSnapshot ?? throw new ArgumentNullException(nameof(createHealthSnapshot));
             _lifecycle = lifecycle ?? throw new ArgumentNullException(nameof(lifecycle));
             _outageStore = outageStore ?? throw new ArgumentNullException(nameof(outageStore));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _options = options ?? DiscordGatewayRecoveryOptions.Default;
             _delay = delay ?? new TaskRecoveryDelay();
             _exitProcess = exitProcess ?? Environment.Exit;
@@ -182,8 +189,8 @@ namespace BeanBot.Services
         private async Task MonitorAsync(DiscordHealthSnapshot initialSnapshot)
         {
             var unhealthySince = initialSnapshot.UnhealthySinceAtUtc ?? DateTimeOffset.UtcNow;
-            Log.Warning(
-                "Discord gateway recovery grace period started. LoginState={LoginState}, ConnectionState={ConnectionState}, GracePeriod={GracePeriod}, MostRecentDisconnectReason={MostRecentDisconnectReason}",
+            BeanBotLog.DiscordRecoveryGraceStarted(
+                _logger,
                 initialSnapshot.LoginState,
                 initialSnapshot.ConnectionState,
                 _options.BuiltInRecoveryGracePeriod,
@@ -211,8 +218,8 @@ namespace BeanBot.Services
                     return;
                 }
 
-                Log.Warning(
-                    "Discord gateway remained unhealthy for {UnhealthyDuration}; beginning one manual reconnect cycle. LoginState={LoginState}, ConnectionState={ConnectionState}, MostRecentDisconnectReason={MostRecentDisconnectReason}",
+                BeanBotLog.DiscordManualRecoveryStarting(
+                    _logger,
                     DateTimeOffset.UtcNow - unhealthySince,
                     snapshot.LoginState,
                     snapshot.ConnectionState,
@@ -231,12 +238,12 @@ namespace BeanBot.Services
                 catch (Exception exception)
                 {
                     snapshot = _createHealthSnapshot();
-                    Log.Error(
-                        exception,
-                        "Discord manual reconnect cycle failed. LoginState={LoginState}, ConnectionState={ConnectionState}, MostRecentDisconnectReason={MostRecentDisconnectReason}",
+                    BeanBotLog.DiscordManualRecoveryFailed(
+                        _logger,
                         snapshot.LoginState,
                         snapshot.ConnectionState,
-                        snapshot.MostRecentDisconnectReason);
+                        snapshot.MostRecentDisconnectReason,
+                        exception);
                 }
 
                 if (await WaitForReadyAsync(
@@ -244,8 +251,8 @@ namespace BeanBot.Services
                     _shutdown.Token))
                 {
                     snapshot = _createHealthSnapshot();
-                    Log.Information(
-                        "Discord manual reconnect succeeded after {UnhealthyDuration}. LoginState={LoginState}, ConnectionState={ConnectionState}",
+                    BeanBotLog.DiscordManualRecoverySucceeded(
+                        _logger,
                         DateTimeOffset.UtcNow - unhealthySince,
                         snapshot.LoginState,
                         snapshot.ConnectionState);
@@ -260,16 +267,16 @@ namespace BeanBot.Services
                 snapshot = _createHealthSnapshot();
                 if (snapshot.IsHealthy)
                 {
-                    Log.Information(
-                        "Discord manual reconnect succeeded after {UnhealthyDuration}. LoginState={LoginState}, ConnectionState={ConnectionState}",
+                    BeanBotLog.DiscordManualRecoverySucceeded(
+                        _logger,
                         DateTimeOffset.UtcNow - unhealthySince,
                         snapshot.LoginState,
                         snapshot.ConnectionState);
                     return;
                 }
 
-                Log.Error(
-                    "Discord manual reconnect failed to reach Ready after {UnhealthyDuration}. LoginState={LoginState}, ConnectionState={ConnectionState}, MostRecentDisconnectReason={MostRecentDisconnectReason}",
+                BeanBotLog.DiscordManualRecoveryNotReady(
+                    _logger,
                     DateTimeOffset.UtcNow - unhealthySince,
                     snapshot.LoginState,
                     snapshot.ConnectionState,
@@ -280,8 +287,7 @@ namespace BeanBot.Services
                     return;
                 }
 
-                Log.Fatal(
-                    "Discord gateway recovery was exhausted; exiting with code 1 so Docker can restart BeanBot");
+                BeanBotLog.DiscordRecoveryExhausted(_logger);
                 await PersistRestartRequestAsync(unhealthySince, snapshot);
 
                 if (_shutdown.IsCancellationRequested)
@@ -296,11 +302,10 @@ namespace BeanBot.Services
             }
             catch (Exception exception)
             {
-                Log.Fatal(exception, "Discord gateway recovery monitor failed unexpectedly");
+                BeanBotLog.DiscordRecoveryMonitorFailed(_logger, exception);
                 if (!_shutdown.IsCancellationRequested)
                 {
-                    Log.Fatal(
-                        "Exiting with code 1 because the Discord gateway recovery monitor cannot continue safely");
+                    BeanBotLog.DiscordRecoveryMonitorExiting(_logger);
                     var snapshot = _createHealthSnapshot();
                     await PersistRestartRequestAsync(
                         snapshot.UnhealthySinceAtUtc ?? unhealthySince,
@@ -334,10 +339,7 @@ namespace BeanBot.Services
             catch (Exception exception)
             {
                 // Recovery must still proceed if the durable incident record cannot be written.
-                Log.Error(
-                    exception,
-                    "Could not persist the meaningful Discord outage before manual recovery. DisconnectedAtUtc={DisconnectedAtUtc}",
-                    unhealthySince);
+                BeanBotLog.DiscordOutagePersistBeforeRecoveryFailed(_logger, unhealthySince, exception);
             }
         }
 
@@ -359,9 +361,7 @@ namespace BeanBot.Services
             catch (Exception exception)
             {
                 // The process must still exit so Docker can restore service even if persistence is unavailable.
-                Log.Error(
-                    exception,
-                    "Could not persist the Discord outage restart request before process exit");
+                BeanBotLog.DiscordOutageRestartPersistFailed(_logger, exception);
             }
         }
 
@@ -428,8 +428,8 @@ namespace BeanBot.Services
         private void LogNaturalRecovery(DateTimeOffset unhealthySince)
         {
             var snapshot = _createHealthSnapshot();
-            Log.Information(
-                "Discord gateway recovered naturally after {UnhealthyDuration}; manual reconnect was not needed. LoginState={LoginState}, ConnectionState={ConnectionState}",
+            BeanBotLog.DiscordNaturalRecovery(
+                _logger,
                 DateTimeOffset.UtcNow - unhealthySince,
                 snapshot.LoginState,
                 snapshot.ConnectionState);

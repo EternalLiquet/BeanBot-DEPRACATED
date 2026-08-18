@@ -1,4 +1,5 @@
-using Serilog;
+using BeanBot.Util;
+using Microsoft.Extensions.Logging;
 
 using System;
 using System.IO;
@@ -39,8 +40,11 @@ namespace BeanBot.Services
         internal const string OutageFileName = "discord-outage.json";
         private readonly string _outageFilePath;
         private readonly SemaphoreSlim _fileAccess = new(1, 1);
+        private readonly ILogger<DiscordOutageStore> _logger;
 
-        public DiscordOutageStore(string persistentDataDirectory)
+        public DiscordOutageStore(
+            string persistentDataDirectory,
+            ILogger<DiscordOutageStore> logger)
         {
             if (string.IsNullOrWhiteSpace(persistentDataDirectory))
             {
@@ -49,6 +53,7 @@ namespace BeanBot.Services
 
             Directory.CreateDirectory(persistentDataDirectory);
             _outageFilePath = Path.Combine(persistentDataDirectory, OutageFileName);
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public async Task<DiscordOutage?> ReadAsync(CancellationToken cancellationToken = default)
@@ -94,9 +99,7 @@ namespace BeanBot.Services
                 },
                 cancellationToken);
 
-            Log.Information(
-                "Discord outage manual recovery attempt persisted. DisconnectedAtUtc={DisconnectedAtUtc}",
-                disconnectedAtUtc);
+            BeanBotLog.OutageManualRecoveryPersisted(_logger, disconnectedAtUtc);
         }
 
         public async Task MarkProcessRestartRequestedAsync(
@@ -114,7 +117,7 @@ namespace BeanBot.Services
                 },
                 cancellationToken);
 
-            Log.Information("Discord outage process restart request persisted");
+            BeanBotLog.OutageRestartPersisted(_logger);
         }
 
         public async Task ClearAsync(CancellationToken cancellationToken = default)
@@ -125,7 +128,7 @@ namespace BeanBot.Services
                 if (File.Exists(_outageFilePath))
                 {
                     File.Delete(_outageFilePath);
-                    Log.Information("Persisted Discord outage cleared");
+                    BeanBotLog.OutageCleared(_logger);
                 }
             }
             finally
@@ -180,8 +183,8 @@ namespace BeanBot.Services
 
                 outage.MostRecentDisconnectReason = NormalizeReason(outage.MostRecentDisconnectReason);
 
-                Log.Information(
-                    "Persisted Discord outage loaded. DisconnectedAtUtc={DisconnectedAtUtc}, ManualRecoveryAttempted={ManualRecoveryAttempted}, ProcessRestartRequested={ProcessRestartRequested}",
+                BeanBotLog.OutageLoaded(
+                    _logger,
                     outage.DisconnectedAtUtc,
                     outage.ManualRecoveryAttempted,
                     outage.ProcessRestartRequested);
@@ -218,8 +221,8 @@ namespace BeanBot.Services
                 }
 
                 File.Move(temporaryFilePath, _outageFilePath, overwrite: true);
-                Log.Information(
-                    "Meaningful Discord outage persisted. DisconnectedAtUtc={DisconnectedAtUtc}, ManualRecoveryAttempted={ManualRecoveryAttempted}, ProcessRestartRequested={ProcessRestartRequested}",
+                BeanBotLog.OutagePersisted(
+                    _logger,
                     outage.DisconnectedAtUtc,
                     outage.ManualRecoveryAttempted,
                     outage.ProcessRestartRequested);
@@ -239,17 +242,11 @@ namespace BeanBot.Services
             try
             {
                 File.Move(_outageFilePath, quarantinePath);
-                Log.Error(
-                    exception,
-                    "Corrupted Discord outage state encountered and quarantined. QuarantinePath={QuarantinePath}",
-                    quarantinePath);
+                BeanBotLog.OutageQuarantined(_logger, quarantinePath, exception);
             }
             catch (Exception quarantineException)
             {
-                Log.Error(
-                    quarantineException,
-                    "Corrupted Discord outage state encountered but could not be quarantined. OutageFilePath={OutageFilePath}",
-                    _outageFilePath);
+                BeanBotLog.OutageQuarantineFailed(_logger, _outageFilePath, quarantineException);
             }
         }
 

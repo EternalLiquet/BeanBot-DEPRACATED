@@ -1,9 +1,10 @@
+using BeanBot.Util;
 using Discord;
 using Discord.Commands;
 using Discord.Rest;
 using Discord.WebSocket;
 
-using Serilog;
+using Microsoft.Extensions.Logging;
 
 using System;
 using System.Collections.Concurrent;
@@ -38,11 +39,15 @@ namespace BeanBot.Services
         private readonly SemaphoreSlim _availableSlots = new(MaximumActivePaginators, MaximumActivePaginators);
         private readonly CancellationTokenSource _shutdown = new();
         private readonly object _syncRoot = new();
+        private readonly ILogger<DiscordPaginatorService> _logger;
         private int _disposed;
 
-        public DiscordPaginatorService(DiscordSocketClient discordClient)
+        public DiscordPaginatorService(
+            DiscordSocketClient discordClient,
+            ILogger<DiscordPaginatorService> logger)
         {
             _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _discordClient.ReactionAdded += HandleReactionAsync;
         }
 
@@ -189,6 +194,7 @@ namespace BeanBot.Services
                             session.Message,
                             reaction.Emote,
                             reaction.UserId,
+                            _logger,
                             _shutdown.Token);
                     }
                 }
@@ -207,10 +213,7 @@ namespace BeanBot.Services
             }
             catch (Exception exception)
             {
-                Log.Warning(
-                    exception,
-                    "Could not process Discord paginator reaction for message {MessageId}",
-                    message.Id);
+                BeanBotLog.PaginatorReactionFailed(_logger, message.Id, exception);
             }
         }
 
@@ -256,10 +259,7 @@ namespace BeanBot.Services
                     }
                     catch (Exception exception)
                     {
-                        Log.Debug(
-                            exception,
-                            "Could not remove expired paginator control from message {MessageId}",
-                            messageId);
+                        BeanBotLog.PaginatorControlRemoveFailed(_logger, messageId, exception);
                     }
                 }
             }
@@ -268,7 +268,7 @@ namespace BeanBot.Services
             }
             catch (Exception exception)
             {
-                Log.Warning(exception, "Discord paginator expiration failed for message {MessageId}", messageId);
+                BeanBotLog.PaginatorExpirationFailed(_logger, messageId, exception);
             }
             finally
             {
@@ -313,8 +313,10 @@ namespace BeanBot.Services
             IUserMessage message,
             IEmote emote,
             ulong userId,
+            ILogger<DiscordPaginatorService> logger,
             CancellationToken cancellationToken = default)
         {
+            ArgumentNullException.ThrowIfNull(logger);
             try
             {
                 await message.RemoveReactionAsync(
@@ -324,10 +326,7 @@ namespace BeanBot.Services
             }
             catch (Exception exception)
             {
-                Log.Debug(
-                    exception,
-                    "Could not remove paginator reaction from user {UserId}",
-                    userId);
+                BeanBotLog.PaginatorUserReactionRemoveFailed(logger, userId, exception);
             }
         }
 
@@ -424,13 +423,11 @@ namespace BeanBot.Services
                     return;
                 }
 
-                Log.Warning(
-                    "Discord paginator shutdown exceeded {Timeout}; cleanup will finish in the background",
-                    ShutdownTimeout);
+                BeanBotLog.PaginatorShutdownTimedOut(_logger, ShutdownTimeout);
             }
             catch (Exception exception)
             {
-                Log.Warning(exception, "Discord paginator shutdown encountered a cleanup failure");
+                BeanBotLog.PaginatorShutdownFailed(_logger, exception);
                 _shutdown.Dispose();
                 return;
             }
@@ -465,7 +462,7 @@ namespace BeanBot.Services
             }
             catch (Exception exception)
             {
-                Log.Warning(exception, "Deferred Discord paginator cleanup failed");
+                BeanBotLog.PaginatorDeferredCleanupFailed(_logger, exception);
             }
             finally
             {

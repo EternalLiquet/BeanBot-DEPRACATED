@@ -5,8 +5,8 @@ using Discord.Commands;
 using Discord.WebSocket;
 
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
-using Serilog;
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
@@ -21,19 +21,25 @@ namespace BeanBot.EventHandlers
         private readonly IServiceProvider _services;
         private readonly FortuneAnswerStore _fortuneAnswers;
         private readonly DiscordMessageWaiter _messageWaiter;
+        private readonly LogHandler _logHandler;
+        private readonly ILogger<CommandHandler> _logger;
         private bool _initialized;
 
         public CommandHandler(
             DiscordSocketClient discordClient,
             CommandService commandService,
-            IServiceProvider services)
+            IServiceProvider services,
+            LogHandler logHandler,
+            ILogger<CommandHandler> logger)
         {
-            Log.Information("Instantiating Command Handler");
             _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
             _commandService = commandService ?? throw new ArgumentNullException(nameof(commandService));
             _services = services ?? throw new ArgumentNullException(nameof(services));
+            _logHandler = logHandler ?? throw new ArgumentNullException(nameof(logHandler));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _fortuneAnswers = _services.GetRequiredService<FortuneAnswerStore>();
             _messageWaiter = _services.GetRequiredService<DiscordMessageWaiter>();
+            BeanBotLog.CommandHandlerCreated(_logger);
         }
 
         public async Task InitializeCommandsAsync()
@@ -43,9 +49,9 @@ namespace BeanBot.EventHandlers
                 return;
             }
 
-            Log.Information("Installing Commands");
+            BeanBotLog.CommandsInstalling(_logger);
             _discordClient.MessageReceived += HandleCommandAsync;
-            _commandService.CommandExecuted += LogHandler.LogCommands;
+            _commandService.CommandExecuted += _logHandler.LogCommands;
             await _commandService.AddModulesAsync(assembly: Assembly.GetEntryAssembly() ?? typeof(CommandHandler).Assembly,
                                                   services: _services);
             _initialized = true;
@@ -56,7 +62,7 @@ namespace BeanBot.EventHandlers
             if (_initialized)
             {
                 _discordClient.MessageReceived -= HandleCommandAsync;
-                _commandService.CommandExecuted -= LogHandler.LogCommands;
+                _commandService.CommandExecuted -= _logHandler.LogCommands;
                 _initialized = false;
             }
 

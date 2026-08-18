@@ -1,4 +1,5 @@
 using BeanBot.Configuration;
+using BeanBot.Util;
 
 using Discord.WebSocket;
 
@@ -46,6 +47,7 @@ namespace BeanBot.Services
         private readonly TimeSpan _shutdownTimeout;
         private readonly int _maximumConcurrentClients;
         private readonly BoundedClientRateLimiter _rateLimiter;
+        private readonly ILogger<HealthCheckServer> _logger;
         private WebApplication? _application;
         private int _boundPort;
         private int _disposed;
@@ -53,10 +55,12 @@ namespace BeanBot.Services
         public HealthCheckServer(
             HealthCheckOptions options,
             DiscordSocketClient discordClient,
-            DiscordConnectionHealth discordConnectionHealth)
+            DiscordConnectionHealth discordConnectionHealth,
+            ILogger<HealthCheckServer> logger)
             : this(
                 options,
                 CreateSnapshotFactory(discordClient, discordConnectionHealth),
+                logger,
                 DefaultRequestHeadersTimeout,
                 DefaultMaximumConcurrentClients,
                 DefaultMaximumTrackedRateLimitClients,
@@ -67,6 +71,7 @@ namespace BeanBot.Services
         internal HealthCheckServer(
             HealthCheckOptions options,
             Func<DiscordHealthSnapshot> createHealthSnapshot,
+            ILogger<HealthCheckServer> logger,
             TimeSpan? requestHeadersTimeout = null,
             int maximumConcurrentClients = DefaultMaximumConcurrentClients,
             int maximumTrackedRateLimitClients = DefaultMaximumTrackedRateLimitClients,
@@ -74,6 +79,7 @@ namespace BeanBot.Services
         {
             ArgumentNullException.ThrowIfNull(options);
             ArgumentNullException.ThrowIfNull(createHealthSnapshot);
+            ArgumentNullException.ThrowIfNull(logger);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumConcurrentClients);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumTrackedRateLimitClients);
 
@@ -84,6 +90,7 @@ namespace BeanBot.Services
 
             _options = options;
             _createHealthSnapshot = createHealthSnapshot;
+            _logger = logger;
             _requestHeadersTimeout = effectiveRequestHeadersTimeout;
             _shutdownTimeout = effectiveShutdownTimeout;
             _maximumConcurrentClients = maximumConcurrentClients;
@@ -151,8 +158,8 @@ namespace BeanBot.Services
                 }
             }
 
-            Log.Information(
-                "Health check endpoint listening on {BindAddress}:{Port}{Path} with a {RateLimitSeconds}s per-client poll limit",
+            BeanBotLog.HealthEndpointListening(
+                _logger,
                 _options.BindAddress,
                 BoundPort,
                 _options.Path,
@@ -162,8 +169,8 @@ namespace BeanBot.Services
                 && !_options.BindAddress.Equals(IPAddress.Loopback)
                 && !_options.BindAddress.Equals(IPAddress.IPv6Loopback))
             {
-                Log.Warning(
-                    "Health check endpoint is listening without a bearer token on {BindAddress}:{Port}{Path}",
+                BeanBotLog.HealthEndpointUnauthenticated(
+                    _logger,
                     _options.BindAddress,
                     BoundPort,
                     _options.Path);
@@ -195,8 +202,8 @@ namespace BeanBot.Services
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
-                    Log.Warning(
-                        "Health check endpoint exceeded its {ShutdownTimeoutSeconds}s shutdown timeout; aborting remaining requests",
+                    BeanBotLog.HealthEndpointShutdownTimedOut(
+                        _logger,
                         _shutdownTimeout.TotalSeconds);
                 }
             }

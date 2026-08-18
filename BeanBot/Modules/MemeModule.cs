@@ -7,7 +7,7 @@ using Discord;
 using Discord.Commands;
 using Discord.WebSocket;
 using MemeApiDotNetWrapper;
-using Serilog;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -26,15 +26,18 @@ namespace BeanBot.Modules
         private readonly BeanBotOptions _options;
         private readonly FortuneAnswerStore _fortuneAnswers;
         private readonly DiscordPaginatorService _paginator;
+        private readonly ILogger<MemeModule> _logger;
 
         public MemeModule(
             BeanBotOptions options,
             FortuneAnswerStore fortuneAnswers,
-            DiscordPaginatorService paginator)
+            DiscordPaginatorService paginator,
+            ILogger<MemeModule> logger)
         {
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _fortuneAnswers = fortuneAnswers ?? throw new ArgumentNullException(nameof(fortuneAnswers));
             _paginator = paginator ?? throw new ArgumentNullException(nameof(paginator));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         private static readonly string[] EightBallResponses = new string[8]
@@ -133,7 +136,7 @@ namespace BeanBot.Modules
             }
             catch (Exception exception)
             {
-                Log.Warning(exception, "Could not delete the source message for echo command {MessageId}", Context.Message.Id);
+                BeanBotLog.EchoSourceDeleteFailed(_logger, Context.Message.Id, exception);
             }
             await ReplyAsync(text);
         }
@@ -179,7 +182,7 @@ namespace BeanBot.Modules
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "The meme API request failed");
+                BeanBotLog.MemeApiFailed(_logger, ex);
                 meme = null;
             }
 
@@ -238,7 +241,7 @@ namespace BeanBot.Modules
 
                 if (puns.Count == 0)
                 {
-                    Log.Warning("No usable puns were found in Resources/puns.csv");
+                    BeanBotLog.ModulePunFileEmpty(_logger);
                     await ReplyAsync("The PunMaster is temporarily out of material.");
                     return;
                 }
@@ -298,7 +301,7 @@ namespace BeanBot.Modules
                 }
                 catch (Exception exception)
                 {
-                    Log.Warning(exception, "Could not attach the invalid-question Gordon GIF");
+                    BeanBotLog.GordonAttachmentFailed(_logger, exception);
                     await ReplyAsync(rejection);
                 }
             }
@@ -349,7 +352,7 @@ namespace BeanBot.Modules
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Failed to download an image from {ImageUrl}", url);
+                BeanBotLog.ImageDownloadFailed(_logger, url, ex);
                 await ReplyAsync("I couldn't download that image right now.");
             }
         }
