@@ -3,6 +3,7 @@ using BeanBot.Repository;
 using BeanBot.Util;
 using Discord;
 using Discord.WebSocket;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Concurrent;
@@ -27,15 +28,24 @@ namespace BeanBot.Services
         private readonly TaskCompletionSource _disposeCompletion = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly ILogger<RoleReactService> _logger;
+        private readonly CancellationTokenSource _shutdownCancellation;
+        private readonly CancellationToken _shutdownToken;
         private volatile bool _cacheLoaded;
         private bool _stopping;
         private int _disposeStarted;
 
         public RoleReactService(
             RoleReactRepository roleReactRepository,
+            IHostApplicationLifetime applicationLifetime,
             ILogger<RoleReactService> logger,
             DiscordSocketClient? client = null)
-            : this(roleReactRepository, client, DefaultShutdownDrainTimeout, logger)
+            : this(
+                roleReactRepository,
+                client,
+                DefaultShutdownDrainTimeout,
+                logger,
+                (applicationLifetime ?? throw new ArgumentNullException(nameof(applicationLifetime)))
+                    .ApplicationStopping)
         {
         }
 
@@ -43,41 +53,56 @@ namespace BeanBot.Services
             RoleReactRepository roleReactRepository,
             DiscordSocketClient? client,
             TimeSpan shutdownDrainTimeout,
-            ILogger<RoleReactService> logger)
+            ILogger<RoleReactService> logger,
+            CancellationToken applicationStopping)
         {
             ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(shutdownDrainTimeout, TimeSpan.Zero);
             _roleReactRepository = roleReactRepository ?? throw new ArgumentNullException(nameof(roleReactRepository));
             _client = client;
             _shutdownDrainTimeout = shutdownDrainTimeout;
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _shutdownCancellation = CancellationTokenSource.CreateLinkedTokenSource(applicationStopping);
+            _shutdownToken = _shutdownCancellation.Token;
         }
 
         public Task HandleReact(Cacheable<IUserMessage, ulong> message, Cacheable<IMessageChannel, ulong> channel, SocketReaction reaction)
-            => TrackHandlerAsync(() => HandleReactionAsync(message, channel, reaction, addRole: true));
+            => TrackHandlerAsync(cancellationToken =>
+                HandleReactionAsync(message, channel, reaction, addRole: true, cancellationToken));
 
         public Task HandleRemoveReact(Cacheable<IUserMessage, ulong> message, Cacheable<IMessageChannel, ulong> channel, SocketReaction reaction)
-            => TrackHandlerAsync(() => HandleReactionAsync(message, channel, reaction, addRole: false));
+            => TrackHandlerAsync(cancellationToken =>
+                HandleReactionAsync(message, channel, reaction, addRole: false, cancellationToken));
 
-        internal Task TrackHandlerAsync(Func<Task> beginOperation)
+        internal Task TrackHandlerAsync(Func<CancellationToken, Task> beginOperation)
+            => TrackOperationAsync(beginOperation, skipWhenStopping: true);
+
+        private Task TrackRequiredOperationAsync(Func<CancellationToken, Task> beginOperation)
+            => TrackOperationAsync(beginOperation, skipWhenStopping: false);
+
+        private Task TrackOperationAsync(
+            Func<CancellationToken, Task> beginOperation,
+            bool skipWhenStopping)
         {
             ArgumentNullException.ThrowIfNull(beginOperation);
 
             Task operation;
             lock (_operationSync)
             {
-                if (_stopping)
+                if (_stopping || _shutdownToken.IsCancellationRequested)
                 {
-                    return Task.CompletedTask;
+                    return skipWhenStopping
+                        ? Task.CompletedTask
+                        : Task.FromCanceled(_shutdownToken);
                 }
 
-                operation = beginOperation();
+                operation = beginOperation(_shutdownToken);
                 _inFlightOperations.Add(operation);
             }
 
-            return ObserveHandlerAsync(operation);
+            return ObserveOperationAsync(operation);
         }
 
-        private async Task ObserveHandlerAsync(Task operation)
+        private async Task ObserveOperationAsync(Task operation)
         {
             try
             {
@@ -96,7 +121,8 @@ namespace BeanBot.Services
             Cacheable<IUserMessage, ulong> message,
             Cacheable<IMessageChannel, ulong> channel,
             SocketReaction reaction,
-            bool addRole)
+            bool addRole,
+            CancellationToken cancellationToken)
         {
             try
             {
@@ -123,7 +149,7 @@ namespace BeanBot.Services
                     return;
                 }
 
-                var roleSetting = await GetCachedRoleSettingAsync(message.Id, cachedMessage);
+                var roleSetting = await GetCachedRoleSettingAsync(message.Id, cancellationToken);
                 var pair = roleSetting?.roleEmotePair?
                     .FirstOrDefault(candidate =>
                         candidate.emojiId == customEmote.Id.ToString(CultureInfo.InvariantCulture));
@@ -149,6 +175,10 @@ namespace BeanBot.Services
                     await user.RemoveRoleAsync(role);
                 }
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception exception)
             {
                 BeanBotLog.ReactionRoleActionFailed(
@@ -159,16 +189,18 @@ namespace BeanBot.Services
             }
         }
 
-        private async Task<RoleSettings?> GetCachedRoleSettingAsync(ulong messageId, IUserMessage message)
+        internal async Task<RoleSettings?> GetCachedRoleSettingAsync(
+            ulong messageId,
+            CancellationToken cancellationToken)
         {
-            await EnsureCacheLoadedAsync();
+            await EnsureCacheLoadedAsync(cancellationToken);
             var messageIdText = messageId.ToString(CultureInfo.InvariantCulture);
             if (_roleSettings.TryGetValue(messageIdText, out var cached))
             {
                 return cached;
             }
 
-            var roleSetting = await _roleReactRepository.GetRoleSetting(message);
+            var roleSetting = await _roleReactRepository.GetRoleSetting(messageId, cancellationToken);
             if (roleSetting != null && !string.IsNullOrWhiteSpace(roleSetting.messageId))
             {
                 _roleSettings[roleSetting.messageId] = roleSetting;
@@ -177,14 +209,14 @@ namespace BeanBot.Services
             return roleSetting;
         }
 
-        private async Task EnsureCacheLoadedAsync()
+        private async Task EnsureCacheLoadedAsync(CancellationToken cancellationToken)
         {
             if (_cacheLoaded)
             {
                 return;
             }
 
-            await _cacheLock.WaitAsync();
+            await _cacheLock.WaitAsync(cancellationToken);
             try
             {
                 if (_cacheLoaded)
@@ -192,7 +224,7 @@ namespace BeanBot.Services
                     return;
                 }
 
-                foreach (var setting in await _roleReactRepository.GetRecentRoleSettings())
+                foreach (var setting in await _roleReactRepository.GetRecentRoleSettings(cancellationToken))
                 {
                     if (!string.IsNullOrWhiteSpace(setting.messageId))
                     {
@@ -207,7 +239,26 @@ namespace BeanBot.Services
             }
         }
 
-        public async Task SaveRoleSettings(List<RoleEmotePair> roleEmotePair, IMessage messageToListen)
+        public Task SaveRoleSettings(
+            List<RoleEmotePair> roleEmotePair,
+            IMessage messageToListen,
+            CancellationToken cancellationToken = default)
+            => TrackRequiredOperationAsync(async shutdownToken =>
+            {
+                using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                    shutdownToken,
+                    cancellationToken);
+                operationCancellation.Token.ThrowIfCancellationRequested();
+                await SaveRoleSettingsCoreAsync(
+                    roleEmotePair,
+                    messageToListen,
+                    operationCancellation.Token);
+            });
+
+        private async Task SaveRoleSettingsCoreAsync(
+            List<RoleEmotePair> roleEmotePair,
+            IMessage messageToListen,
+            CancellationToken cancellationToken)
         {
             if (messageToListen.Channel is not SocketTextChannel textChannel)
             {
@@ -219,7 +270,14 @@ namespace BeanBot.Services
                 textChannel.Guild.Id.ToString(CultureInfo.InvariantCulture),
                 messageToListen.Channel.Id.ToString(CultureInfo.InvariantCulture),
                 messageToListen.Id.ToString(CultureInfo.InvariantCulture));
-            await _roleReactRepository.InsertNewRoleSettings(settings);
+            await PersistRoleSettingsAsync(settings, cancellationToken);
+        }
+
+        internal async Task PersistRoleSettingsAsync(
+            RoleSettings settings,
+            CancellationToken cancellationToken)
+        {
+            await _roleReactRepository.InsertNewRoleSettings(settings, cancellationToken);
             _roleSettings[settings.messageId] = settings;
         }
 
@@ -239,6 +297,8 @@ namespace BeanBot.Services
 
             try
             {
+                _shutdownCancellation.Cancel();
+
                 Task[] inFlightOperations;
                 lock (_operationSync)
                 {
@@ -257,6 +317,9 @@ namespace BeanBot.Services
                         BeanBotLog.ReactionRoleDrainTimedOut(_logger, inFlightOperations.Length);
                         return;
                     }
+                    catch (OperationCanceledException) when (_shutdownToken.IsCancellationRequested)
+                    {
+                    }
                     catch (Exception exception)
                     {
                         BeanBotLog.ReactionRoleShutdownOperationFailed(_logger, exception);
@@ -264,6 +327,7 @@ namespace BeanBot.Services
                 }
 
                 _cacheLock.Dispose();
+                _shutdownCancellation.Dispose();
                 GC.SuppressFinalize(this);
             }
             finally

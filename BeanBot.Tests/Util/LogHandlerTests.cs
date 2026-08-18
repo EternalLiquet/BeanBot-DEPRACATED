@@ -78,7 +78,7 @@ public class LogHandlerTests
         var logger = loggerFactory.CreateLogger<LogHandlerTests>();
         var exception = new InvalidOperationException("failed");
 
-        BeanBotLog.ReactionRoleReadFailed(logger, 42UL, exception);
+        BeanBotLog.ReactionRoleActionFailed(logger, "add", 42UL, exception);
 
         var logEvent = Assert.Single(sink.Events);
         Assert.Equal(LogEventLevel.Error, logEvent.Level);
@@ -132,10 +132,10 @@ public class LogHandlerTests
         var logger = loggerFactory.CreateLogger<LogHandlerTests>();
 
         BeanBotLog.DiscordPresenceFailed(logger, new InvalidOperationException("handled"));
-        BeanBotLog.ReactionRoleReadFailed(logger, 42UL, new InvalidOperationException("failed"));
+        BeanBotLog.ReactionRoleActionFailed(logger, "add", 42UL, new InvalidOperationException("failed"));
 
         var alert = Assert.Single(notifier.Alerts);
-        Assert.Contains("Error retrieving reaction-role settings for message 42", alert);
+        Assert.Contains("Failed to \"add\" a reaction role for message 42", alert);
         Assert.DoesNotContain("Discord started", alert);
     }
 
