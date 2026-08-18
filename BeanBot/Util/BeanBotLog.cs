@@ -116,15 +116,6 @@ internal static partial class BeanBotLog
     [LoggerMessage(Level = LogLevel.Information, Message = "Reaction-role settings successfully created for message {MessageId}")]
     internal static partial void ReactionRoleSettingsCreated(ILogger logger, string messageId);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Error inserting reaction-role settings into the database")]
-    internal static partial void ReactionRoleInsertFailed(ILogger logger, Exception exception);
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "Error retrieving recent reaction-role settings from the database")]
-    internal static partial void RecentReactionRoleReadFailed(ILogger logger, Exception exception);
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "Error retrieving reaction-role settings for message {MessageId}")]
-    internal static partial void ReactionRoleReadFailed(ILogger logger, ulong messageId, Exception exception);
-
     [LoggerMessage(Level = LogLevel.Warning, Message = "Could not delete {MessageCount} setup message(s) using {DeleteMode}; continuing cleanup")]
     internal static partial void MessageCleanupFailed(ILogger logger, int messageCount, string deleteMode, Exception exception);
 
@@ -149,10 +140,10 @@ internal static partial class BeanBotLog
     [LoggerMessage(Level = LogLevel.Error, Message = "Failed to {Action} a reaction role for message {MessageId}")]
     internal static partial void ReactionRoleActionFailed(ILogger logger, string action, ulong messageId, Exception exception);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Timed out draining {InFlightReactionHandlerCount} reaction-role handler(s); leaving the cache lock for process exit")]
-    internal static partial void ReactionRoleDrainTimedOut(ILogger logger, int inFlightReactionHandlerCount);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Timed out draining {InFlightReactionOperationCount} reaction-role operation(s); leaving the cache lock for process exit")]
+    internal static partial void ReactionRoleDrainTimedOut(ILogger logger, int inFlightReactionOperationCount);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "A reaction-role handler failed while shutdown was draining in-flight work")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "A reaction-role operation failed while shutdown was draining in-flight work")]
     internal static partial void ReactionRoleShutdownOperationFailed(ILogger logger, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Discord {Operation} operation failed after its startup wait ended")]
