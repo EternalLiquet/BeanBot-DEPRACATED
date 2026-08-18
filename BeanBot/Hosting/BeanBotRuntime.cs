@@ -75,7 +75,8 @@ namespace BeanBot.Hosting
             _discordClient.Disconnected += OnDiscordDisconnectedAsync;
         }
 
-        public void StartHealthServer() => _healthCheckServer.Start();
+        public Task StartHealthServerAsync(CancellationToken cancellationToken)
+            => _healthCheckServer.StartAsync(cancellationToken);
 
         public Task StartDiscordAsync(CancellationToken cancellationToken)
             => _discordStartupService.StartAsync(cancellationToken);
@@ -119,10 +120,10 @@ namespace BeanBot.Hosting
             TaskScheduler.UnobservedTaskException -= HandleUnobservedTaskException;
         }
 
-        public async Task StopBackgroundServicesAsync()
+        public async Task StopBackgroundServicesAsync(CancellationToken cancellationToken)
         {
             await _punHandler.DisposeAsync();
-            await _healthCheckServer.DisposeAsync();
+            await _healthCheckServer.StopAsync(cancellationToken);
         }
 
         public Task FlushOwnerAlertsAsync()

@@ -95,7 +95,8 @@ public class BeanBotApplicationTests
         public bool HasUnfinishedDiscordStartupOperation { get; init; }
 
         public void SubscribeApplicationEvents() => Record("subscribe-events");
-        public void StartHealthServer() => Record("start-health");
+        public Task StartHealthServerAsync(CancellationToken cancellationToken)
+            => RecordAsync("start-health");
         public Task StartDiscordAsync(CancellationToken cancellationToken)
             => RecordAsync("start-discord");
         public void StartGatewayRecovery() => Record("start-recovery");
@@ -104,7 +105,8 @@ public class BeanBotApplicationTests
         public void StopEventAndCommandServices() => Record("stop-event-command");
         public Task StopGatewayRecoveryAsync() => RecordAsync("stop-recovery");
         public void UnsubscribeApplicationEvents() => Record("unsubscribe-events");
-        public Task StopBackgroundServicesAsync() => RecordAsync("stop-background");
+        public Task StopBackgroundServicesAsync(CancellationToken cancellationToken)
+            => RecordAsync("stop-background");
         public Task FlushOwnerAlertsAsync() => RecordAsync("flush-alerts");
         public Task StopDiscordAsync(CancellationToken cancellationToken)
             => RecordAsync("stop-discord");

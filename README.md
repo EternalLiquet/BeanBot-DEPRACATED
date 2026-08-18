@@ -37,7 +37,7 @@ BEANBOT_HEALTHCHECK_BEARER_TOKEN=
 BEANBOT_HEALTHCHECK_RATE_LIMIT_SECONDS=90
 ```
 
-When `BEANBOT_HEALTHCHECK_PORT` is set, the bot exposes `GET /healthz` and `HEAD /healthz` on that port:
+When `BEANBOT_HEALTHCHECK_PORT` is set, the bot exposes a Kestrel-hosted `GET /healthz` and `HEAD /healthz` endpoint on that port:
 
 - `200 OK`: process is up and the Discord gateway session is ready.
 - `401 Unauthorized`: the bearer token is missing or invalid.
@@ -95,7 +95,7 @@ docker run -d `
   beanbot
 ```
 
-The container uses the .NET 10 runtime image because this is a console application, not an ASP.NET app.
+The container uses the .NET 10 ASP.NET runtime image to provide the Kestrel health endpoint.
 Container stop signals are handled by the Generic Host and flow through BeanBot's bounded Discord and background-service shutdown sequence.
 
 BeanBot makes three bounded attempts to log in to Discord during startup. Permanent token failures fail immediately; exhausted transient failures exit with a non-zero status so the configured Docker restart policy can start a fresh process. Runtime gateway disconnects continue to use BeanBot's separate natural-recovery, manual-reconnect, and process-restart sequence.

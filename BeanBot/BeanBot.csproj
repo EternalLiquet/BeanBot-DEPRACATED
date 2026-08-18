@@ -5,6 +5,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Remove="Resources\gordon1.gif" />
     <None Remove="Resources\gordon2.gif" />
     <None Remove="Resources\gordon3.gif" />
@@ -24,14 +28,12 @@
     <PackageReference Include="Discord.Net.Webhook" />
     <PackageReference Include="Discord.Net.WebSocket" />
     <PackageReference Include="LQ.MemeApiDotNetWrapper" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" />
-    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
     <PackageReference Include="MongoDB.Bson" />
     <PackageReference Include="MongoDB.Driver" />
     <PackageReference Include="MongoDB.Driver.Core" />
     <PackageReference Include="Newtonsoft.Json" />
     <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Extensions.Logging" />
     <PackageReference Include="Serilog.Settings.Configuration" />
     <PackageReference Include="Serilog.Sinks.Async" />
     <PackageReference Include="Serilog.Sinks.Console" />
