@@ -89,19 +89,46 @@ public class LogHandlerTests
             Assert.IsType<ScalarValue>(logEvent.Properties["SourceContext"]).Value);
     }
 
+    [Theory]
+    [InlineData("BeanBot.Services.CategoryFilterProbe", LogLevel.Trace, true)]
+    [InlineData("Microsoft.AspNetCore.CategoryFilterProbe", LogLevel.Debug, false)]
+    [InlineData("System.Net.Http.CategoryFilterProbe", LogLevel.Trace, false)]
+    [InlineData("Microsoft.Hosting.Lifetime", LogLevel.Information, true)]
+    public void ProductionConfiguration_AppliesCategoryMinimumLevels(
+        string category,
+        LogLevel logLevel,
+        bool expectedEnabled)
+    {
+        var sink = new CapturingSerilogSink();
+        var notifier = new CapturingNotifier();
+        using var serilogLogger = CreateProductionLogger(sink, notifier);
+        using var loggerFactory = CreateLoggerFactory(serilogLogger);
+        var logger = loggerFactory.CreateLogger(category);
+
+        Assert.Equal(expectedEnabled, logger.IsEnabled(logLevel));
+        WriteTestLog(logger, logLevel, "category filter probe");
+
+        if (expectedEnabled)
+        {
+            var logEvent = Assert.Single(sink.Events);
+            Assert.Equal(
+                category,
+                Assert.IsType<ScalarValue>(logEvent.Properties["SourceContext"]).Value);
+        }
+        else
+        {
+            Assert.Empty(sink.Events);
+        }
+        Assert.Empty(notifier.Alerts);
+    }
+
     [Fact]
-    public void MicrosoftLogger_ErrorReachesOwnerSinkOnceButWarningDoesNot()
+    public void ProductionConfiguration_BeanBotErrorReachesOwnerSinkOnceButWarningDoesNot()
     {
         var notifier = new CapturingNotifier();
-        using var serilogLogger = new LoggerConfiguration()
-            .MinimumLevel.Verbose()
-            .WriteTo.Sink(new DiscordOwnerErrorSink(notifier))
-            .CreateLogger();
-        using var loggerFactory = LoggerFactory.Create(builder =>
-        {
-            builder.ClearProviders();
-            builder.AddSerilog(serilogLogger, dispose: false);
-        });
+        var sink = new CapturingSerilogSink();
+        using var serilogLogger = CreateProductionLogger(sink, notifier);
+        using var loggerFactory = CreateLoggerFactory(serilogLogger);
         var logger = loggerFactory.CreateLogger<LogHandlerTests>();
 
         BeanBotLog.DiscordPresenceFailed(logger, new InvalidOperationException("handled"));
@@ -111,6 +138,35 @@ public class LogHandlerTests
         Assert.Contains("Error retrieving reaction-role settings for message 42", alert);
         Assert.DoesNotContain("Discord started", alert);
     }
+
+    private static Serilog.Core.Logger CreateProductionLogger(
+        CapturingSerilogSink sink,
+        CapturingNotifier notifier)
+    {
+        var loggerConfiguration = new LoggerConfiguration();
+        LogHandler.ConfigureLogger(loggerConfiguration, notifier);
+        return loggerConfiguration
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+    }
+
+    private static ILoggerFactory CreateLoggerFactory(Serilog.ILogger serilogLogger)
+        => LoggerFactory.Create(builder =>
+        {
+            builder.ClearProviders();
+            builder.AddSerilog(serilogLogger, dispose: false);
+        });
+
+    private static void WriteTestLog(
+        Microsoft.Extensions.Logging.ILogger logger,
+        LogLevel logLevel,
+        string message)
+        => logger.Log(
+            logLevel,
+            eventId: default,
+            message,
+            exception: null,
+            static (state, _) => state);
 
     private sealed record LogEntry(
         LogLevel Level,

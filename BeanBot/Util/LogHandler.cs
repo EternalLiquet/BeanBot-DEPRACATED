@@ -5,6 +5,7 @@ using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
 
 using Serilog;
+using Serilog.Events;
 
 using System.Globalization;
 using System.IO;
@@ -36,6 +37,9 @@ namespace BeanBot.Util
 
             loggerConfiguration
                 .MinimumLevel.Verbose()
+                .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+                .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
+                .MinimumLevel.Override("System", LogEventLevel.Warning)
                 .WriteTo.Console(formatProvider: CultureInfo.InvariantCulture)
                 .WriteTo.Async(a => a.File(
                     Path.Combine(DirectorySetup.botBaseDirectory, "Logs", "BeanBotLogs.txt"),
