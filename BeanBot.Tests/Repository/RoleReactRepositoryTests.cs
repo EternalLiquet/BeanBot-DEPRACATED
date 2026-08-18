@@ -78,6 +78,29 @@ public class RoleReactRepositoryTests
     }
 
     [Fact]
+    public async Task GetRecentRoleSettings_UsesThirtyDayUtcCutoff()
+    {
+        DateTime? observedCutoff = null;
+        var beforeRead = DateTime.UtcNow.AddDays(-30);
+        var store = new FakeRoleSettingsStore
+        {
+            GetRecent = (oldestLastAccessedUtc, _) =>
+            {
+                observedCutoff = oldestLastAccessedUtc;
+                return Task.FromResult(new List<RoleSettings>());
+            }
+        };
+        var repository = CreateRepository(store);
+
+        await repository.GetRecentRoleSettings();
+        var afterRead = DateTime.UtcNow.AddDays(-30);
+
+        var cutoff = Assert.IsType<DateTime>(observedCutoff);
+        Assert.Equal(DateTimeKind.Utc, cutoff.Kind);
+        Assert.InRange(cutoff, beforeRead, afterRead);
+    }
+
+    [Fact]
     public async Task InsertNewRoleSettings_UpdatesLastAccessedAndPassesCancellationToken()
     {
         using var cancellation = new CancellationTokenSource();
@@ -96,7 +119,8 @@ public class RoleReactRepositoryTests
 
         await repository.InsertNewRoleSettings(settings, cancellation.Token);
 
-        Assert.InRange(settings.lastAccessed, beforeInsert, DateTime.UtcNow);
+        Assert.Equal(DateTimeKind.Utc, settings.LastAccessedUtc.Kind);
+        Assert.InRange(settings.LastAccessedUtc, beforeInsert, DateTime.UtcNow);
     }
 
     [Fact]
@@ -134,9 +158,9 @@ public class RoleReactRepositoryTests
             => Insert(roleSettings, cancellationToken);
 
         public Task<List<RoleSettings>> GetRecentAsync(
-            DateTime oldestLastAccessed,
+            DateTime oldestLastAccessedUtc,
             CancellationToken cancellationToken)
-            => GetRecent(oldestLastAccessed, cancellationToken);
+            => GetRecent(oldestLastAccessedUtc, cancellationToken);
 
         public Task<RoleSettings?> GetByMessageIdAsync(
             string messageId,

@@ -1,18 +1,37 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+﻿using MongoDB.Bson.Serialization.Attributes;
+
+using System;
+using System.Text.Json.Serialization;
 
 namespace BeanBot.Entities
 {
     public class RoleEmotePair
     {
-        public string roleId { get; set; }
-        public string emojiId { get; set; }
+        private string _roleId = string.Empty;
+        private string _emojiId = string.Empty;
+
+        [BsonElement("roleId")]
+        [JsonPropertyName("roleId")]
+        public string RoleId
+        {
+            get => _roleId;
+            init => _roleId = value ?? string.Empty;
+        }
+
+        [BsonElement("emojiId")]
+        [JsonPropertyName("emojiId")]
+        public string EmojiId
+        {
+            get => _emojiId;
+            init => _emojiId = value ?? string.Empty;
+        }
+
+        public RoleEmotePair() { }
 
         public RoleEmotePair(string roleId, string emojiId)
         {
-            this.roleId = roleId;
-            this.emojiId = emojiId;
+            RoleId = roleId ?? throw new ArgumentNullException(nameof(roleId));
+            EmojiId = emojiId ?? throw new ArgumentNullException(nameof(emojiId));
         }
     }
 }

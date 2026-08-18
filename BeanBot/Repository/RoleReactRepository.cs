@@ -16,7 +16,7 @@ namespace BeanBot.Repository
     internal interface IRoleSettingsStore
     {
         Task InsertAsync(RoleSettings roleSettings, CancellationToken cancellationToken);
-        Task<List<RoleSettings>> GetRecentAsync(DateTime oldestLastAccessed, CancellationToken cancellationToken);
+        Task<List<RoleSettings>> GetRecentAsync(DateTime oldestLastAccessedUtc, CancellationToken cancellationToken);
         Task<RoleSettings?> GetByMessageIdAsync(string messageId, CancellationToken cancellationToken);
     }
 
@@ -34,11 +34,11 @@ namespace BeanBot.Repository
             => _roleSettings.InsertOneAsync(roleSettings, cancellationToken: cancellationToken);
 
         public async Task<List<RoleSettings>> GetRecentAsync(
-            DateTime oldestLastAccessed,
+            DateTime oldestLastAccessedUtc,
             CancellationToken cancellationToken)
         {
             var filter = Builders<RoleSettings>.Filter.Where(
-                result => result.lastAccessed >= oldestLastAccessed);
+                result => result.LastAccessedUtc >= oldestLastAccessedUtc);
             using var results = await _roleSettings.FindAsync(
                 filter,
                 cancellationToken: cancellationToken);
@@ -50,7 +50,7 @@ namespace BeanBot.Repository
             CancellationToken cancellationToken)
         {
             var filter = Builders<RoleSettings>.Filter.Where(
-                document => document.messageId == messageId);
+                document => document.MessageId == messageId);
             return await _roleSettings.Find(filter).FirstOrDefaultAsync(cancellationToken);
         }
     }
@@ -80,9 +80,9 @@ namespace BeanBot.Repository
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            roleSettings.lastAccessed = DateTime.UtcNow;
+            roleSettings.LastAccessedUtc = DateTime.UtcNow;
             await _roleSettingsStore.InsertAsync(roleSettings, cancellationToken);
-            BeanBotLog.ReactionRoleSettingsCreated(_logger, roleSettings.messageId);
+            BeanBotLog.ReactionRoleSettingsCreated(_logger, roleSettings.MessageId);
         }
 
         public Task<List<RoleSettings>> GetRecentRoleSettings(

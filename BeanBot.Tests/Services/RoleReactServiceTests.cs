@@ -239,11 +239,11 @@ public class RoleReactServiceTests
             => Insert(roleSettings, cancellationToken);
 
         public Task<List<RoleSettings>> GetRecentAsync(
-            DateTime oldestLastAccessed,
+            DateTime oldestLastAccessedUtc,
             CancellationToken cancellationToken)
         {
             GetRecentCallCount++;
-            return GetRecent(oldestLastAccessed, cancellationToken);
+            return GetRecent(oldestLastAccessedUtc, cancellationToken);
         }
 
         public Task<RoleSettings?> GetByMessageIdAsync(
