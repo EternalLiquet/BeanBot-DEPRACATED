@@ -1,9 +1,7 @@
 ﻿using System.Globalization;
-using System.Security.Cryptography;
 using BeanBot.Configuration;
-using BeanBot.Entities;
+using BeanBot.Services;
 using BeanBot.Util;
-using CsvHelper;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
 
@@ -13,6 +11,7 @@ public sealed class PunHandler : IAsyncDisposable
 {
     private readonly DiscordSocketClient _discordClient;
     private readonly ulong _generalChannelId;
+    private readonly IPunProvider _punProvider;
     private readonly ILogger<PunHandler> _logger;
     private readonly CancellationTokenSource _tokenSource = new();
     private Task? _runner;
@@ -23,10 +22,12 @@ public sealed class PunHandler : IAsyncDisposable
     public PunHandler(
         DiscordSocketClient discordSocketClient,
         BeanBotOptions options,
+        IPunProvider punProvider,
         ILogger<PunHandler> logger)
     {
         _discordClient = discordSocketClient ?? throw new ArgumentNullException(nameof(discordSocketClient));
         _generalChannelId = (options ?? throw new ArgumentNullException(nameof(options))).GeneralChannelId;
+        _punProvider = punProvider ?? throw new ArgumentNullException(nameof(punProvider));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         BeanBotLog.PunServiceInitializing(_logger);
     }
@@ -101,35 +102,20 @@ public sealed class PunHandler : IAsyncDisposable
             return;
         }
 
+        if (!_punProvider.TryGetRandomPun(out var pun))
+        {
+            return;
+        }
+
         await channel.SendMessageAsync("The time has come and so have I, Bean Bot here to deliver you your daily pun(?)");
         await channel.SendMessageAsync("<:420stolfoit:675553715759087618>");
-
         try
         {
-            using var reader = new StreamReader("Resources/puns.csv");
-            using var punCsv = new CsvReader(reader, CultureInfo.InvariantCulture);
-            var puns = punCsv.GetRecords<Pun>()
-                .Where(pun => !string.IsNullOrEmpty(pun.BadPost))
-                .ToList();
-
-            if (puns.Count == 0)
-            {
-                BeanBotLog.PunFileEmpty(_logger);
-                return;
-            }
-
-            var randomIndex = RandomNumberGenerator.GetInt32(0, puns.Count);
-            var randomPun = puns[randomIndex];
-
-            await channel.SendMessageAsync(randomPun.BadPost);
+            await channel.SendMessageAsync(pun);
         }
-        catch (FileNotFoundException)
+        catch (Exception exception)
         {
-            BeanBotLog.PunFileMissing(_logger);
-        }
-        catch (Exception ex)
-        {
-            BeanBotLog.PunPostingFailed(_logger, ex);
+            BeanBotLog.PunPostingFailed(_logger, exception);
         }
     }
 

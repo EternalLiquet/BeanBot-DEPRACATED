@@ -1,5 +1,7 @@
+using System.Diagnostics.CodeAnalysis;
 using BeanBot.Configuration;
 using BeanBot.EventHandlers;
+using BeanBot.Services;
 
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -21,11 +23,24 @@ public class PunHandlerTests
             new Uri("https://example.com/hatoete"),
             new Uri("https://example.com/yoshimaru"),
             HealthCheckOptions.Disabled);
-        var handler = new PunHandler(client, options, NullLogger<PunHandler>.Instance);
+        var handler = new PunHandler(
+            client,
+            options,
+            new UnavailablePunProvider(),
+            NullLogger<PunHandler>.Instance);
 
         await handler.DisposeAsync();
         await handler.DisposeAsync();
 
         Assert.Throws<ObjectDisposedException>(() => handler.Start());
+    }
+
+    private sealed class UnavailablePunProvider : IPunProvider
+    {
+        public bool TryGetRandomPun([NotNullWhen(true)] out string? pun)
+        {
+            pun = null;
+            return false;
+        }
     }
 }

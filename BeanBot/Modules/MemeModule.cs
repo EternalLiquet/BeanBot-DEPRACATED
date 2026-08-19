@@ -1,9 +1,6 @@
-﻿using System.Globalization;
-using BeanBot.Configuration;
-using BeanBot.Entities;
+﻿using BeanBot.Configuration;
 using BeanBot.Services;
 using BeanBot.Util;
-using CsvHelper;
 using Discord;
 using Discord.Commands;
 using MemeApiDotNetWrapper;
@@ -19,17 +16,20 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     private readonly BeanBotOptions _options;
     private readonly FortuneAnswerStore _fortuneAnswers;
     private readonly DiscordPaginatorService _paginator;
+    private readonly IPunProvider _punProvider;
     private readonly ILogger<MemeModule> _logger;
 
     public MemeModule(
         BeanBotOptions options,
         FortuneAnswerStore fortuneAnswers,
         DiscordPaginatorService paginator,
+        IPunProvider punProvider,
         ILogger<MemeModule> logger)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _fortuneAnswers = fortuneAnswers ?? throw new ArgumentNullException(nameof(fortuneAnswers));
         _paginator = paginator ?? throw new ArgumentNullException(nameof(paginator));
+        _punProvider = punProvider ?? throw new ArgumentNullException(nameof(punProvider));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -224,23 +224,13 @@ public class MemeModule : ModuleBase<SocketCommandContext>
 
     private async Task ChooseRandomPun()
     {
-        using (var reader = new StreamReader("Resources/puns.csv"))
-        using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
+        if (!_punProvider.TryGetRandomPun(out var pun))
         {
-            var puns = csv.GetRecords<Pun>()
-                .Select(record => record.BadPost)
-                .Where(pun => !string.IsNullOrWhiteSpace(pun))
-                .ToList();
-
-            if (puns.Count == 0)
-            {
-                BeanBotLog.ModulePunFileEmpty(_logger);
-                await ReplyAsync("The PunMaster is temporarily out of material.");
-                return;
-            }
-
-            await ReplyAsync(puns[Random.Shared.Next(puns.Count)]);
+            await ReplyAsync("The PunMaster is temporarily out of material.");
+            return;
         }
+
+        await ReplyAsync(pun);
     }
 
     private async Task ChooseRandomAnswer(string question)

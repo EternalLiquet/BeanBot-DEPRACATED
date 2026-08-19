@@ -105,6 +105,9 @@ internal static class BeanBotServiceCollectionExtensions
         });
 
         services.AddSingleton<FortuneAnswerStore>();
+        services.AddSingleton<PunProvider>();
+        services.AddSingleton<IPunProvider>(provider =>
+            provider.GetRequiredService<PunProvider>());
         services.AddSingleton<DiscordMessageWaiter>();
         services.AddSingleton<DiscordPaginatorService>();
         services.AddSingleton<EditMessageEventServices>();
