@@ -13,6 +13,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 using System.Net;
+using System.Net.Sockets;
 
 using Xunit;
 
@@ -47,7 +48,8 @@ public class BeanBotHostIntegrationTests
         await using var testHost = CreateHost(runtime, CreateValidConfiguration());
 
         await testHost.Host.StartAsync().WaitAsync(TimeSpan.FromSeconds(5));
-        using var client = CreateHealthClient(runtime.HealthPort);
+        var healthPort = runtime.HealthPort;
+        using var client = CreateHealthClient(healthPort);
 
         using var unhealthyResponse = await client.GetAsync("/healthz");
         runtime.SetHealthSnapshot(HealthySnapshot);
@@ -55,6 +57,7 @@ public class BeanBotHostIntegrationTests
         using var healthyResponse = await client.GetAsync("/healthz");
 
         await testHost.Host.StopAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await AssertListenerStoppedAsync(healthPort);
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, unhealthyResponse.StatusCode);
         Assert.Equal(HttpStatusCode.OK, healthyResponse.StatusCode);
@@ -190,6 +193,15 @@ public class BeanBotHostIntegrationTests
         {
             BaseAddress = new Uri($"http://127.0.0.1:{port}")
         };
+
+    private static async Task AssertListenerStoppedAsync(int port)
+    {
+        using var client = new TcpClient();
+        await Assert.ThrowsAsync<SocketException>(
+            () => client
+                .ConnectAsync(IPAddress.Loopback, port)
+                .WaitAsync(TimeSpan.FromSeconds(2)));
+    }
 
     private static DiscordStartupService CreateStartupService(
         IDiscordStartupLifecycle lifecycle,
