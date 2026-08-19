@@ -1,8 +1,9 @@
 using System.Net;
 using System.Net.Sockets;
 using BeanBot.Configuration;
+using BeanBot.Discord.Lifecycle;
+using BeanBot.Health;
 using BeanBot.Hosting;
-using BeanBot.Services;
 using Discord.WebSocket;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -117,7 +118,7 @@ public class BeanBotHostIntegrationTests
         };
         await using var testHost = CreateHost(runtime, CreateValidConfiguration());
 
-        var exception = await Assert.ThrowsAsync<Discord.Net.HttpException>(
+        var exception = await Assert.ThrowsAsync<global::Discord.Net.HttpException>(
             () => testHost.Host.StartAsync());
 
         Assert.Same(finalFailure, exception);
@@ -210,7 +211,7 @@ public class BeanBotHostIntegrationTests
             DiscordStartupOptions.Default,
             delay);
 
-    private static Discord.Net.HttpException CreateHttpException(HttpStatusCode statusCode)
+    private static global::Discord.Net.HttpException CreateHttpException(HttpStatusCode statusCode)
         => new(statusCode, null, null, "Test Discord failure", null);
 
     private sealed class TestHostScope : IAsyncDisposable

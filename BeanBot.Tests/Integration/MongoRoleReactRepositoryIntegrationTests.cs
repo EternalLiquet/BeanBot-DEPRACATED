@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
-using BeanBot.Entities;
-using BeanBot.Repository;
+using BeanBot.Persistence.Models;
+using BeanBot.Persistence.Repositories;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
 using Testcontainers.MongoDb;

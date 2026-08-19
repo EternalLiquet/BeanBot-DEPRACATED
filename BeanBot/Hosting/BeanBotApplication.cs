@@ -1,4 +1,4 @@
-using BeanBot.Util;
+using BeanBot.Logging;
 using Microsoft.Extensions.Logging;
 
 namespace BeanBot.Hosting;

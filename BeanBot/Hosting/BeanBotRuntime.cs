@@ -1,6 +1,8 @@
-using BeanBot.EventHandlers;
-using BeanBot.Services;
-using BeanBot.Util;
+using BeanBot.Discord.Events;
+using BeanBot.Discord.Lifecycle;
+using BeanBot.Discord.Messaging;
+using BeanBot.Health;
+using BeanBot.Logging;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
 

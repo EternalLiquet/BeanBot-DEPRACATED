@@ -1,5 +1,6 @@
-using BeanBot.Services;
-using BeanBot.Util;
+using BeanBot.Discord.Lifecycle;
+using BeanBot.Logging;
+using BeanBot.Persistence.Outages;
 
 using Microsoft.Extensions.Logging.Abstractions;
 
