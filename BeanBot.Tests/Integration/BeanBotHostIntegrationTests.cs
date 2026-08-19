@@ -21,6 +21,8 @@ namespace BeanBot.Tests.Integration;
 
 public class BeanBotHostIntegrationTests
 {
+    private static readonly TimeSpan HealthPollInterval = TimeSpan.FromMilliseconds(1);
+
     private static readonly DiscordHealthSnapshot UnhealthySnapshot = new(
         false,
         "Discord gateway has not reached the Ready state yet.",
@@ -53,7 +55,7 @@ public class BeanBotHostIntegrationTests
 
         using var unhealthyResponse = await client.GetAsync("/healthz");
         runtime.SetHealthSnapshot(HealthySnapshot);
-        await Task.Delay(TimeSpan.FromMilliseconds(20));
+        await Task.Delay(HealthPollInterval + TimeSpan.FromMilliseconds(1));
         using var healthyResponse = await client.GetAsync("/healthz");
 
         await testHost.Host.StopAsync().WaitAsync(TimeSpan.FromSeconds(5));
@@ -266,7 +268,7 @@ public class BeanBotHostIntegrationTests
                     IPAddress.Loopback,
                     0,
                     null,
-                    TimeSpan.FromMilliseconds(1))
+                    HealthPollInterval)
                 : HealthCheckOptions.Disabled;
             _healthServer = new HealthCheckServer(
                 options,

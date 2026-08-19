@@ -49,9 +49,11 @@ If you bind the endpoint to anything other than `127.0.0.1`, set `BEANBOT_HEALTH
 
 ## Local Development
 
-Install a stable .NET 10 SDK. The repository's `global.json` accepts SDK 10.0.100 or
-newer .NET 10 patches and feature bands while excluding preview and other major SDKs.
-Then restore, build, and run the test suite from the repo root:
+Install a stable .NET 10 SDK and Docker. The repository's `global.json` accepts SDK
+10.0.100 or newer .NET 10 patches and feature bands while excluding preview and
+other major SDKs. The integration suite automatically starts an isolated MongoDB
+container; it does not use `BEANBOT_MONGO_CONNECTION_STRING` or require a manually
+managed test database. Then restore, build, and run the test suite from the repo root:
 
 ```powershell
 dotnet restore BeanBot.sln
