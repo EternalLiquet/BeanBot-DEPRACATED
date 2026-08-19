@@ -1,8 +1,6 @@
-using Discord;
-
-using Microsoft.Extensions.Logging;
-
 using System.Net;
+using Discord;
+using Microsoft.Extensions.Logging;
 
 namespace BeanBot.Util;
 

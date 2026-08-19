@@ -1,7 +1,6 @@
-namespace BeanBot.Util
+namespace BeanBot.Util;
+
+internal static class BotOwner
 {
-    internal static class BotOwner
-    {
-        public const ulong DiscordUserId = 114559039731531781;
-    }
+    public const ulong DiscordUserId = 114559039731531781;
 }

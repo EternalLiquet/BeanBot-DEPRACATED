@@ -1,8 +1,6 @@
+using System.Collections.Concurrent;
 using BeanBot.Services;
 using Microsoft.Extensions.Logging.Abstractions;
-
-using System.Collections.Concurrent;
-
 using Xunit;
 
 namespace BeanBot.Tests.Services;
@@ -147,7 +145,7 @@ public class DiscordGatewayRecoveryServiceTests
     private sealed class FakeOutageStore : IDiscordOutageStore
     {
         public DiscordOutage? CurrentOutage { get; private set; }
-        public List<string> StateTransitions { get; } = new();
+        public List<string> StateTransitions { get; } = [];
 
         public Task<DiscordOutage?> ReadAsync(CancellationToken cancellationToken = default)
             => Task.FromResult(CurrentOutage);

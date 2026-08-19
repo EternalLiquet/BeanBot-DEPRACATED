@@ -1,9 +1,9 @@
+using System.Net;
+using System.Net.Sockets;
 using BeanBot.Configuration;
 using BeanBot.Hosting;
 using BeanBot.Services;
-
 using Discord.WebSocket;
-
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -11,10 +11,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-
-using System.Net;
-using System.Net.Sockets;
-
 using Xunit;
 
 namespace BeanBot.Tests.Integration;
@@ -276,7 +272,7 @@ public class BeanBotHostIntegrationTests
                 NullLogger<HealthCheckServer>.Instance);
         }
 
-        public List<string> Calls { get; } = new();
+        public List<string> Calls { get; } = [];
         public Func<CancellationToken, Task>? StartDiscord { get; init; }
         public bool HasUnfinishedDiscordStartupOperation => false;
         public int HealthPort => _healthServer.BoundPort;
@@ -376,7 +372,7 @@ public class BeanBotHostIntegrationTests
 
     private sealed class RecordingDelay : IDiscordStartupDelay
     {
-        public List<TimeSpan> RequestedDelays { get; } = new();
+        public List<TimeSpan> RequestedDelays { get; } = [];
 
         public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
         {

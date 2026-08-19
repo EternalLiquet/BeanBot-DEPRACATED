@@ -1,8 +1,8 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using BeanBot.Util;
 using Serilog.Events;
 using Serilog.Parsing;
-using System.Collections.Concurrent;
-using System.Diagnostics;
 using Xunit;
 
 namespace BeanBot.Tests.Util;
@@ -111,7 +111,7 @@ public class DiscordOwnerErrorSinkTests
         LogEventLevel level,
         string message,
         Exception? exception = null)
-        => new LogEvent(
+        => new(
             DateTimeOffset.UtcNow,
             level,
             exception,
@@ -120,7 +120,7 @@ public class DiscordOwnerErrorSinkTests
 
     private sealed class CapturingNotifier : IOwnerErrorNotifier
     {
-        public List<string> Alerts { get; } = new();
+        public List<string> Alerts { get; } = [];
         public void Enqueue(string alert) => Alerts.Add(alert);
     }
 
@@ -133,8 +133,8 @@ public class DiscordOwnerErrorSinkTests
             _shouldFail = shouldFail;
         }
 
-        public ConcurrentDictionary<string, int> Attempts { get; } = new();
-        public ConcurrentBag<string> DeliveredAlerts { get; } = new();
+        public ConcurrentDictionary<string, int> Attempts { get; } = [];
+        public ConcurrentBag<string> DeliveredAlerts { get; } = [];
         public TaskCompletionSource FirstAttempted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource LaterAlertDelivered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 

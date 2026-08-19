@@ -2,51 +2,49 @@ using BeanBot.Services;
 using BeanBot.Util;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
-using System;
 
-namespace BeanBot.EventHandlers
+namespace BeanBot.EventHandlers;
+
+public sealed class ReactHandler : IDisposable
 {
-    public sealed class ReactHandler : IDisposable
+    private readonly DiscordSocketClient _discordClient;
+    private readonly RoleReactService _roleService;
+    private readonly ILogger<ReactHandler> _logger;
+    private bool _initialized;
+
+    public ReactHandler(
+        DiscordSocketClient discordClient,
+        RoleReactService roleReactService,
+        ILogger<ReactHandler> logger)
     {
-        private readonly DiscordSocketClient _discordClient;
-        private readonly RoleReactService _roleService;
-        private readonly ILogger<ReactHandler> _logger;
-        private bool _initialized;
+        _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
+        _roleService = roleReactService ?? throw new ArgumentNullException(nameof(roleReactService));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        BeanBotLog.ReactHandlerCreated(_logger);
+    }
 
-        public ReactHandler(
-            DiscordSocketClient discordClient,
-            RoleReactService roleReactService,
-            ILogger<ReactHandler> logger)
+    public void InitializeReactDependentServices()
+    {
+        if (_initialized)
         {
-            _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
-            _roleService = roleReactService ?? throw new ArgumentNullException(nameof(roleReactService));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            BeanBotLog.ReactHandlerCreated(_logger);
+            return;
         }
 
-        public void InitializeReactDependentServices()
-        {
-            if (_initialized)
-            {
-                return;
-            }
+        BeanBotLog.RoleServicesCreated(_logger);
+        _discordClient.ReactionAdded += _roleService.HandleReact;
+        _discordClient.ReactionRemoved += _roleService.HandleRemoveReact;
+        _initialized = true;
+    }
 
-            BeanBotLog.RoleServicesCreated(_logger);
-            _discordClient.ReactionAdded += _roleService.HandleReact;
-            _discordClient.ReactionRemoved += _roleService.HandleRemoveReact;
-            _initialized = true;
+    public void Dispose()
+    {
+        if (!_initialized)
+        {
+            return;
         }
 
-        public void Dispose()
-        {
-            if (!_initialized)
-            {
-                return;
-            }
-
-            _discordClient.ReactionAdded -= _roleService.HandleReact;
-            _discordClient.ReactionRemoved -= _roleService.HandleRemoveReact;
-            _initialized = false;
-        }
+        _discordClient.ReactionAdded -= _roleService.HandleReact;
+        _discordClient.ReactionRemoved -= _roleService.HandleRemoveReact;
+        _initialized = false;
     }
 }

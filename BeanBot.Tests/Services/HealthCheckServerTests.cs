@@ -1,18 +1,15 @@
-using BeanBot.Configuration;
-using BeanBot.Services;
-
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
-using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
-
+using BeanBot.Configuration;
+using BeanBot.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
-using Microsoft.Extensions.Logging.Abstractions;
-
 using Xunit;
 
 namespace BeanBot.Tests.Services;
