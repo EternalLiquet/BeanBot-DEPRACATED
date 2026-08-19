@@ -36,11 +36,12 @@ The script keeps the .NET CLI home and NuGet package cache in the repository's i
 
 The gates have these dependencies:
 
-- Configuration, script orchestration, build, test, and diff checks are deterministic local checks once dependencies are restored.
+- Configuration, script orchestration, build, test, and diff checks are deterministic local checks once dependencies and the pinned MongoDB integration image are available.
 - Restore and vulnerable-package checks require NuGet/network availability.
-- The Docker gate requires a working Docker daemon and registry/network access when base layers are absent.
+- Tests require a working Docker daemon because the integration suite automatically starts an isolated, ephemeral MongoDB container. Registry/network access is required when its pinned image is absent.
+- The full-only Docker image gate also requires registry/network access when base layers are absent.
 - GitHub evaluates Actions syntax/triggers and supplies exact-head required-check evidence.
-- Real Discord, production MongoDB, deployment health, and post-deployment behavior remain manual. Tests must not connect to them.
+- Real Discord, production MongoDB, deployment health, and post-deployment behavior remain manual. Tests must not connect to production services or credentials.
 
 Formatting and warning-level analyzer conventions are mandatory gates backed by the repository's `.editorconfig`. No coverage threshold is imposed.
 
