@@ -1,10 +1,7 @@
+using System.Text.Json;
 using BeanBot.Entities;
-
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
-
-using System.Text.Json;
-
 using Xunit;
 
 namespace BeanBot.Tests.Entities;
@@ -143,7 +140,7 @@ public class RoleSettingsTests
     public void ToString_PreservesExistingJsonMemberNames()
     {
         var settings = new RoleSettings(
-            new List<RoleEmotePair> { new("role", "emoji") },
+            [new("role", "emoji")],
             "guild",
             "channel",
             "message")

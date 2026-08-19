@@ -64,7 +64,7 @@ public class RoleReactRepositoryTests
             {
                 Assert.Equal(cancellation.Token, cancellationToken);
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-                return new List<RoleSettings>();
+                return [];
             }
         };
         var repository = CreateRepository(store);
@@ -143,7 +143,7 @@ public class RoleReactRepositoryTests
         => new(store, NullLogger<RoleReactRepository>.Instance);
 
     private static RoleSettings CreateRoleSettings(string messageId)
-        => new(new List<RoleEmotePair>(), "1", "2", messageId);
+        => new([], "1", "2", messageId);
 
     private sealed class FakeRoleSettingsStore : IRoleSettingsStore
     {

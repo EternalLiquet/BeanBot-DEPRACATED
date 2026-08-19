@@ -133,7 +133,7 @@ public class DiscordOutageRecoveryNotifierTests
     {
         private readonly bool _alwaysFail;
         public RecordingDelivery(bool alwaysFail = false) => _alwaysFail = alwaysFail;
-        public List<string> Messages { get; } = new();
+        public List<string> Messages { get; } = [];
         public int AttemptCount { get; private set; }
 
         public Task DeliverAsync(string alert, CancellationToken cancellationToken)

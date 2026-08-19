@@ -1,43 +1,41 @@
 using BeanBot.Services;
 using Discord.WebSocket;
-using System;
 
-namespace BeanBot.EventHandlers
+namespace BeanBot.EventHandlers;
+
+public sealed class EditMessageHandler : IDisposable
 {
-    public sealed class EditMessageHandler : IDisposable
+    private readonly DiscordSocketClient _discordClient;
+    private readonly EditMessageEventServices _editMessageEventService;
+    private bool _initialized;
+
+    public EditMessageHandler(
+        DiscordSocketClient discordClient,
+        EditMessageEventServices editMessageEventService)
     {
-        private readonly DiscordSocketClient _discordClient;
-        private readonly EditMessageEventServices _editMessageEventService;
-        private bool _initialized;
+        _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
+        _editMessageEventService = editMessageEventService ?? throw new ArgumentNullException(nameof(editMessageEventService));
+    }
 
-        public EditMessageHandler(
-            DiscordSocketClient discordClient,
-            EditMessageEventServices editMessageEventService)
+    public void InitializeEventListener()
+    {
+        if (_initialized)
         {
-            _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
-            _editMessageEventService = editMessageEventService ?? throw new ArgumentNullException(nameof(editMessageEventService));
+            return;
         }
 
-        public void InitializeEventListener()
-        {
-            if (_initialized)
-            {
-                return;
-            }
+        _discordClient.MessageUpdated += _editMessageEventService.HandleUpdate;
+        _initialized = true;
+    }
 
-            _discordClient.MessageUpdated += _editMessageEventService.HandleUpdate;
-            _initialized = true;
+    public void Dispose()
+    {
+        if (!_initialized)
+        {
+            return;
         }
 
-        public void Dispose()
-        {
-            if (!_initialized)
-            {
-                return;
-            }
-
-            _discordClient.MessageUpdated -= _editMessageEventService.HandleUpdate;
-            _initialized = false;
-        }
+        _discordClient.MessageUpdated -= _editMessageEventService.HandleUpdate;
+        _initialized = false;
     }
 }

@@ -86,7 +86,7 @@ public sealed class OutageRecoveryRestartIntegrationTests : IDisposable
 
         public RecordingDelivery(bool alwaysFail = false) => _alwaysFail = alwaysFail;
 
-        public List<string> Messages { get; } = new();
+        public List<string> Messages { get; } = [];
         public int AttemptCount { get; private set; }
 
         public Task DeliverAsync(string alert, CancellationToken cancellationToken)

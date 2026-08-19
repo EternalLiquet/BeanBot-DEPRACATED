@@ -175,7 +175,7 @@ public class LogHandlerTests
 
     private sealed class RecordingLogger<T> : ILogger<T>
     {
-        public List<LogEntry> Entries { get; } = new();
+        public List<LogEntry> Entries { get; } = [];
 
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
@@ -218,13 +218,13 @@ public class LogHandlerTests
 
     private sealed class CapturingSerilogSink : ILogEventSink
     {
-        public List<LogEvent> Events { get; } = new();
+        public List<LogEvent> Events { get; } = [];
         public void Emit(LogEvent logEvent) => Events.Add(logEvent);
     }
 
     private sealed class CapturingNotifier : IOwnerErrorNotifier
     {
-        public List<string> Alerts { get; } = new();
+        public List<string> Alerts { get; } = [];
         public void Enqueue(string alert) => Alerts.Add(alert);
     }
 }

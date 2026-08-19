@@ -1,15 +1,9 @@
+using System.Diagnostics;
+using System.Reflection;
 using BeanBot.Services;
-
 using Discord;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging.Abstractions;
-
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Reflection;
-using System.Threading;
-using System.Threading.Tasks;
-
 using Xunit;
 
 namespace BeanBot.Tests.Services;
@@ -264,8 +258,8 @@ public class DiscordPaginatorServiceTests
 
     public class ReactionRemovalMessageProxy : DispatchProxy
     {
-        public List<ulong> RemovedUserIds { get; } = new();
-        public List<IEmote> RemovedEmotes { get; } = new();
+        public List<ulong> RemovedUserIds { get; } = [];
+        public List<IEmote> RemovedEmotes { get; } = [];
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {

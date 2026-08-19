@@ -1,15 +1,10 @@
-using BeanBot.Entities;
-using BeanBot.Repository;
-
-using Microsoft.Extensions.Logging.Abstractions;
-
-using MongoDB.Driver;
-
 using System.Net;
 using System.Net.Sockets;
-
+using BeanBot.Entities;
+using BeanBot.Repository;
+using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Driver;
 using Testcontainers.MongoDb;
-
 using Xunit;
 
 namespace BeanBot.Tests.Integration;
@@ -32,7 +27,7 @@ public sealed class MongoRoleReactRepositoryIntegrationTests
         var firstClient = new MongoClient(_fixture.ConnectionString);
         var firstRepository = CreateRepository(firstClient.GetDatabase(databaseName));
         var settings = new RoleSettings(
-            new List<RoleEmotePair> { new("123", "456") },
+            [new("123", "456")],
             "789",
             "101112",
             "131415");

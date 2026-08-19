@@ -1,15 +1,11 @@
+using System.Net;
 using BeanBot.Configuration;
 using BeanBot.Hosting;
-
 using Discord.WebSocket;
-
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
-
-using System.Net;
-
 using Xunit;
 
 namespace BeanBot.Tests.Configuration;

@@ -1,11 +1,8 @@
+using System.Reflection;
 using BeanBot.Entities;
 using BeanBot.Repository;
 using BeanBot.Services;
-
 using Microsoft.Extensions.Logging.Abstractions;
-
-using System.Reflection;
-
 using Xunit;
 
 namespace BeanBot.Tests.Services;
@@ -147,7 +144,7 @@ public class RoleReactServiceTests
             {
                 operationStarted.SetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-                return new List<RoleSettings>();
+                return [];
             }
         };
         var service = CreateService(TimeSpan.FromSeconds(1), store);
@@ -213,7 +210,7 @@ public class RoleReactServiceTests
     }
 
     private static RoleSettings CreateRoleSettings(string messageId)
-        => new(new List<RoleEmotePair>(), "1", "2", messageId);
+        => new([], "1", "2", messageId);
 
     private static SemaphoreSlim GetCacheLock(RoleReactService service)
     {

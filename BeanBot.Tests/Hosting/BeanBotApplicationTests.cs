@@ -91,7 +91,7 @@ public class BeanBotApplicationTests
 
     private sealed class RecordingRuntime : IBeanBotRuntime
     {
-        public List<string> Calls { get; } = new();
+        public List<string> Calls { get; } = [];
         public string? FailingOperation { get; init; }
         public bool HasUnfinishedDiscordStartupOperation { get; init; }
 

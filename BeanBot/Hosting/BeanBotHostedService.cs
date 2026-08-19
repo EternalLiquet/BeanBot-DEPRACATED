@@ -2,59 +2,54 @@ using BeanBot.Util;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-using System;
-using System.Threading;
-using System.Threading.Tasks;
+namespace BeanBot.Hosting;
 
-namespace BeanBot.Hosting
+internal interface IBeanBotApplication
 {
-    internal interface IBeanBotApplication
+    Task StartAsync(CancellationToken cancellationToken);
+    Task StopAsync(CancellationToken cancellationToken);
+}
+
+internal sealed class BeanBotHostedService : IHostedService
+{
+    private readonly IBeanBotApplication _application;
+    private readonly IHostApplicationLifetime _hostLifetime;
+    private readonly ILogger<BeanBotHostedService> _logger;
+
+    public BeanBotHostedService(
+        IBeanBotApplication application,
+        IHostApplicationLifetime hostLifetime,
+        ILogger<BeanBotHostedService> logger)
     {
-        Task StartAsync(CancellationToken cancellationToken);
-        Task StopAsync(CancellationToken cancellationToken);
+        _application = application ?? throw new ArgumentNullException(nameof(application));
+        _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    internal sealed class BeanBotHostedService : IHostedService
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
-        private readonly IBeanBotApplication _application;
-        private readonly IHostApplicationLifetime _hostLifetime;
-        private readonly ILogger<BeanBotHostedService> _logger;
-
-        public BeanBotHostedService(
-            IBeanBotApplication application,
-            IHostApplicationLifetime hostLifetime,
-            ILogger<BeanBotHostedService> logger)
+        try
         {
-            _application = application ?? throw new ArgumentNullException(nameof(application));
-            _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            using var startupCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                _hostLifetime.ApplicationStopping);
+            await _application.StartAsync(startupCancellation.Token);
         }
-
-        public async Task StartAsync(CancellationToken cancellationToken)
+        catch
         {
             try
             {
-                using var startupCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-                    cancellationToken,
-                    _hostLifetime.ApplicationStopping);
-                await _application.StartAsync(startupCancellation.Token);
+                await _application.StopAsync(CancellationToken.None);
             }
-            catch
+            catch (Exception cleanupException)
             {
-                try
-                {
-                    await _application.StopAsync(CancellationToken.None);
-                }
-                catch (Exception cleanupException)
-                {
-                    BeanBotLog.StartupCleanupFailed(_logger, cleanupException);
-                }
-
-                throw;
+                BeanBotLog.StartupCleanupFailed(_logger, cleanupException);
             }
-        }
 
-        public Task StopAsync(CancellationToken cancellationToken)
-            => _application.StopAsync(cancellationToken);
+            throw;
+        }
     }
+
+    public Task StopAsync(CancellationToken cancellationToken)
+        => _application.StopAsync(cancellationToken);
 }

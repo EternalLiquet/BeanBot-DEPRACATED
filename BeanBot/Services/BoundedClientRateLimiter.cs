@@ -1,160 +1,156 @@
-using System;
-using System.Collections.Generic;
+namespace BeanBot.Services;
 
-namespace BeanBot.Services
+internal sealed class BoundedClientRateLimiter
 {
-    internal sealed class BoundedClientRateLimiter
+    private const int CleanupFrequency = 64;
+    private readonly object _sync = new();
+    private readonly Dictionary<string, ClientEntry> _clients = new(StringComparer.Ordinal);
+    private readonly PriorityQueue<ExpirationCandidate, DateTimeOffset> _expirations = new();
+    private readonly TimeSpan _minimumPollInterval;
+    private readonly TimeSpan _retentionPeriod;
+    private readonly int _capacity;
+    private readonly Func<DateTimeOffset> _getUtcNow;
+    private int _requestCount;
+
+    public BoundedClientRateLimiter(
+        TimeSpan minimumPollInterval,
+        int capacity,
+        Func<DateTimeOffset>? getUtcNow = null)
     {
-        private const int CleanupFrequency = 64;
-        private readonly object _sync = new object();
-        private readonly Dictionary<string, ClientEntry> _clients = new Dictionary<string, ClientEntry>(StringComparer.Ordinal);
-        private readonly PriorityQueue<ExpirationCandidate, DateTimeOffset> _expirations = new PriorityQueue<ExpirationCandidate, DateTimeOffset>();
-        private readonly TimeSpan _minimumPollInterval;
-        private readonly TimeSpan _retentionPeriod;
-        private readonly int _capacity;
-        private readonly Func<DateTimeOffset> _getUtcNow;
-        private int _requestCount;
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(minimumPollInterval, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
 
-        public BoundedClientRateLimiter(
-            TimeSpan minimumPollInterval,
-            int capacity,
-            Func<DateTimeOffset>? getUtcNow = null)
+        _minimumPollInterval = minimumPollInterval;
+        _retentionPeriod = minimumPollInterval.Ticks <= TimeSpan.MaxValue.Ticks / 2
+            ? TimeSpan.FromTicks(minimumPollInterval.Ticks * 2)
+            : TimeSpan.MaxValue;
+        _capacity = capacity;
+        _getUtcNow = getUtcNow ?? (() => DateTimeOffset.UtcNow);
+    }
+
+    public bool IsRateLimited(string clientIdentifier, out int retryAfterSeconds)
+    {
+        if (string.IsNullOrWhiteSpace(clientIdentifier))
         {
-            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(minimumPollInterval, TimeSpan.Zero);
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
-
-            _minimumPollInterval = minimumPollInterval;
-            _retentionPeriod = minimumPollInterval.Ticks <= TimeSpan.MaxValue.Ticks / 2
-                ? TimeSpan.FromTicks(minimumPollInterval.Ticks * 2)
-                : TimeSpan.MaxValue;
-            _capacity = capacity;
-            _getUtcNow = getUtcNow ?? (() => DateTimeOffset.UtcNow);
+            throw new ArgumentException("A client identifier is required.", nameof(clientIdentifier));
         }
 
-        public bool IsRateLimited(string clientIdentifier, out int retryAfterSeconds)
+        var now = _getUtcNow();
+        lock (_sync)
         {
-            if (string.IsNullOrWhiteSpace(clientIdentifier))
+            _requestCount++;
+            if (_requestCount % CleanupFrequency == 0)
             {
-                throw new ArgumentException("A client identifier is required.", nameof(clientIdentifier));
+                RemoveExpiredEntries(now);
             }
 
-            var now = _getUtcNow();
-            lock (_sync)
+            if (_clients.TryGetValue(clientIdentifier, out var existingEntry))
             {
-                _requestCount++;
-                if (_requestCount % CleanupFrequency == 0)
+                var nextAllowedAt = existingEntry.LastAllowedAt.Add(_minimumPollInterval);
+                if (now < nextAllowedAt)
                 {
-                    RemoveExpiredEntries(now);
+                    retryAfterSeconds = Math.Max(1, (int)Math.Ceiling((nextAllowedAt - now).TotalSeconds));
+                    return true;
                 }
 
-                if (_clients.TryGetValue(clientIdentifier, out var existingEntry))
-                {
-                    var nextAllowedAt = existingEntry.LastAllowedAt.Add(_minimumPollInterval);
-                    if (now < nextAllowedAt)
-                    {
-                        retryAfterSeconds = Math.Max(1, (int)Math.Ceiling((nextAllowedAt - now).TotalSeconds));
-                        return true;
-                    }
-
-                    TrackAllowedRequest(clientIdentifier, existingEntry, now);
-                    retryAfterSeconds = 0;
-                    return false;
-                }
-
-                if (_clients.Count >= _capacity)
-                {
-                    RemoveExpiredEntries(now);
-                    if (_clients.Count >= _capacity)
-                    {
-                        // Preserve active rate limits instead of evicting them early. New
-                        // clients retry after one poll interval when the bounded store is full.
-                        retryAfterSeconds = Math.Max(1, (int)Math.Ceiling(_minimumPollInterval.TotalSeconds));
-                        return true;
-                    }
-                }
-
-                var entry = new ClientEntry();
-                _clients.Add(clientIdentifier, entry);
-                TrackAllowedRequest(clientIdentifier, entry, now);
+                TrackAllowedRequest(clientIdentifier, existingEntry, now);
                 retryAfterSeconds = 0;
                 return false;
             }
-        }
 
-        internal int CleanupStaleEntries()
+            if (_clients.Count >= _capacity)
+            {
+                RemoveExpiredEntries(now);
+                if (_clients.Count >= _capacity)
+                {
+                    // Preserve active rate limits instead of evicting them early. New
+                    // clients retry after one poll interval when the bounded store is full.
+                    retryAfterSeconds = Math.Max(1, (int)Math.Ceiling(_minimumPollInterval.TotalSeconds));
+                    return true;
+                }
+            }
+
+            var entry = new ClientEntry();
+            _clients.Add(clientIdentifier, entry);
+            TrackAllowedRequest(clientIdentifier, entry, now);
+            retryAfterSeconds = 0;
+            return false;
+        }
+    }
+
+    internal int CleanupStaleEntries()
+    {
+        lock (_sync)
+        {
+            return RemoveExpiredEntries(_getUtcNow());
+        }
+    }
+
+    internal int TrackedClientCount
+    {
+        get
         {
             lock (_sync)
             {
-                return RemoveExpiredEntries(_getUtcNow());
+                return _clients.Count;
             }
         }
+    }
 
-        internal int TrackedClientCount
+    private void TrackAllowedRequest(string clientIdentifier, ClientEntry entry, DateTimeOffset now)
+    {
+        entry.LastAllowedAt = now;
+        entry.ExpiresAt = AddSafely(now, _retentionPeriod);
+        entry.Version++;
+        _expirations.Enqueue(
+            new ExpirationCandidate(clientIdentifier, entry.Version),
+            entry.ExpiresAt);
+    }
+
+    private int RemoveExpiredEntries(DateTimeOffset now)
+    {
+        var removed = 0;
+        while (_expirations.TryPeek(out var candidate, out var expiresAt) && expiresAt <= now)
         {
-            get
+            _expirations.Dequeue();
+            if (_clients.TryGetValue(candidate.ClientIdentifier, out var entry) &&
+                entry.Version == candidate.Version &&
+                entry.ExpiresAt <= now &&
+                _clients.Remove(candidate.ClientIdentifier))
             {
-                lock (_sync)
-                {
-                    return _clients.Count;
-                }
+                removed++;
             }
         }
 
-        private void TrackAllowedRequest(string clientIdentifier, ClientEntry entry, DateTimeOffset now)
+        return removed;
+    }
+
+    private static DateTimeOffset AddSafely(DateTimeOffset value, TimeSpan duration)
+    {
+        if (duration == TimeSpan.MaxValue || duration > DateTimeOffset.MaxValue - value)
         {
-            entry.LastAllowedAt = now;
-            entry.ExpiresAt = AddSafely(now, _retentionPeriod);
-            entry.Version++;
-            _expirations.Enqueue(
-                new ExpirationCandidate(clientIdentifier, entry.Version),
-                entry.ExpiresAt);
+            return DateTimeOffset.MaxValue;
         }
 
-        private int RemoveExpiredEntries(DateTimeOffset now)
-        {
-            var removed = 0;
-            while (_expirations.TryPeek(out var candidate, out var expiresAt) && expiresAt <= now)
-            {
-                _expirations.Dequeue();
-                if (_clients.TryGetValue(candidate.ClientIdentifier, out var entry) &&
-                    entry.Version == candidate.Version &&
-                    entry.ExpiresAt <= now &&
-                    _clients.Remove(candidate.ClientIdentifier))
-                {
-                    removed++;
-                }
-            }
+        return value.Add(duration);
+    }
 
-            return removed;
+    private sealed class ClientEntry
+    {
+        public DateTimeOffset LastAllowedAt { get; set; }
+        public DateTimeOffset ExpiresAt { get; set; }
+        public long Version { get; set; }
+    }
+
+    private readonly struct ExpirationCandidate
+    {
+        public ExpirationCandidate(string clientIdentifier, long version)
+        {
+            ClientIdentifier = clientIdentifier;
+            Version = version;
         }
 
-        private static DateTimeOffset AddSafely(DateTimeOffset value, TimeSpan duration)
-        {
-            if (duration == TimeSpan.MaxValue || duration > DateTimeOffset.MaxValue - value)
-            {
-                return DateTimeOffset.MaxValue;
-            }
-
-            return value.Add(duration);
-        }
-
-        private sealed class ClientEntry
-        {
-            public DateTimeOffset LastAllowedAt { get; set; }
-            public DateTimeOffset ExpiresAt { get; set; }
-            public long Version { get; set; }
-        }
-
-        private readonly struct ExpirationCandidate
-        {
-            public ExpirationCandidate(string clientIdentifier, long version)
-            {
-                ClientIdentifier = clientIdentifier;
-                Version = version;
-            }
-
-            public string ClientIdentifier { get; }
-            public long Version { get; }
-        }
+        public string ClientIdentifier { get; }
+        public long Version { get; }
     }
 }

@@ -1,9 +1,6 @@
-using BeanBot.Services;
-
-using Microsoft.Extensions.Logging.Abstractions;
-
 using System.Net;
-
+using BeanBot.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace BeanBot.Tests.Services;
@@ -327,7 +324,7 @@ public class DiscordStartupServiceTests
 
     private sealed class RecordingDelay : IDiscordStartupDelay
     {
-        public List<TimeSpan> RequestedDelays { get; } = new();
+        public List<TimeSpan> RequestedDelays { get; } = [];
 
         public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
         {

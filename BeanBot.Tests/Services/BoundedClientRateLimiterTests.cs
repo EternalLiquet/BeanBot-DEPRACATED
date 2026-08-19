@@ -100,7 +100,7 @@ public class BoundedClientRateLimiterTests
 
     private sealed class ManualClock
     {
-        private DateTimeOffset _utcNow = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        private DateTimeOffset _utcNow = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
         public DateTimeOffset GetUtcNow() => _utcNow;
 
