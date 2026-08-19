@@ -31,6 +31,8 @@ public class BeanBotServiceRegistrationTests
         AssertSingleton<IBeanBotApplication>(services);
         AssertSingleton<BeanBotHostedService>(services);
         AssertSingleton<RoleReactService>(services);
+        AssertSingleton<PunProvider>(services);
+        AssertSingleton<IPunProvider>(services);
         AssertSingleton<EditMessageEventServices>(services);
         AssertSingleton<LogHandler>(services);
 

@@ -39,11 +39,17 @@ internal static partial class BeanBotLog
     [LoggerMessage(Level = LogLevel.Error, Message = "Could not find general channel with ID {ChannelId} to post daily pun")]
     internal static partial void PunChannelMissing(ILogger logger, ulong channelId);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "No puns found in puns.csv")]
-    internal static partial void PunFileEmpty(ILogger logger);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Loaded {PunCount} puns from {ResourcePath}")]
+    internal static partial void PunResourceLoaded(ILogger logger, int punCount, string resourcePath);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "puns.csv file not found; cannot post daily pun")]
-    internal static partial void PunFileMissing(ILogger logger);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "No usable puns were found in {ResourcePath}")]
+    internal static partial void PunResourceEmpty(ILogger logger, string resourcePath);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Pun resource file was not found at {ResourcePath}")]
+    internal static partial void PunResourceMissing(ILogger logger, string resourcePath);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Pun resource file at {ResourcePath} could not be loaded")]
+    internal static partial void PunResourceInvalid(ILogger logger, string resourcePath, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Error occurred while posting daily pun")]
     internal static partial void PunPostingFailed(ILogger logger, Exception exception);
@@ -101,9 +107,6 @@ internal static partial class BeanBotLog
 
     [LoggerMessage(Level = LogLevel.Error, Message = "The meme API request failed")]
     internal static partial void MemeApiFailed(ILogger logger, Exception exception);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "No usable puns were found in Resources/puns.csv")]
-    internal static partial void ModulePunFileEmpty(ILogger logger);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Could not attach the invalid-question Gordon GIF")]
     internal static partial void GordonAttachmentFailed(ILogger logger, Exception exception);

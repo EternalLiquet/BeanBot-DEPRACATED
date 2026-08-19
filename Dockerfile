@@ -8,6 +8,7 @@ RUN dotnet restore "BeanBot/BeanBot.csproj"
 COPY . .
 WORKDIR /src/BeanBot
 RUN dotnet publish "BeanBot.csproj" -c Release -o /app/publish --no-restore
+RUN test -s /app/publish/Resources/puns.csv
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app

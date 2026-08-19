@@ -60,6 +60,7 @@
     </Content>
     <Content Include="Resources\puns.csv">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
     <Content Include="Resources\gordon6.gif">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
