@@ -25,12 +25,10 @@
     <PackageReference Include="Discord.Net.Commands" />
     <PackageReference Include="Discord.Net.Core" />
     <PackageReference Include="Discord.Net.Rest" />
-    <PackageReference Include="Discord.Net.Webhook" />
     <PackageReference Include="Discord.Net.WebSocket" />
     <PackageReference Include="LQ.MemeApiDotNetWrapper" />
     <PackageReference Include="MongoDB.Bson" />
     <PackageReference Include="MongoDB.Driver" />
-    <PackageReference Include="MongoDB.Driver.Core" />
     <PackageReference Include="Serilog" />
     <PackageReference Include="Serilog.Extensions.Hosting" />
     <PackageReference Include="Serilog.Extensions.Logging" />
