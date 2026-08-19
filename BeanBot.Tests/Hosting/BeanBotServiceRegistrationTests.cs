@@ -1,7 +1,9 @@
 using BeanBot.Configuration;
+using BeanBot.Discord.Commands;
+using BeanBot.Discord.Events;
+using BeanBot.Discord.ReactionRoles;
 using BeanBot.Hosting;
-using BeanBot.Services;
-using BeanBot.Util;
+using BeanBot.Logging;
 
 using Discord.WebSocket;
 

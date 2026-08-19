@@ -63,6 +63,19 @@ dotnet test BeanBot.sln --configuration Release --no-build
 
 Repository changes use a Codex-native Planner → Implementer → Verifier → Reviewer loop with one writer and independent verification/review. See [Codex development loop](docs/codex-development-loop.md) for role handoffs and the shared fast/full verification commands.
 
+### Source layout
+
+BeanBot remains a single application project, organized by responsibility:
+
+- `Configuration` binds and validates runtime settings.
+- `Discord` contains commands, event handlers, gateway lifecycle, messaging helpers, and reaction-role behavior.
+- `Health` owns gateway health snapshots and the authenticated `/healthz` endpoint.
+- `Hosting` composes the Generic Host and coordinates startup and shutdown.
+- `Logging` contains structured log messages and Discord owner-alert delivery.
+- `Persistence` contains runtime directory setup, persisted models, outage state, and MongoDB repositories.
+
+Tests mirror these production responsibilities where useful, with cross-component scenarios kept under `BeanBot.Tests/Integration`.
+
 Repository-wide compiler settings are defined in `Directory.Build.props`, package
 versions in `Directory.Packages.props`, and formatting and naming conventions in
 `.editorconfig`. Run `./scripts/verify.sh fast` before submitting changes; it checks

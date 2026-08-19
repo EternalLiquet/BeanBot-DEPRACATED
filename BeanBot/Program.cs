@@ -1,6 +1,7 @@
 using BeanBot.Configuration;
 using BeanBot.Hosting;
-using BeanBot.Util;
+using BeanBot.Logging;
+using BeanBot.Persistence;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
