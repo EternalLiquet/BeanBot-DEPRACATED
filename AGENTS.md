@@ -2,7 +2,9 @@
 
 ## Working Rules
 
-- Perform coding work on a dedicated branch created from the latest `origin/master`; never implement directly on `master`.
+- For ordinary coding work, create a dedicated branch from the latest `origin/develop`; never implement directly on `develop` or `master`. Ordinary feature, refactor, chore, and bug-fix PRs target `develop`.
+- Treat `master` as the production/release branch. Promote tested changes from `develop` to `master` through an intentional release/promotion PR rather than using `master` as the day-to-day integration branch.
+- Critical production hotfixes may branch from the latest `origin/master` and target `master` when waiting for normal promotion is unsafe. After the hotfix lands, ensure the same fix is merged or backported into `develop` before ordinary development continues.
 - Inspect current behavior, tests, configuration, Docker, CI, and documentation before editing. Implement the smallest complete change and avoid unrelated refactors.
 - Keep code human-readable and human-reviewable. Prefer self-documenting method and variable names.
 - Do not weaken tests, assertions, validation, authentication, rate limiting, or failure handling to obtain green output.
@@ -29,6 +31,13 @@
 - The Implementer corrects Verifier or Reviewer findings, reruns focused checks, and requests fresh verification. Review begins only after verification passes.
 - Stop after two reasonable attempts at the same materially unchanged failure, or sooner for unavailable infrastructure, conflicting requirements, missing permissions/tools, architectural conflict, or a fix that would require weakened tests or unrelated redesign. Report the command, evidence, attempts, and safest next action.
 - Never commit ordinary transient plans, verification reports, or review results.
+
+## Pull Request and Release Flow
+
+- Ordinary work: `feature|fix|chore/...` → `develop`.
+- Release promotion: `develop` → `master` through an intentional PR after required verification.
+- Emergency hotfix: branch from `master` → `master`, then merge/backport the fix into `develop`.
+- Do not create a GitHub Release merely because routine development was merged. Release creation should be tied to the repository's intentional release trigger/versioning workflow.
 
 ## Code Review Rules
 

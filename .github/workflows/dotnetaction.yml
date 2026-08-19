@@ -3,10 +3,12 @@ name: .NET Core Master and Deploy Checks
 on:
   push:
     branches:
+      - develop
       - master
       - deploy
   pull_request:
     branches:
+      - develop
       - master
       - deploy
   release:
