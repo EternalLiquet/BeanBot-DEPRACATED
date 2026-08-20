@@ -10,6 +10,15 @@ trim_trailing_whitespace = true
 indent_size = 4
 
 csharp_using_directive_placement = outside_namespace:suggestion
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+# IDE0005 warning severity requires XML documentation generation during compiler builds.
+# scripts/verify.sh enforces it explicitly without changing BeanBot's published artifacts.
+
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_implicit_object_creation_when_type_is_apparent = true:warning
+dotnet_style_prefer_collection_expression = when_types_exactly_match:warning
+dotnet_style_prefer_is_null_check_over_reference_equality_method = true:warning
 
 csharp_style_var_for_built_in_types = false:suggestion
 csharp_style_var_when_type_is_apparent = true:suggestion

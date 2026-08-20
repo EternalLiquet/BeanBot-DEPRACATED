@@ -1,7 +1,9 @@
 using BeanBot.Configuration;
+using BeanBot.Discord.Commands;
+using BeanBot.Discord.Events;
+using BeanBot.Discord.ReactionRoles;
 using BeanBot.Hosting;
-using BeanBot.Services;
-using BeanBot.Util;
+using BeanBot.Logging;
 
 using Discord.WebSocket;
 
@@ -31,6 +33,8 @@ public class BeanBotServiceRegistrationTests
         AssertSingleton<IBeanBotApplication>(services);
         AssertSingleton<BeanBotHostedService>(services);
         AssertSingleton<RoleReactService>(services);
+        AssertSingleton<PunProvider>(services);
+        AssertSingleton<IPunProvider>(services);
         AssertSingleton<EditMessageEventServices>(services);
         AssertSingleton<LogHandler>(services);
 

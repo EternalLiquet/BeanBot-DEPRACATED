@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 import tomllib
@@ -90,21 +91,49 @@ def validate_custom_agents() -> None:
 def validate_workflows() -> None:
     validation_path = REPOSITORY_ROOT / ".github" / "workflows" / "dotnetaction.yml"
     release_path = REPOSITORY_ROOT / ".github" / "workflows" / "autorelease.yml"
-    validate_yaml(validation_path)
-    validate_yaml(release_path)
+    dependency_review_path = REPOSITORY_ROOT / ".github" / "workflows" / "dependency-review.yml"
+    codeql_path = REPOSITORY_ROOT / ".github" / "workflows" / "codeql.yml"
+    dependabot_path = REPOSITORY_ROOT / ".github" / "dependabot.yml"
+    workflow_paths = sorted((REPOSITORY_ROOT / ".github" / "workflows").glob("*.yml"))
+    for path in (*workflow_paths, dependabot_path):
+        validate_yaml(path)
+
+    if yaml is None:
+        fail("PyYAML is required to validate release workflow state transitions")
 
     validation = validation_path.read_text(encoding="utf-8")
     release = release_path.read_text(encoding="utf-8")
+    dependency_review = dependency_review_path.read_text(encoding="utf-8")
+    codeql = codeql_path.read_text(encoding="utf-8")
+    dependabot = dependabot_path.read_text(encoding="utf-8")
     required_validation_fragments = (
-        "name: .NET Core Master and Deploy Checks",
+        "name: Repository Verification",
+        "runs-on: ubuntu-24.04",
+        "timeout-minutes: 45",
         "dotnet-version: 10.0.x",
         "./scripts/verify.sh full",
+        "persist-credentials: false",
+        "BEANBOT_BRANCH_INTEGRITY_CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}",
+        "BEANBOT_PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}",
+        ".artifacts/coverage",
     )
     required_release_fragments = (
-        "name: Bean Bot Automated Release/Versioning",
-        "branches:\n      - master",
-        "./scripts/verify.sh build-test",
-        "needs: build",
+        "name: Intentional BeanBot Release",
+        "workflow_dispatch:",
+        "./scripts/verify.sh full",
+        "packages: write",
+        "attestations: write",
+        "beanbot.spdx.json",
+        "./scripts/release-assets.sh inspect",
+        "./scripts/release-assets.sh publish",
+        "./scripts/release-image.sh inspect",
+        "./scripts/release-image.sh stage",
+        "./scripts/release-image.sh promote",
+        "./scripts/select-release-image.sh",
+        "./scripts/verify-release-provenance.sh",
+        "./scripts/create-release-checksums.sh",
+        "RELEASE_DIGEST: ${{ steps.existing-release.outputs.release-digest }}",
+        "cancel-in-progress: false",
     )
     for fragment in required_validation_fragments:
         if fragment not in validation:
@@ -112,6 +141,131 @@ def validate_workflows() -> None:
     for fragment in required_release_fragments:
         if fragment not in release:
             fail(f"autorelease.yml is missing required content: {fragment}")
+    if "build-test" in release or "release-on-push-action" in release:
+        fail("release workflow must use full verification and GitHub-native release creation")
+    if "--clobber" in release:
+        fail("release workflow must never overwrite published evidence")
+
+    ordered_release_steps = (
+        "- name: Inspect existing GitHub release transaction",
+        "- name: Inspect existing image transaction",
+        "- name: Full release-quality verification",
+        "- name: Stage verified image candidate",
+        "- name: Generate build provenance",
+        "- name: Verify existing build provenance",
+        "- name: Generate SPDX SBOM",
+        "- name: Attest image SBOM",
+        "- name: Create release metadata and checksums",
+        "- name: Upload release evidence",
+        "- name: Promote immutable image tags",
+    )
+    step_positions = [release.index(step) for step in ordered_release_steps]
+    if step_positions != sorted(step_positions):
+        fail("release transaction steps are not in durable preflight/evidence/promotion order")
+
+    release_workflow = yaml.safe_load(release)
+    release_jobs = release_workflow.get("jobs", {})
+    producer = release_jobs.get("verify-and-publish-image", {})
+    consumer = release_jobs.get("create-github-release", {})
+    producer_steps = {step.get("name"): step for step in producer.get("steps", [])}
+    consumer_steps = {step.get("name"): step for step in consumer.get("steps", [])}
+
+    upload_step = producer_steps.get("Upload release evidence", {})
+    download_step = consumer_steps.get("Download release evidence", {})
+    upload_inputs = upload_step.get("with", {})
+    download_inputs = download_step.get("with", {})
+    upload_name = upload_inputs.get("name")
+    download_name = download_inputs.get("name")
+    expected_evidence_name = "release-evidence-${{ github.run_id }}"
+    if upload_name != expected_evidence_name or download_name != expected_evidence_name:
+        fail("release evidence upload and download must use the same stable workflow-run identity")
+    if "github.run_attempt" in upload_name or "github.run_attempt" in download_name:
+        fail("durable cross-job release evidence must not depend on github.run_attempt")
+    if upload_inputs.get("overwrite") is not True:
+        fail("complete release workflow reruns must explicitly replace the stable evidence artifact")
+
+    def evidence_name(run_id: int, run_attempt: int) -> str:
+        return upload_name.replace("${{ github.run_id }}", str(run_id)).replace(
+            "${{ github.run_attempt }}", str(run_attempt)
+        )
+
+    first_attempt_upload = evidence_name(1234, 1)
+    failed_job_rerun_download = download_name.replace(
+        "${{ github.run_id }}", "1234"
+    ).replace("${{ github.run_attempt }}", "2")
+    complete_rerun_upload = evidence_name(1234, 2)
+    if first_attempt_upload != failed_job_rerun_download:
+        fail("a failed-job-only rerun cannot recover the producer's release evidence")
+    if complete_rerun_upload != first_attempt_upload:
+        fail("a complete rerun must intentionally replace the same workflow-run evidence identity")
+
+    selected_step = producer_steps.get("Select release image identity", {})
+    selected_script = selected_step.get("run", "")
+    for fragment in (
+        "./scripts/select-release-image.sh",
+        '"$EXISTING_DIGEST"',
+        '"$STAGED_DIGEST"',
+        '"$GITHUB_OUTPUT"',
+    ):
+        if fragment not in selected_script:
+            fail(f"release image selection is missing executable state input: {fragment}")
+
+    generate_step = producer_steps.get("Generate build provenance", {})
+    verify_step = producer_steps.get("Verify existing build provenance", {})
+    if generate_step.get("if") != "steps.selected-image.outputs.provenance-action == 'generate'":
+        fail("build provenance generation must be limited to the digest staged by this attempt")
+    if verify_step.get("if") != "steps.selected-image.outputs.provenance-action == 'verify'":
+        fail("reused image digests must take the existing-provenance verification path")
+    if not str(generate_step.get("uses", "")).startswith("actions/attest-build-provenance@"):
+        fail("newly staged images must use the pinned build-provenance action")
+    verify_script = verify_step.get("run", "")
+    for fragment in (
+        "./scripts/verify-release-provenance.sh",
+        '"$IMAGE_NAME"',
+        '"$IMAGE_DIGEST"',
+        '"$GITHUB_REPOSITORY"',
+        '"$GITHUB_SHA"',
+        '"refs/heads/master"',
+    ):
+        if fragment not in verify_script:
+            fail(f"reused image provenance verification is missing: {fragment}")
+
+    step_names = [step.get("name") for step in producer.get("steps", [])]
+    generate_position = step_names.index("Generate build provenance")
+    verify_position = step_names.index("Verify existing build provenance")
+    sbom_position = step_names.index("Generate SPDX SBOM")
+    evidence_position = step_names.index("Upload release evidence")
+    promotion_position = step_names.index("Promote immutable image tags")
+    if not (
+        generate_position < sbom_position < evidence_position < promotion_position
+        and verify_position < sbom_position < evidence_position < promotion_position
+    ):
+        fail("provenance establishment must precede SBOM evidence and immutable tag promotion")
+
+    for fragment in ("fail-on-severity: high", "timeout-minutes:"):
+        if fragment not in dependency_review:
+            fail(f"dependency-review.yml is missing required content: {fragment}")
+    for fragment in ("languages: csharp", "build-mode: manual", "--locked-mode", "security-events: write"):
+        if fragment not in codeql:
+            fail(f"codeql.yml is missing required content: {fragment}")
+    for ecosystem in ("nuget", "github-actions", "docker"):
+        if f"package-ecosystem: {ecosystem}" not in dependabot:
+            fail(f"dependabot.yml does not cover {ecosystem}")
+    if dependabot.count("target-branch: develop") != 3:
+        fail("all Dependabot ecosystems must target develop")
+
+    immutable_action = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@[0-9a-f]{40}$")
+    for path in workflow_paths:
+        text = path.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("uses:"):
+                continue
+            action = stripped.removeprefix("uses:").split("#", 1)[0].strip()
+            if action.startswith("./"):
+                continue
+            if not immutable_action.fullmatch(action):
+                fail(f"{path.relative_to(REPOSITORY_ROOT)} has a mutable action reference: {action}")
 
 
 def validate_policy_and_scripts() -> None:
@@ -125,6 +279,18 @@ def validate_policy_and_scripts() -> None:
         "scripts/test-verification.sh",
         "scripts/validate-workflow.py",
         "scripts/check-vulnerable-packages.py",
+        "scripts/check-coverage.py",
+        "scripts/check-branch-integrity.sh",
+        "scripts/test-branch-integrity.sh",
+        "scripts/container-smoke.sh",
+        "scripts/release-image.sh",
+        "scripts/release-assets.sh",
+        "scripts/create-release-checksums.sh",
+        "scripts/select-release-image.sh",
+        "scripts/verify-release-provenance.sh",
+        "scripts/test-release-provenance.sh",
+        "scripts/test-release-resume.sh",
+        "scripts/test-release-checksums.sh",
     ):
         path = REPOSITORY_ROOT / relative_path
         if not path.stat().st_mode & stat.S_IXUSR:
@@ -139,6 +305,39 @@ def validate_policy_and_scripts() -> None:
         fail("full verification must request a machine-readable solution vulnerability report")
     if "scripts/check-vulnerable-packages.py" not in verifier:
         fail("full verification must reject findings in the vulnerability report")
+    if "dotnet restore BeanBot.sln --locked-mode" not in verifier:
+        fail("repository verification must use locked-mode restore")
+    if "scripts/check-coverage.py" not in verifier or "coverage.runsettings" not in verifier:
+        fail("full verification must enforce and publish the coverage baseline")
+    if "BEANBOT_BRANCH_INTEGRITY_CANDIDATE" not in verifier:
+        fail("full verification must reject master/develop branch drift")
+    if "scripts/container-smoke.sh" not in verifier:
+        fail("full verification must smoke test the hardened image")
+    if "scripts/test-release-resume.sh" not in verifier or "scripts/test-release-checksums.sh" not in verifier:
+        fail("repository verification must exercise release resumption and portable checksums")
+    if 'run_stage "Test release provenance" scripts/test-release-provenance.sh' not in verifier:
+        fail("repository verification must exercise reused image provenance verification")
+
+    release_image = (REPOSITORY_ROOT / "scripts" / "release-image.sh").read_text(encoding="utf-8")
+    release_assets = (REPOSITORY_ROOT / "scripts" / "release-assets.sh").read_text(encoding="utf-8")
+    if "--prefer-index=false" not in release_image:
+        fail("immutable image promotion must preserve the selected manifest digest")
+    if "probe_optional_digest" not in release_image or "|| true" in release_image:
+        fail("registry tag discovery must distinguish explicit absence from lookup failure")
+    if "--clobber" in release_assets:
+        fail("release asset publication must not overwrite evidence")
+    if "probe_release_target" not in release_assets or "release_exists" in release_assets:
+        fail("release discovery must fail closed on indeterminate GitHub API results")
+
+    deployment = (REPOSITORY_ROOT / "docs" / "release-readiness.md").read_text(encoding="utf-8")
+    if "--stop-timeout 130" not in deployment or "stop_grace_period: 2m10s" not in deployment:
+        fail("deployment examples must exceed the two-minute Generic Host shutdown budget")
+
+    dockerfile = (REPOSITORY_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    if dockerfile.count("@sha256:") != 2 or "USER $APP_UID" not in dockerfile:
+        fail("Dockerfile must pin both base images and run as the .NET non-root user")
+    if "dotnet restore \"BeanBot/BeanBot.csproj\" --locked-mode" not in dockerfile:
+        fail("Docker restore must use the committed lock file")
 
     gitignore = (REPOSITORY_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     for ignored_directory in (".dotnet/", ".dotnet-home/"):

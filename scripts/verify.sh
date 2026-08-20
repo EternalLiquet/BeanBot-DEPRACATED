@@ -42,14 +42,34 @@ validate_workflow() {
 
 self_test_workflow() {
   run_stage "Test verification orchestration" scripts/test-verification.sh
+  run_stage "Test branch integrity guard" scripts/test-branch-integrity.sh
+  run_stage "Test resumable release transaction" scripts/test-release-resume.sh
+  run_stage "Test portable release checksums" scripts/test-release-checksums.sh
+  run_stage "Test release provenance" scripts/test-release-provenance.sh
 }
 
 build_and_test() {
-  run_stage "Restore .NET dependencies" dotnet restore BeanBot.sln
+  run_stage "Restore locked .NET dependencies" dotnet restore BeanBot.sln --locked-mode
   run_stage "Verify .NET formatting and analyzers" \
     dotnet format BeanBot.sln --verify-no-changes --no-restore --severity warn
+  # Roslyn requires XML documentation generation when IDE0005 is a build warning.
+  # Keep this explicit gate so redundant usings fail verification without changing publish output.
+  run_stage "Verify redundant using cleanup" \
+    dotnet format BeanBot.sln --verify-no-changes --no-restore --diagnostics IDE0005
   run_stage "Build Release" dotnet build BeanBot.sln --configuration Release --no-restore
-  run_stage "Run Release tests" dotnet test BeanBot.sln --configuration Release --no-build
+  if [[ "$mode" == "full" ]]; then
+    mkdir -p .artifacts/TestResults .artifacts/coverage
+    find .artifacts/TestResults -mindepth 1 -delete
+    run_stage "Run Release tests with coverage" \
+      dotnet test BeanBot.sln --configuration Release --no-build \
+        --settings coverage.runsettings --collect "Code Coverage" \
+        --results-directory .artifacts/TestResults
+    run_stage "Check coverage baseline" \
+      python3 scripts/check-coverage.py \
+        .artifacts/TestResults .config/coverage-baseline.json .artifacts/coverage
+  else
+    run_stage "Run Release tests" dotnet test BeanBot.sln --configuration Release --no-build
+  fi
 }
 
 check_diff() {
@@ -70,7 +90,7 @@ check_diff() {
 check_vulnerable_packages() {
   local report_path
   report_path="$(mktemp "${TMPDIR:-/tmp}/beanbot-vulnerabilities.XXXXXX.json")"
-  if ! dotnet list BeanBot.sln package --vulnerable --include-transitive \
+  if ! dotnet list BeanBot.sln package --vulnerable --include-transitive --no-restore \
     --format json --output-version 1 >"$report_path"; then
     rm -f -- "$report_path"
     return 1
@@ -90,8 +110,20 @@ build_and_test
 check_diff
 
 if [[ "$mode" == "full" ]]; then
+  branch_integrity_candidate="${BEANBOT_BRANCH_INTEGRITY_CANDIDATE:-HEAD}"
+  run_stage "Verify master ancestry" \
+    scripts/check-branch-integrity.sh origin/master "$branch_integrity_candidate" \
+      "${BEANBOT_PR_HEAD_REPOSITORY:-}" "${BEANBOT_REPOSITORY:-}"
   run_stage "Check vulnerable NuGet packages" check_vulnerable_packages
-  run_stage "Build Docker image" docker build --tag beanbot-verification:local .
+  docker_image_tag="${BEANBOT_VERIFY_DOCKER_TAG:-beanbot-verification:local}"
+  build_version="${BEANBOT_BUILD_VERSION:-0.0.0-local}"
+  build_commit_sha="${BEANBOT_BUILD_COMMIT_SHA:-$(git rev-parse HEAD)}"
+  run_stage "Build Docker image" docker build \
+    --tag "$docker_image_tag" \
+    --build-arg "BEANBOT_VERSION=$build_version" \
+    --build-arg "BEANBOT_COMMIT_SHA=$build_commit_sha" \
+    .
+  run_stage "Smoke test hardened Docker image" scripts/container-smoke.sh "$docker_image_tag"
 fi
 
 echo "Verification mode '$mode' completed successfully."

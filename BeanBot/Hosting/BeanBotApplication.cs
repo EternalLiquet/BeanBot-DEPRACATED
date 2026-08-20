@@ -1,84 +1,201 @@
-using BeanBot.Util;
+using System.Runtime.ExceptionServices;
+using BeanBot.Logging;
 using Microsoft.Extensions.Logging;
 
-using System;
-using System.Threading;
-using System.Threading.Tasks;
+namespace BeanBot.Hosting;
 
-namespace BeanBot.Hosting
+internal interface IBeanBotRuntime
 {
-    internal interface IBeanBotRuntime
+    bool HasActiveDiscordLifecycleOperation { get; }
+    bool CanDisposeDiscordClient { get; }
+    void SubscribeApplicationEvents();
+    Task StartHealthServerAsync(CancellationToken cancellationToken);
+    Task StartDiscordAsync(CancellationToken cancellationToken);
+    void StartGatewayRecovery();
+    Task StartCommandServicesAsync();
+    void StartEventAndBackgroundServices();
+    void StopReactionServices();
+    void StopNewMemberEvents();
+    void StopEditedMessageEvents();
+    void StopCommandServices();
+    void StopMessageWaiter();
+    void StopPaginator();
+    void UnsubscribeDiscordLog();
+    Task StopGatewayRecoveryAsync();
+    void UnsubscribeApplicationEvents();
+    Task StopPunServiceAsync();
+    Task StopHealthServerAsync(CancellationToken cancellationToken);
+    Task FlushOwnerAlertsAsync();
+    Task StopDiscordAsync(CancellationToken cancellationToken);
+    void DisposeDiscordClient();
+}
+
+internal sealed class BeanBotApplication : IBeanBotApplication
+{
+    private static readonly TimeSpan DefaultShutdownStageTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan PostCancellationStageTimeout = TimeSpan.FromSeconds(1);
+
+    private readonly IBeanBotRuntime _runtime;
+    private readonly ILogger<BeanBotApplication> _logger;
+    private readonly TimeSpan _shutdownStageTimeout;
+    private int _startRequested;
+    private int _stopRequested;
+
+    public BeanBotApplication(
+        IBeanBotRuntime runtime,
+        ILogger<BeanBotApplication> logger,
+        TimeSpan? shutdownStageTimeout = null)
     {
-        bool HasUnfinishedDiscordStartupOperation { get; }
-        void SubscribeApplicationEvents();
-        Task StartHealthServerAsync(CancellationToken cancellationToken);
-        Task StartDiscordAsync(CancellationToken cancellationToken);
-        void StartGatewayRecovery();
-        Task StartCommandServicesAsync();
-        void StartEventAndBackgroundServices();
-        void StopEventAndCommandServices();
-        Task StopGatewayRecoveryAsync();
-        void UnsubscribeApplicationEvents();
-        Task StopBackgroundServicesAsync(CancellationToken cancellationToken);
-        Task FlushOwnerAlertsAsync();
-        Task StopDiscordAsync(CancellationToken cancellationToken);
-        void DisposeDiscordClient();
+        _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _shutdownStageTimeout = shutdownStageTimeout ?? DefaultShutdownStageTimeout;
+        if (_shutdownStageTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(shutdownStageTimeout));
+        }
     }
 
-    internal sealed class BeanBotApplication : IBeanBotApplication
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
-        private readonly IBeanBotRuntime _runtime;
-        private readonly ILogger<BeanBotApplication> _logger;
-        private int _startRequested;
-        private int _stopRequested;
-
-        public BeanBotApplication(
-            IBeanBotRuntime runtime,
-            ILogger<BeanBotApplication> logger)
+        if (Interlocked.Exchange(ref _startRequested, 1) != 0)
         {
-            _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            return;
         }
 
-        public async Task StartAsync(CancellationToken cancellationToken)
+        BeanBotLog.ApplicationStarting(
+            _logger,
+            BuildIdentity.Current.Version,
+            BuildIdentity.Current.CommitSha);
+        _runtime.SubscribeApplicationEvents();
+        await _runtime.StartHealthServerAsync(cancellationToken);
+        await _runtime.StartDiscordAsync(cancellationToken);
+        _runtime.StartGatewayRecovery();
+        await _runtime.StartCommandServicesAsync();
+        _runtime.StartEventAndBackgroundServices();
+    }
+
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        if (Interlocked.Exchange(ref _stopRequested, 1) != 0)
         {
-            if (Interlocked.Exchange(ref _startRequested, 1) != 0)
+            return;
+        }
+
+        Exception? firstFailure = null;
+
+        async Task RunStageAsync(
+            string stageName,
+            Func<Task> stage,
+            bool runAfterCancellation = true)
+        {
+            if (cancellationToken.IsCancellationRequested && !runAfterCancellation)
             {
+                BeanBotLog.ShutdownStageSkipped(_logger, stageName);
                 return;
             }
 
-            _runtime.SubscribeApplicationEvents();
-            await _runtime.StartHealthServerAsync(cancellationToken);
-            await _runtime.StartDiscordAsync(cancellationToken);
-            _runtime.StartGatewayRecovery();
-            await _runtime.StartCommandServicesAsync();
-            _runtime.StartEventAndBackgroundServices();
-        }
-
-        public async Task StopAsync(CancellationToken cancellationToken)
-        {
-            if (Interlocked.Exchange(ref _stopRequested, 1) != 0)
+            Task? operation = null;
+            try
             {
-                return;
+                operation = stage();
+                var cancellationAlreadyElapsed = cancellationToken.IsCancellationRequested;
+                var stageTimeout = cancellationAlreadyElapsed && runAfterCancellation
+                    ? Min(_shutdownStageTimeout, PostCancellationStageTimeout)
+                    : _shutdownStageTimeout;
+                var waitCancellationToken = cancellationAlreadyElapsed && runAfterCancellation
+                    ? CancellationToken.None
+                    : cancellationToken;
+                await operation.WaitAsync(stageTimeout, waitCancellationToken);
+            }
+            catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
+            {
+                firstFailure ??= exception;
+                BeanBotLog.ShutdownStageCanceled(_logger, stageName);
+            }
+            catch (Exception exception)
+            {
+                firstFailure ??= exception;
+                BeanBotLog.ShutdownStageFailed(_logger, stageName, exception);
             }
 
-            _runtime.StopEventAndCommandServices();
-            await _runtime.StopGatewayRecoveryAsync();
-            _runtime.UnsubscribeApplicationEvents();
-            await _runtime.StopBackgroundServicesAsync(cancellationToken);
-
-            await _runtime.FlushOwnerAlertsAsync();
-            if (_runtime.HasUnfinishedDiscordStartupOperation)
+            if (operation is { IsCompleted: false })
             {
-                BeanBotLog.DiscordStopSkipped(_logger);
+                _ = operation.ContinueWith(
+                    completedTask => BeanBotLog.ShutdownStageLateFailure(
+                        _logger,
+                        stageName,
+                        completedTask.Exception!),
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+            }
+        }
+
+        await RunSynchronousStageAsync("reaction-services", _runtime.StopReactionServices);
+        await RunSynchronousStageAsync("new-member-events", _runtime.StopNewMemberEvents);
+        await RunSynchronousStageAsync("edited-message-events", _runtime.StopEditedMessageEvents);
+        await RunSynchronousStageAsync("command-services", _runtime.StopCommandServices);
+        await RunSynchronousStageAsync("message-waiter", _runtime.StopMessageWaiter);
+        await RunSynchronousStageAsync("paginator", _runtime.StopPaginator);
+        await RunSynchronousStageAsync("discord-log", _runtime.UnsubscribeDiscordLog);
+        await RunStageAsync("gateway-recovery", _runtime.StopGatewayRecoveryAsync);
+        await RunSynchronousStageAsync("application-events", _runtime.UnsubscribeApplicationEvents);
+        await RunStageAsync("pun-service", _runtime.StopPunServiceAsync);
+        await RunStageAsync("health-server", StopHealthServerAsync);
+        await RunStageAsync("owner-alerts-before-discord", _runtime.FlushOwnerAlertsAsync, false);
+
+        var canStopDiscord = false;
+        await RunSynchronousStageAsync(
+            "discord-startup-state",
+            () => canStopDiscord = !_runtime.HasActiveDiscordLifecycleOperation);
+        if (!canStopDiscord)
+        {
+            BeanBotLog.DiscordStopSkipped(_logger);
+        }
+        else
+        {
+            await RunStageAsync(
+                "discord-stop",
+                () => _runtime.StopDiscordAsync(cancellationToken),
+                false);
+            if (_runtime.CanDisposeDiscordClient)
+            {
+                await RunSynchronousStageAsync("discord-client-disposal", _runtime.DisposeDiscordClient);
             }
             else
             {
-                await _runtime.StopDiscordAsync(cancellationToken);
-                _runtime.DisposeDiscordClient();
+                BeanBotLog.DiscordDisposalSkipped(_logger);
+            }
+        }
+
+        await RunStageAsync("owner-alerts-final", _runtime.FlushOwnerAlertsAsync, false);
+
+        if (firstFailure is not null)
+        {
+            ExceptionDispatchInfo.Capture(firstFailure).Throw();
+        }
+
+        Task RunSynchronousStageAsync(string stageName, Action stage)
+            => RunStageAsync(stageName, () => Task.Run(stage, CancellationToken.None));
+
+        Task StopHealthServerAsync()
+        {
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                return _runtime.StopHealthServerAsync(cancellationToken);
             }
 
-            await _runtime.FlushOwnerAlertsAsync();
+            return StopHealthWithFreshTokenAsync();
         }
+
+        async Task StopHealthWithFreshTokenAsync()
+        {
+            using var healthCleanup = new CancellationTokenSource(
+                Min(_shutdownStageTimeout, PostCancellationStageTimeout));
+            await _runtime.StopHealthServerAsync(healthCleanup.Token);
+        }
+
+        static TimeSpan Min(TimeSpan left, TimeSpan right)
+            => left <= right ? left : right;
     }
 }

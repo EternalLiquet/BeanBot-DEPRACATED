@@ -45,13 +45,17 @@ When `BEANBOT_HEALTHCHECK_PORT` is set, the bot exposes a Kestrel-hosted `GET /h
 - `429 Too Many Requests`: the same client polled again before the configured rate limit expired.
 - no response / connection failure: the bot process is down or unreachable.
 
+Successful and unhealthy JSON responses also include the non-secret release version and Git commit SHA so an operator can identify the running image.
+
 If you bind the endpoint to anything other than `127.0.0.1`, set `BEANBOT_HEALTHCHECK_BEARER_TOKEN` and send `Authorization: Bearer <token>` from Home Assistant.
 
 ## Local Development
 
-Install a stable .NET 10 SDK. The repository's `global.json` accepts SDK 10.0.100 or
-newer .NET 10 patches and feature bands while excluding preview and other major SDKs.
-Then restore, build, and run the test suite from the repo root:
+Install a stable .NET 10 SDK and Docker. The repository's `global.json` accepts SDK
+10.0.100 or newer .NET 10 patches and feature bands while excluding preview and
+other major SDKs. The integration suite automatically starts an isolated MongoDB
+container; it does not use `BEANBOT_MONGO_CONNECTION_STRING` or require a manually
+managed test database. Then restore, build, and run the test suite from the repo root:
 
 ```powershell
 dotnet restore BeanBot.sln
@@ -61,10 +65,27 @@ dotnet test BeanBot.sln --configuration Release --no-build
 
 Repository changes use a Codex-native Planner → Implementer → Verifier → Reviewer loop with one writer and independent verification/review. See [Codex development loop](docs/codex-development-loop.md) for role handoffs and the shared fast/full verification commands.
 
+### Source layout
+
+BeanBot remains a single application project, organized by responsibility:
+
+- `Configuration` binds and validates runtime settings.
+- `Discord` contains commands, event handlers, gateway lifecycle, messaging helpers, and reaction-role behavior.
+- `Health` owns gateway health snapshots and the authenticated `/healthz` endpoint.
+- `Hosting` composes the Generic Host and coordinates startup and shutdown.
+- `Logging` contains structured log messages and Discord owner-alert delivery.
+- `Persistence` contains runtime directory setup, persisted models, outage state, and MongoDB repositories.
+
+Tests mirror these production responsibilities where useful, with cross-component scenarios kept under `BeanBot.Tests/Integration`.
+
 Repository-wide compiler settings are defined in `Directory.Build.props`, package
 versions in `Directory.Packages.props`, and formatting and naming conventions in
 `.editorconfig`. Run `./scripts/verify.sh fast` before submitting changes; it checks
 formatting and analyzers in addition to building and testing the solution.
+Full verification additionally enforces locked restores, the measured coverage
+baseline, master/develop ancestry, dependency vulnerability checks, a
+digest-pinned Docker build, and a non-root/read-only container smoke test.
+Coverage reports are written under `.artifacts/coverage`.
 
 To start the bot:
 
@@ -89,14 +110,19 @@ Run it with your `.env` file and a persistent volume for logs and runtime files.
 docker run -d `
   --name beanbot `
   --restart unless-stopped `
+  --stop-timeout 130 `
   --env-file .env `
   -p 8080:8080 `
   -v beanbot-data:/app/BeanBotFiles `
   beanbot
 ```
 
-The container uses the .NET 10 ASP.NET runtime image to provide the Kestrel health endpoint.
+The container uses the digest-pinned .NET 10 Noble chiseled-extra ASP.NET runtime,
+runs as the image's non-root application user, and provides the Kestrel health endpoint.
 Container stop signals are handled by the Generic Host and flow through BeanBot's bounded Discord and background-service shutdown sequence.
+
+For hardened runtime flags, GHCR digest deployment, host bind-mount ownership,
+release validation, and rollback, see [Release readiness and operations](docs/release-readiness.md).
 
 BeanBot makes three bounded attempts to log in to Discord during startup. Permanent token failures fail immediately; exhausted transient failures exit with a non-zero status so the configured Docker restart policy can start a fresh process. Runtime gateway disconnects continue to use BeanBot's separate natural-recovery, manual-reconnect, and process-restart sequence.
 

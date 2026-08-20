@@ -16,7 +16,7 @@ Plans, handoffs, verification evidence, and review results are transient convers
 
 Ordinary feature, fix, refactor, and chore branches start from the current `origin/develop` and target `develop`. Tested changes reach the production/release branch through an intentional `develop` to `master` promotion PR; `master` is not the day-to-day integration branch. An emergency production hotfix may start from and target `master`, but the same fix must then be merged or backported into `develop` before ordinary development continues.
 
-Repository verification CI runs for pull requests targeting `develop`, `master`, or `deploy`, and for pushes to those branches. The separate automated release workflow remains limited to pushes to `master`, so ordinary `develop` activity does not create a GitHub Release. See `AGENTS.md` for the authoritative shared branch and release policy.
+Repository verification CI runs for pull requests targeting `develop`, `master`, or `deploy`, and for pushes to those branches. Releases are intentionally dispatched from the exact current `master` head with an explicit SemVer version, so ordinary branch activity does not create a GitHub Release. See `AGENTS.md` for the authoritative shared branch and release policy.
 
 ## Verification interfaces
 
@@ -30,19 +30,20 @@ Run commands from any directory; each script resolves the repository root itself
 
 `fast` is the normal implementation loop. It tests the verifier's orchestration and failure propagation, validates Codex/CI configuration, restores the solution, verifies `.editorconfig` formatting and warning-level analyzers without another restore, builds Release, runs Release tests without a second build, and checks committed, staged, and unstaged diffs for whitespace errors.
 
-`full` runs every fast gate once, then requests a machine-readable report for direct and transitive NuGet dependencies across the complete solution, fails explicitly if that report contains a known vulnerability, and builds the Docker image. The internal `build-test` mode gives the release workflow, which currently runs only for pushes to `master`, the same orchestration self-test, validation, restore, Release build, Release test, and diff gates without duplicating full-only Docker and vulnerability work.
+`full` runs every fast gate once using committed NuGet lock files, collects and checks the measured BeanBot line/branch coverage baseline, verifies that current `master` is an ancestor of the candidate, rejects known vulnerable direct or transitive packages, builds the digest-pinned non-root Docker image, and smoke-tests it without credentials or network. The internal `build-test` mode remains available for focused diagnostics but is not a release-quality gate.
 
 The script keeps the .NET CLI home and NuGet package cache in the repository's ignored `.dotnet-home` and `.dotnet` directories unless the caller explicitly supplies `DOTNET_CLI_HOME` or `NUGET_PACKAGES`.
 
 The gates have these dependencies:
 
-- Configuration, script orchestration, build, test, and diff checks are deterministic local checks once dependencies are restored.
+- Configuration, script orchestration, build, test, and diff checks are deterministic local checks once dependencies and the pinned MongoDB integration image are available.
 - Restore and vulnerable-package checks require NuGet/network availability.
-- The Docker gate requires a working Docker daemon and registry/network access when base layers are absent.
+- Tests require a working Docker daemon because the integration suite automatically starts an isolated, ephemeral MongoDB container. Registry/network access is required when its pinned image is absent.
+- The full-only Docker image and hardened runtime smoke gates also require Docker and registry/network access when base layers are absent.
 - GitHub evaluates Actions syntax/triggers and supplies exact-head required-check evidence.
-- Real Discord, production MongoDB, deployment health, and post-deployment behavior remain manual. Tests must not connect to them.
+- Real Discord, production MongoDB, deployment health, and post-deployment behavior remain manual. Tests must not connect to production services or credentials.
 
-Formatting and warning-level analyzer conventions are mandatory gates backed by the repository's `.editorconfig`. No coverage threshold is imposed.
+Formatting and warning-level analyzer conventions are mandatory gates backed by the repository's `.editorconfig`. Coverage is guarded against regression from the measured baseline with the documented tolerance; it is not an arbitrary vanity target.
 
 ## Repair and infrastructure failures
 
@@ -52,4 +53,4 @@ If only local infrastructure is unavailable, open a draft PR to obtain exact-hea
 
 ## Automation boundaries
 
-Skills and custom-agent files guide active Codex sessions; they do not create a persistent autonomous daemon. Repository rules can guide Codex review, but cannot enable an external GitHub review setting. GitHub Actions performs shared verification for `develop`, `master`, and `deploy`; a separate release action remains limited to `master`. PR creation/readiness and deployment checks are user- or agent-triggered, merging remains human-controlled, and no automatic merge is configured.
+Skills and custom-agent files guide active Codex sessions; they do not create a persistent autonomous daemon. Repository rules can guide Codex review, but cannot enable an external GitHub review setting. GitHub Actions performs shared verification for `develop`, `master`, and `deploy`; the intentional release workflow verifies and publishes the exact `master` head only when manually dispatched. PR creation/readiness and deployment checks are user- or agent-triggered, merging remains human-controlled, and no automatic merge is configured. See [Release readiness and operations](release-readiness.md).
