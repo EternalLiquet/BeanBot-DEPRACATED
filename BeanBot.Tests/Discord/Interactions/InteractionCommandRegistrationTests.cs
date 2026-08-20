@@ -69,4 +69,29 @@ public class InteractionCommandRegistrationTests
         Assert.True(retried);
         Assert.Equal(2, calls);
     }
+
+    [Fact]
+    public async Task EnsureRegisteredAsync_AfterTimeout_AllowsFreshRetry()
+    {
+        var calls = 0;
+        var stalledAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var registration = new InteractionCommandRegistration(
+            () =>
+            {
+                calls++;
+                return calls == 1
+                    ? stalledAttempt.Task
+                    : Task.CompletedTask;
+            },
+            TimeSpan.FromMilliseconds(20));
+
+        await Assert.ThrowsAsync<TimeoutException>(() => registration.EnsureRegisteredAsync());
+        var retried = await registration.EnsureRegisteredAsync();
+
+        Assert.True(retried);
+        Assert.Equal(2, calls);
+
+        stalledAttempt.SetException(new InvalidOperationException("late failure"));
+        await Task.Yield();
+    }
 }
