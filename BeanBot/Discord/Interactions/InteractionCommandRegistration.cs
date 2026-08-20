@@ -35,6 +35,14 @@ internal sealed class InteractionCommandRegistration
         }
         catch (TimeoutException)
         {
+            lock (_syncRoot)
+            {
+                if (ReferenceEquals(_registrationTask, registrationTask))
+                {
+                    _registrationTask = null;
+                }
+            }
+
             ObserveLateFault(registrationTask);
             throw;
         }
