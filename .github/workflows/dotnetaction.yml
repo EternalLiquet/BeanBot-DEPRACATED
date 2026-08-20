@@ -1,4 +1,4 @@
-name: .NET Core Master and Deploy Checks
+name: Repository Verification
 
 on:
   push:
@@ -18,19 +18,39 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  verification:
+    name: Full repository verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      # Build the merge result, but prove branch ancestry against the real PR head.
+      BEANBOT_BRANCH_INTEGRITY_CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out exact commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup .NET SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 10.0.x
 
       - name: Full repository verification
         run: ./scripts/verify.sh full
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-${{ github.sha }}
+          path: .artifacts/coverage
+          if-no-files-found: ignore
+          retention-days: 14

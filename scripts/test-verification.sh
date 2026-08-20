@@ -23,6 +23,12 @@ if [[ "$command_name" == "dotnet" && "$*" == *"--format json"* ]]; then
     printf '%s\n' '{"version":1,"projects":[]}'
   fi
 fi
+if [[ "$command_name" == "git" && "$*" == "rev-parse HEAD" ]]; then
+  printf '%s\n' '0123456789abcdef0123456789abcdef01234567'
+fi
+if [[ "$command_name" == "docker" && "$*" == "image inspect --format {{.Config.User}} "* ]]; then
+  printf '%s\n' '1654'
+fi
 if [[ -n "${BEANBOT_VERIFY_TEST_FAIL:-}" && "$command_name $*" == *"$BEANBOT_VERIFY_TEST_FAIL"* ]]; then
   exit 17
 fi
@@ -80,7 +86,7 @@ fast_log="$temporary_directory/fast.log"
   PATH="$stub_directory:$PATH" BEANBOT_VERIFY_TEST_LOG="$fast_log" \
     BEANBOT_VERIFY_SKIP_SELF_TEST=1 "$verify_script" fast
 )
-assert_contains "$repository_root|dotnet|restore BeanBot.sln" "$fast_log"
+assert_contains "$repository_root|dotnet|restore BeanBot.sln --locked-mode" "$fast_log"
 assert_contains "$repository_root|dotnet|format BeanBot.sln --verify-no-changes --no-restore --severity warn" "$fast_log"
 assert_contains "$repository_root|dotnet|format BeanBot.sln --verify-no-changes --no-restore --diagnostics IDE0005" "$fast_log"
 assert_contains "$repository_root|dotnet|test BeanBot.sln --configuration Release --no-build" "$fast_log"
@@ -92,18 +98,24 @@ full_log="$temporary_directory/full.log"
   cd /tmp
   PATH="$stub_directory:$PATH" BEANBOT_VERIFY_TEST_LOG="$full_log" \
     BEANBOT_VERIFY_REAL_PYTHON="$real_python" \
+    BEANBOT_BRANCH_INTEGRITY_CANDIDATE="fedcba9876543210fedcba9876543210fedcba98" \
     BEANBOT_VERIFY_SKIP_SELF_TEST=1 "$verify_script" full
 )
-assert_contains "$repository_root|dotnet|list BeanBot.sln package --vulnerable --include-transitive --format json --output-version 1" "$full_log"
-assert_contains "$repository_root|docker|build --tag beanbot-verification:local ." "$full_log"
+assert_contains "$repository_root|dotnet|list BeanBot.sln package --vulnerable --include-transitive --no-restore --format json --output-version 1" "$full_log"
+assert_contains "$repository_root|docker|build --tag beanbot-verification:local --build-arg BEANBOT_VERSION=0.0.0-local --build-arg BEANBOT_COMMIT_SHA=0123456789abcdef0123456789abcdef01234567 ." "$full_log"
+assert_contains "$repository_root|docker|image inspect --format {{.Config.User}} beanbot-verification:local" "$full_log"
+assert_contains "$repository_root|docker|run --rm --network none --read-only" "$full_log"
+assert_contains "$repository_root|git|rev-parse --verify --quiet fedcba9876543210fedcba9876543210fedcba98^{commit}" "$full_log"
+assert_contains "$repository_root|git|merge-base --is-ancestor origin/master fedcba9876543210fedcba9876543210fedcba98" "$full_log"
 assert_count 1 "|python3|scripts/validate-workflow.py" "$full_log"
-assert_count 1 "|dotnet|restore BeanBot.sln" "$full_log"
+assert_count 1 "|dotnet|restore BeanBot.sln --locked-mode" "$full_log"
 assert_count 1 "|dotnet|format BeanBot.sln --verify-no-changes --no-restore --severity warn" "$full_log"
 assert_count 1 "|dotnet|format BeanBot.sln --verify-no-changes --no-restore --diagnostics IDE0005" "$full_log"
 assert_count 1 "|dotnet|build BeanBot.sln --configuration Release --no-restore" "$full_log"
-assert_count 1 "|dotnet|test BeanBot.sln --configuration Release --no-build" "$full_log"
-assert_count 1 "|dotnet|list BeanBot.sln package --vulnerable --include-transitive --format json --output-version 1" "$full_log"
-assert_count 1 "|docker|build --tag beanbot-verification:local ." "$full_log"
+assert_count 1 "|dotnet|test BeanBot.sln --configuration Release --no-build --settings coverage.runsettings --collect Code Coverage --results-directory .artifacts/TestResults" "$full_log"
+assert_count 1 "|python3|scripts/check-coverage.py .artifacts/TestResults .config/coverage-baseline.json .artifacts/coverage" "$full_log"
+assert_count 1 "|dotnet|list BeanBot.sln package --vulnerable --include-transitive --no-restore --format json --output-version 1" "$full_log"
+assert_count 1 "|docker|build --tag beanbot-verification:local --build-arg BEANBOT_VERSION=0.0.0-local --build-arg BEANBOT_COMMIT_SHA=0123456789abcdef0123456789abcdef01234567 ." "$full_log"
 
 invalid_log="$temporary_directory/invalid.log"
 if PATH="$stub_directory:$PATH" BEANBOT_VERIFY_TEST_LOG="$invalid_log" \

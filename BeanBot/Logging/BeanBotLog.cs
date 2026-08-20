@@ -6,6 +6,9 @@ namespace BeanBot.Logging;
 
 internal static partial class BeanBotLog
 {
+    [LoggerMessage(Level = LogLevel.Information, Message = "Starting BeanBot. Version={Version}, CommitSha={CommitSha}")]
+    internal static partial void ApplicationStarting(ILogger logger, string version, string commitSha);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Instantiating Command Handler")]
     internal static partial void CommandHandlerCreated(ILogger logger);
 
@@ -65,6 +68,18 @@ internal static partial class BeanBotLog
 
     [LoggerMessage(Level = LogLevel.Error, Message = "BeanBot cleanup failed after application startup did not complete")]
     internal static partial void StartupCleanupFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "BeanBot shutdown stage {ShutdownStage} failed; continuing safe cleanup")]
+    internal static partial void ShutdownStageFailed(ILogger logger, string shutdownStage, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "BeanBot shutdown stage {ShutdownStage} failed after its bounded wait ended")]
+    internal static partial void ShutdownStageLateFailure(ILogger logger, string shutdownStage, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "BeanBot shutdown stage {ShutdownStage} observed host cancellation; continuing non-blocking cleanup")]
+    internal static partial void ShutdownStageCanceled(ILogger logger, string shutdownStage);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Skipping BeanBot shutdown stage {ShutdownStage} because the host shutdown deadline elapsed")]
+    internal static partial void ShutdownStageSkipped(ILogger logger, string shutdownStage);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Instantiating Command Services")]
     internal static partial void CommandServicesCreated(ILogger logger);

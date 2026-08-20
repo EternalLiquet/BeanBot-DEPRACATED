@@ -2,6 +2,7 @@
 using BeanBot.Configuration;
 using BeanBot.Discord.Commands;
 using BeanBot.Logging;
+using Discord;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
 
@@ -107,11 +108,14 @@ public sealed class PunHandler : IAsyncDisposable
             return;
         }
 
-        await channel.SendMessageAsync("The time has come and so have I, Bean Bot here to deliver you your daily pun(?)");
-        await channel.SendMessageAsync("<:420stolfoit:675553715759087618>");
+        var requestOptions = new RequestOptions { CancelToken = token };
+        await channel.SendMessageAsync(
+            "The time has come and so have I, Bean Bot here to deliver you your daily pun(?)",
+            options: requestOptions);
+        await channel.SendMessageAsync("<:420stolfoit:675553715759087618>", options: requestOptions);
         try
         {
-            await channel.SendMessageAsync(pun);
+            await channel.SendMessageAsync(pun, options: requestOptions);
         }
         catch (Exception exception)
         {

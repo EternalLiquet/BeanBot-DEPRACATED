@@ -21,6 +21,15 @@ internal static class Program
         {
             DirectorySetup.MakeSureAllDirectoriesExist();
 
+            if (args is [ContainerSmokeTest.Argument])
+            {
+                return ContainerSmokeTest.Run(
+                    DirectorySetup.botBaseDirectory,
+                    Path.Combine(AppContext.BaseDirectory, "Resources", "puns.csv"),
+                    Console.Out,
+                    Console.Error);
+            }
+
             var builder = Host.CreateApplicationBuilder(args);
             builder.Configuration.AddBeanBotConfiguration();
             builder.Logging.ClearProviders();

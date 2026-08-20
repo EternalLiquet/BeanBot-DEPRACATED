@@ -41,6 +41,8 @@ public class HealthCheckServerTests
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
         Assert.Equal("unhealthy", payload.RootElement.GetProperty("status").GetString());
+        Assert.Equal("0.0.0-local", payload.RootElement.GetProperty("version").GetString());
+        Assert.Equal("unknown", payload.RootElement.GetProperty("commitSha").GetString());
         Assert.False(payload.RootElement.GetProperty("discordConnected").GetBoolean());
         Assert.Equal("LoggedOut", payload.RootElement.GetProperty("loginState").GetString());
         Assert.Equal("Disconnected", payload.RootElement.GetProperty("connectionState").GetString());

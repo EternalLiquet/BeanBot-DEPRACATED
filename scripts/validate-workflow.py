@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 import tomllib
@@ -90,21 +91,43 @@ def validate_custom_agents() -> None:
 def validate_workflows() -> None:
     validation_path = REPOSITORY_ROOT / ".github" / "workflows" / "dotnetaction.yml"
     release_path = REPOSITORY_ROOT / ".github" / "workflows" / "autorelease.yml"
-    validate_yaml(validation_path)
-    validate_yaml(release_path)
+    dependency_review_path = REPOSITORY_ROOT / ".github" / "workflows" / "dependency-review.yml"
+    codeql_path = REPOSITORY_ROOT / ".github" / "workflows" / "codeql.yml"
+    dependabot_path = REPOSITORY_ROOT / ".github" / "dependabot.yml"
+    workflow_paths = sorted((REPOSITORY_ROOT / ".github" / "workflows").glob("*.yml"))
+    for path in (*workflow_paths, dependabot_path):
+        validate_yaml(path)
 
     validation = validation_path.read_text(encoding="utf-8")
     release = release_path.read_text(encoding="utf-8")
+    dependency_review = dependency_review_path.read_text(encoding="utf-8")
+    codeql = codeql_path.read_text(encoding="utf-8")
+    dependabot = dependabot_path.read_text(encoding="utf-8")
     required_validation_fragments = (
-        "name: .NET Core Master and Deploy Checks",
+        "name: Repository Verification",
+        "runs-on: ubuntu-24.04",
+        "timeout-minutes: 45",
         "dotnet-version: 10.0.x",
         "./scripts/verify.sh full",
+        "persist-credentials: false",
+        "BEANBOT_BRANCH_INTEGRITY_CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}",
+        ".artifacts/coverage",
     )
     required_release_fragments = (
-        "name: Bean Bot Automated Release/Versioning",
-        "branches:\n      - master",
-        "./scripts/verify.sh build-test",
-        "needs: build",
+        "name: Intentional BeanBot Release",
+        "workflow_dispatch:",
+        "./scripts/verify.sh full",
+        "packages: write",
+        "attestations: write",
+        "beanbot.spdx.json",
+        "gh release create",
+        "gh release upload",
+        "release-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
+        "existing_commit_digest",
+        "docker buildx imagetools create",
+        "--prefer-index=false",
+        "Immutable commit and version tags resolve to the verified digest.",
+        "cancel-in-progress: false",
     )
     for fragment in required_validation_fragments:
         if fragment not in validation:
@@ -112,6 +135,33 @@ def validate_workflows() -> None:
     for fragment in required_release_fragments:
         if fragment not in release:
             fail(f"autorelease.yml is missing required content: {fragment}")
+    if "build-test" in release or "release-on-push-action" in release:
+        fail("release workflow must use full verification and GitHub-native release creation")
+
+    for fragment in ("fail-on-severity: high", "timeout-minutes:"):
+        if fragment not in dependency_review:
+            fail(f"dependency-review.yml is missing required content: {fragment}")
+    for fragment in ("languages: csharp", "build-mode: manual", "--locked-mode", "security-events: write"):
+        if fragment not in codeql:
+            fail(f"codeql.yml is missing required content: {fragment}")
+    for ecosystem in ("nuget", "github-actions", "docker"):
+        if f"package-ecosystem: {ecosystem}" not in dependabot:
+            fail(f"dependabot.yml does not cover {ecosystem}")
+    if dependabot.count("target-branch: develop") != 3:
+        fail("all Dependabot ecosystems must target develop")
+
+    immutable_action = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?@[0-9a-f]{40}$")
+    for path in workflow_paths:
+        text = path.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("uses:"):
+                continue
+            action = stripped.removeprefix("uses:").split("#", 1)[0].strip()
+            if action.startswith("./"):
+                continue
+            if not immutable_action.fullmatch(action):
+                fail(f"{path.relative_to(REPOSITORY_ROOT)} has a mutable action reference: {action}")
 
 
 def validate_policy_and_scripts() -> None:
@@ -125,6 +175,10 @@ def validate_policy_and_scripts() -> None:
         "scripts/test-verification.sh",
         "scripts/validate-workflow.py",
         "scripts/check-vulnerable-packages.py",
+        "scripts/check-coverage.py",
+        "scripts/check-branch-integrity.sh",
+        "scripts/test-branch-integrity.sh",
+        "scripts/container-smoke.sh",
     ):
         path = REPOSITORY_ROOT / relative_path
         if not path.stat().st_mode & stat.S_IXUSR:
@@ -139,6 +193,20 @@ def validate_policy_and_scripts() -> None:
         fail("full verification must request a machine-readable solution vulnerability report")
     if "scripts/check-vulnerable-packages.py" not in verifier:
         fail("full verification must reject findings in the vulnerability report")
+    if "dotnet restore BeanBot.sln --locked-mode" not in verifier:
+        fail("repository verification must use locked-mode restore")
+    if "scripts/check-coverage.py" not in verifier or "coverage.runsettings" not in verifier:
+        fail("full verification must enforce and publish the coverage baseline")
+    if "BEANBOT_BRANCH_INTEGRITY_CANDIDATE" not in verifier:
+        fail("full verification must reject master/develop branch drift")
+    if "scripts/container-smoke.sh" not in verifier:
+        fail("full verification must smoke test the hardened image")
+
+    dockerfile = (REPOSITORY_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    if dockerfile.count("@sha256:") != 2 or "USER $APP_UID" not in dockerfile:
+        fail("Dockerfile must pin both base images and run as the .NET non-root user")
+    if "dotnet restore \"BeanBot/BeanBot.csproj\" --locked-mode" not in dockerfile:
+        fail("Docker restore must use the committed lock file")
 
     gitignore = (REPOSITORY_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     for ignored_directory in (".dotnet/", ".dotnet-home/"):
