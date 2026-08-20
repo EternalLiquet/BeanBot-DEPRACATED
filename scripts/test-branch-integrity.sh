@@ -36,13 +36,20 @@ fi
 
 git -C "$temporary_directory" branch --force develop master
 if GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=master GITHUB_HEAD_REF=feature/unsafe \
-  bash -c 'cd "$1" && "$2" master develop' _ \
+  bash -c 'cd "$1" && "$2" master develop EternalLiquet/BeanBot-DEPRACATED EternalLiquet/BeanBot-DEPRACATED' _ \
     "$temporary_directory" "$repository_root/scripts/check-branch-integrity.sh"; then
   echo "Unexpected master PR source branch passed the guard." >&2
   exit 1
 fi
 GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=master GITHUB_HEAD_REF=hotfix/urgent \
-  bash -c 'cd "$1" && "$2" master develop' _ \
+  bash -c 'cd "$1" && "$2" master develop EternalLiquet/BeanBot-DEPRACATED EternalLiquet/BeanBot-DEPRACATED' _ \
     "$temporary_directory" "$repository_root/scripts/check-branch-integrity.sh"
+
+if GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=master GITHUB_HEAD_REF=develop \
+  bash -c 'cd "$1" && "$2" master develop attacker/BeanBot-DEPRACATED EternalLiquet/BeanBot-DEPRACATED' _ \
+    "$temporary_directory" "$repository_root/scripts/check-branch-integrity.sh"; then
+  echo "A same-named branch from a fork unexpectedly passed the master PR guard." >&2
+  exit 1
+fi
 
 echo "Branch integrity tests passed."

@@ -14,7 +14,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     private readonly DiscordConnectionHealth _discordConnectionHealth;
     private readonly DiscordGatewayRecoveryService _discordGatewayRecovery;
     private readonly DiscordOutageRecoveryNotifier _discordOutageRecoveryNotifier;
-    private readonly DiscordStartupLifecycle _discordStartupLifecycle;
+    private readonly DiscordLifecycleCoordinator _discordLifecycleCoordinator;
     private readonly DiscordStartupService _discordStartupService;
     private readonly DiscordOwnerErrorNotifier _ownerErrorNotifier;
     private readonly HealthCheckServer _healthCheckServer;
@@ -27,13 +27,14 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     private readonly DiscordPaginatorService _paginatorService;
     private readonly LogHandler _logHandler;
     private readonly ILogger<BeanBotRuntime> _logger;
+    private bool _canDisposeDiscordClient;
 
     public BeanBotRuntime(
         DiscordSocketClient discordClient,
         DiscordConnectionHealth discordConnectionHealth,
         DiscordGatewayRecoveryService discordGatewayRecovery,
         DiscordOutageRecoveryNotifier discordOutageRecoveryNotifier,
-        DiscordStartupLifecycle discordStartupLifecycle,
+        DiscordLifecycleCoordinator discordLifecycleCoordinator,
         DiscordStartupService discordStartupService,
         DiscordOwnerErrorNotifier ownerErrorNotifier,
         HealthCheckServer healthCheckServer,
@@ -51,7 +52,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         _discordConnectionHealth = discordConnectionHealth ?? throw new ArgumentNullException(nameof(discordConnectionHealth));
         _discordGatewayRecovery = discordGatewayRecovery ?? throw new ArgumentNullException(nameof(discordGatewayRecovery));
         _discordOutageRecoveryNotifier = discordOutageRecoveryNotifier ?? throw new ArgumentNullException(nameof(discordOutageRecoveryNotifier));
-        _discordStartupLifecycle = discordStartupLifecycle ?? throw new ArgumentNullException(nameof(discordStartupLifecycle));
+        _discordLifecycleCoordinator = discordLifecycleCoordinator ?? throw new ArgumentNullException(nameof(discordLifecycleCoordinator));
         _discordStartupService = discordStartupService ?? throw new ArgumentNullException(nameof(discordStartupService));
         _ownerErrorNotifier = ownerErrorNotifier ?? throw new ArgumentNullException(nameof(ownerErrorNotifier));
         _healthCheckServer = healthCheckServer ?? throw new ArgumentNullException(nameof(healthCheckServer));
@@ -66,8 +67,10 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    public bool HasUnfinishedDiscordStartupOperation
-        => _discordStartupLifecycle.HasUnfinishedOperation;
+    public bool HasActiveDiscordLifecycleOperation
+        => _discordLifecycleCoordinator.HasActiveSequence;
+
+    public bool CanDisposeDiscordClient => _canDisposeDiscordClient;
 
     public void SubscribeApplicationEvents()
     {
@@ -136,19 +139,26 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     public async Task StopDiscordAsync(CancellationToken cancellationToken)
     {
         var operationTimeout = DiscordGatewayRecoveryOptions.Default.LifecycleOperationTimeout;
-        await RunBoundedShutdownOperationAsync(
-            _discordClient.StopAsync,
-            "stop",
+        _canDisposeDiscordClient = false;
+        var outcome = await _discordLifecycleCoordinator.RunSequenceAsync(
+            "application-shutdown",
+            [
+                new("stop", _discordClient.StopAsync),
+                new("logout", _discordClient.LogoutAsync)
+            ],
             operationTimeout,
-            _logger,
             cancellationToken);
-
-        await RunBoundedShutdownOperationAsync(
-            _discordClient.LogoutAsync,
-            "logout",
-            operationTimeout,
-            _logger,
-            cancellationToken);
+        _canDisposeDiscordClient = outcome.IsCompleted;
+        if (!outcome.IsCompleted)
+        {
+            var exception = outcome.Exception ?? new InvalidOperationException(
+                "Discord application shutdown could not acquire lifecycle ownership.");
+            BeanBotLog.DiscordShutdownOperationFailed(
+                _logger,
+                outcome.Operation ?? outcome.Sequence,
+                exception);
+            throw exception;
+        }
     }
 
     public void DisposeDiscordClient() => _discordClient.Dispose();

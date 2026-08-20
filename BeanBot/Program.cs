@@ -30,6 +30,11 @@ internal static class Program
                     Console.Error);
             }
 
+            if (args is [ContainerSmokeTest.ShutdownArgument])
+            {
+                return await ContainerSmokeTest.RunShutdownAsync(Console.Out);
+            }
+
             var builder = Host.CreateApplicationBuilder(args);
             builder.Configuration.AddBeanBotConfiguration();
             builder.Logging.ClearProviders();

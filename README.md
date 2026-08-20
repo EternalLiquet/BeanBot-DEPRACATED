@@ -110,6 +110,7 @@ Run it with your `.env` file and a persistent volume for logs and runtime files.
 docker run -d `
   --name beanbot `
   --restart unless-stopped `
+  --stop-timeout 130 `
   --env-file .env `
   -p 8080:8080 `
   -v beanbot-data:/app/BeanBotFiles `

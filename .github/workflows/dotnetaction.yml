@@ -30,6 +30,8 @@ jobs:
     env:
       # Build the merge result, but prove branch ancestry against the real PR head.
       BEANBOT_BRANCH_INTEGRITY_CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}
+      BEANBOT_PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+      BEANBOT_REPOSITORY: ${{ github.repository }}
 
     steps:
       - name: Check out exact commit

@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-if [[ $# -ne 2 ]]; then
-  echo "Usage: $0 BASE_REF CANDIDATE_REF" >&2
+if [[ $# -lt 2 || $# -gt 4 ]]; then
+  echo "Usage: $0 BASE_REF CANDIDATE_REF [HEAD_REPOSITORY EXPECTED_REPOSITORY]" >&2
   exit 2
 fi
 
 base_ref="$1"
 candidate_ref="$2"
+head_repository="${3:-${BEANBOT_PR_HEAD_REPOSITORY:-}}"
+expected_repository="${4:-${BEANBOT_REPOSITORY:-}}"
 git rev-parse --verify --quiet "${base_ref}^{commit}" >/dev/null \
   || { echo "Required base ref '$base_ref' is unavailable." >&2; exit 1; }
 git rev-parse --verify --quiet "${candidate_ref}^{commit}" >/dev/null \
@@ -19,6 +21,10 @@ if ! git merge-base --is-ancestor "$base_ref" "$candidate_ref"; then
 fi
 
 if [[ "${GITHUB_EVENT_NAME:-}" == "pull_request" && "${GITHUB_BASE_REF:-}" == "master" ]]; then
+  if [[ -z "$head_repository" || -z "$expected_repository" || "$head_repository" != "$expected_repository" ]]; then
+    echo "Pull requests to master must originate from the same repository." >&2
+    exit 1
+  fi
   case "${GITHUB_HEAD_REF:-}" in
     develop|hotfix/*) ;;
     *)

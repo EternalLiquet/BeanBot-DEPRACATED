@@ -29,6 +29,12 @@ fi
 if [[ "$command_name" == "docker" && "$*" == "image inspect --format {{.Config.User}} "* ]]; then
   printf '%s\n' '1654'
 fi
+if [[ "$command_name" == "docker" && "$*" == "logs beanbot-shutdown-smoke-"* ]]; then
+  printf '%s\n' 'BeanBot container shutdown smoke test ready.'
+fi
+if [[ "$command_name" == "docker" && "$*" == "inspect --format {{.State.ExitCode}} beanbot-shutdown-smoke-"* ]]; then
+  printf '%s\n' '0'
+fi
 if [[ -n "${BEANBOT_VERIFY_TEST_FAIL:-}" && "$command_name $*" == *"$BEANBOT_VERIFY_TEST_FAIL"* ]]; then
   exit 17
 fi
@@ -105,6 +111,8 @@ assert_contains "$repository_root|dotnet|list BeanBot.sln package --vulnerable -
 assert_contains "$repository_root|docker|build --tag beanbot-verification:local --build-arg BEANBOT_VERSION=0.0.0-local --build-arg BEANBOT_COMMIT_SHA=0123456789abcdef0123456789abcdef01234567 ." "$full_log"
 assert_contains "$repository_root|docker|image inspect --format {{.Config.User}} beanbot-verification:local" "$full_log"
 assert_contains "$repository_root|docker|run --rm --network none --read-only" "$full_log"
+assert_contains "$repository_root|docker|run --detach --name beanbot-shutdown-smoke-" "$full_log"
+assert_contains "$repository_root|docker|stop --time 5 beanbot-shutdown-smoke-" "$full_log"
 assert_contains "$repository_root|git|rev-parse --verify --quiet fedcba9876543210fedcba9876543210fedcba98^{commit}" "$full_log"
 assert_contains "$repository_root|git|merge-base --is-ancestor origin/master fedcba9876543210fedcba9876543210fedcba98" "$full_log"
 assert_count 1 "|python3|scripts/validate-workflow.py" "$full_log"

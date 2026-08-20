@@ -109,17 +109,37 @@ public sealed class PunHandler : IAsyncDisposable
         }
 
         var requestOptions = new RequestOptions { CancelToken = token };
-        await channel.SendMessageAsync(
+        await SendPunMessagesAsync(
+            async (message, options) =>
+                await channel.SendMessageAsync(message, options: options),
+            pun,
+            requestOptions,
+            _logger,
+            token);
+    }
+
+    internal static async Task SendPunMessagesAsync(
+        Func<string, RequestOptions, Task> sendMessage,
+        string pun,
+        RequestOptions requestOptions,
+        ILogger logger,
+        CancellationToken token)
+    {
+        await sendMessage(
             "The time has come and so have I, Bean Bot here to deliver you your daily pun(?)",
-            options: requestOptions);
-        await channel.SendMessageAsync("<:420stolfoit:675553715759087618>", options: requestOptions);
+            requestOptions);
+        await sendMessage("<:420stolfoit:675553715759087618>", requestOptions);
         try
         {
-            await channel.SendMessageAsync(pun, options: requestOptions);
+            await sendMessage(pun, requestOptions);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception exception)
         {
-            BeanBotLog.PunPostingFailed(_logger, exception);
+            BeanBotLog.PunPostingFailed(logger, exception);
         }
     }
 

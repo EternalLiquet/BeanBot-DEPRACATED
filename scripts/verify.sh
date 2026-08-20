@@ -43,6 +43,8 @@ validate_workflow() {
 self_test_workflow() {
   run_stage "Test verification orchestration" scripts/test-verification.sh
   run_stage "Test branch integrity guard" scripts/test-branch-integrity.sh
+  run_stage "Test resumable release transaction" scripts/test-release-resume.sh
+  run_stage "Test portable release checksums" scripts/test-release-checksums.sh
 }
 
 build_and_test() {
@@ -109,7 +111,8 @@ check_diff
 if [[ "$mode" == "full" ]]; then
   branch_integrity_candidate="${BEANBOT_BRANCH_INTEGRITY_CANDIDATE:-HEAD}"
   run_stage "Verify master ancestry" \
-    scripts/check-branch-integrity.sh origin/master "$branch_integrity_candidate"
+    scripts/check-branch-integrity.sh origin/master "$branch_integrity_candidate" \
+      "${BEANBOT_PR_HEAD_REPOSITORY:-}" "${BEANBOT_REPOSITORY:-}"
   run_stage "Check vulnerable NuGet packages" check_vulnerable_packages
   docker_image_tag="${BEANBOT_VERIFY_DOCKER_TAG:-beanbot-verification:local}"
   build_version="${BEANBOT_BUILD_VERSION:-0.0.0-local}"

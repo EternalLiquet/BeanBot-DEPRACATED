@@ -49,6 +49,7 @@ internal sealed class TaskRecoveryDelay : IRecoveryDelay
 internal sealed class DiscordGatewayLifecycle : IDiscordGatewayLifecycle
 {
     private readonly DiscordSocketClient _client;
+    private readonly DiscordLifecycleCoordinator _coordinator;
     private readonly string _botToken;
     private readonly TimeSpan _operationTimeout;
     private readonly ILogger<DiscordGatewayLifecycle> _logger;
@@ -57,59 +58,33 @@ internal sealed class DiscordGatewayLifecycle : IDiscordGatewayLifecycle
         DiscordSocketClient client,
         string botToken,
         TimeSpan operationTimeout,
+        DiscordLifecycleCoordinator coordinator,
         ILogger<DiscordGatewayLifecycle> logger)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _botToken = botToken ?? throw new ArgumentNullException(nameof(botToken));
         _operationTimeout = operationTimeout;
+        _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     public async Task ReconnectAsync(CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        await RunBoundedAsync(_client.StopAsync(), "stop");
-        cancellationToken.ThrowIfCancellationRequested();
-        await RunBoundedAsync(_client.LogoutAsync(), "logout");
-        cancellationToken.ThrowIfCancellationRequested();
-        await RunBoundedAsync(
-            _client.LoginAsync(TokenType.Bot, _botToken),
-            "login");
-        cancellationToken.ThrowIfCancellationRequested();
-        await RunBoundedAsync(_client.StartAsync(), "start");
-    }
-
-    private async Task RunBoundedAsync(
-        Task operation,
-        string operationName)
-    {
-        try
+        var outcome = await _coordinator.RunSequenceAsync(
+            "gateway-recovery",
+            [
+                new("stop", _client.StopAsync),
+                new("logout", _client.LogoutAsync),
+                new("login", () => _client.LoginAsync(TokenType.Bot, _botToken)),
+                new("start", _client.StartAsync)
+            ],
+            _operationTimeout,
+            cancellationToken);
+        if (!outcome.IsCompleted)
         {
-            // Once a Discord lifecycle operation starts, let it finish (or time out)
-            // instead of abandoning it midway and racing normal shutdown cleanup.
-            await operation.WaitAsync(_operationTimeout);
+            throw outcome.Exception ?? new InvalidOperationException(
+                "Discord gateway recovery could not acquire lifecycle ownership.");
         }
-        catch
-        {
-            if (!operation.IsCompleted)
-            {
-                ObserveLateFailure(operation, operationName);
-            }
-
-            throw;
-        }
-    }
-
-    private void ObserveLateFailure(Task operation, string operationName)
-    {
-        _ = operation.ContinueWith(
-            completedTask => BeanBotLog.DiscordRecoveryLateFailure(
-                _logger,
-                operationName,
-                completedTask.Exception),
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
     }
 }
 

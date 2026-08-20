@@ -64,6 +64,7 @@ BeanBot's image runs as the .NET application UID and writes persistent data only
 docker run -d \
   --name beanbot \
   --restart unless-stopped \
+  --stop-timeout 130 \
   --env-file .env \
   --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
@@ -72,6 +73,19 @@ docker run -d \
   -p 8080:8080 \
   -v beanbot-data:/app/BeanBotFiles \
   ghcr.io/eternalliquet/beanbot-depracated@sha256:RELEASE_DIGEST
+```
+
+The 130-second container grace period is intentionally longer than BeanBot's
+two-minute Generic Host shutdown budget. Docker's 10-second default is too short
+for the bounded Discord and persistence cleanup sequence.
+
+For Docker Compose, use the same deadline explicitly:
+
+```yaml
+services:
+  beanbot:
+    image: ghcr.io/eternalliquet/beanbot-depracated@sha256:RELEASE_DIGEST
+    stop_grace_period: 2m10s
 ```
 
 ## Rollback

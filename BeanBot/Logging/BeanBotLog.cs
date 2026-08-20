@@ -63,8 +63,14 @@ internal static partial class BeanBotLog
     [LoggerMessage(Level = LogLevel.Information, Message = "Instantiating Role Services")]
     internal static partial void RoleServicesCreated(ILogger logger);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Skipping Discord stop/logout and client disposal because a startup lifecycle operation is still running; process exit will reclaim it")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Skipping Discord stop/logout and client disposal because lifecycle work still owns the client; process exit will reclaim it")]
     internal static partial void DiscordStopSkipped(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Skipping Discord client disposal because shutdown did not complete cleanly; process exit will reclaim it")]
+    internal static partial void DiscordDisposalSkipped(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Discord lifecycle sequence {Sequence} operation {Operation} failed after its bounded wait ended")]
+    internal static partial void DiscordLifecycleLateFailure(ILogger logger, string sequence, string operation, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "BeanBot cleanup failed after application startup did not complete")]
     internal static partial void StartupCleanupFailed(ILogger logger, Exception exception);

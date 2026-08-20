@@ -1,8 +1,27 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+
 namespace BeanBot.Hosting;
 
 internal static class ContainerSmokeTest
 {
     internal const string Argument = "--container-smoke-test";
+    internal const string ShutdownArgument = "--container-shutdown-smoke-test";
+    internal const string ShutdownReadyMessage = "BeanBot container shutdown smoke test ready.";
+
+    public static async Task<int> RunShutdownAsync(TextWriter output)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        var builder = Host.CreateApplicationBuilder();
+        builder.Services.Configure<HostOptions>(options =>
+            options.ShutdownTimeout = Program.HostShutdownTimeout);
+        using var host = builder.Build();
+        await host.StartAsync();
+        output.WriteLine(ShutdownReadyMessage);
+        await output.FlushAsync();
+        await host.WaitForShutdownAsync();
+        return 0;
+    }
 
     public static int Run(
         string persistentDataDirectory,

@@ -111,6 +111,7 @@ def validate_workflows() -> None:
         "./scripts/verify.sh full",
         "persist-credentials: false",
         "BEANBOT_BRANCH_INTEGRITY_CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}",
+        "BEANBOT_PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}",
         ".artifacts/coverage",
     )
     required_release_fragments = (
@@ -120,13 +121,13 @@ def validate_workflows() -> None:
         "packages: write",
         "attestations: write",
         "beanbot.spdx.json",
-        "gh release create",
-        "gh release upload",
-        "release-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
-        "existing_commit_digest",
-        "docker buildx imagetools create",
-        "--prefer-index=false",
-        "Immutable commit and version tags resolve to the verified digest.",
+        "./scripts/release-assets.sh inspect",
+        "./scripts/release-assets.sh publish",
+        "./scripts/release-image.sh inspect",
+        "./scripts/release-image.sh stage",
+        "./scripts/release-image.sh promote",
+        "./scripts/create-release-checksums.sh",
+        "RELEASE_DIGEST: ${{ steps.existing-release.outputs.release-digest }}",
         "cancel-in-progress: false",
     )
     for fragment in required_validation_fragments:
@@ -137,6 +138,24 @@ def validate_workflows() -> None:
             fail(f"autorelease.yml is missing required content: {fragment}")
     if "build-test" in release or "release-on-push-action" in release:
         fail("release workflow must use full verification and GitHub-native release creation")
+    if "--clobber" in release:
+        fail("release workflow must never overwrite published evidence")
+
+    ordered_release_steps = (
+        "- name: Inspect existing GitHub release transaction",
+        "- name: Inspect existing image transaction",
+        "- name: Full release-quality verification",
+        "- name: Stage verified image candidate",
+        "- name: Generate SPDX SBOM",
+        "- name: Attest image provenance",
+        "- name: Attest image SBOM",
+        "- name: Create release metadata and checksums",
+        "- name: Upload release evidence",
+        "- name: Promote immutable image tags",
+    )
+    step_positions = [release.index(step) for step in ordered_release_steps]
+    if step_positions != sorted(step_positions):
+        fail("release transaction steps are not in durable preflight/evidence/promotion order")
 
     for fragment in ("fail-on-severity: high", "timeout-minutes:"):
         if fragment not in dependency_review:
@@ -179,6 +198,11 @@ def validate_policy_and_scripts() -> None:
         "scripts/check-branch-integrity.sh",
         "scripts/test-branch-integrity.sh",
         "scripts/container-smoke.sh",
+        "scripts/release-image.sh",
+        "scripts/release-assets.sh",
+        "scripts/create-release-checksums.sh",
+        "scripts/test-release-resume.sh",
+        "scripts/test-release-checksums.sh",
     ):
         path = REPOSITORY_ROOT / relative_path
         if not path.stat().st_mode & stat.S_IXUSR:
@@ -201,6 +225,23 @@ def validate_policy_and_scripts() -> None:
         fail("full verification must reject master/develop branch drift")
     if "scripts/container-smoke.sh" not in verifier:
         fail("full verification must smoke test the hardened image")
+    if "scripts/test-release-resume.sh" not in verifier or "scripts/test-release-checksums.sh" not in verifier:
+        fail("repository verification must exercise release resumption and portable checksums")
+
+    release_image = (REPOSITORY_ROOT / "scripts" / "release-image.sh").read_text(encoding="utf-8")
+    release_assets = (REPOSITORY_ROOT / "scripts" / "release-assets.sh").read_text(encoding="utf-8")
+    if "--prefer-index=false" not in release_image:
+        fail("immutable image promotion must preserve the selected manifest digest")
+    if "probe_optional_digest" not in release_image or "|| true" in release_image:
+        fail("registry tag discovery must distinguish explicit absence from lookup failure")
+    if "--clobber" in release_assets:
+        fail("release asset publication must not overwrite evidence")
+    if "probe_release_target" not in release_assets or "release_exists" in release_assets:
+        fail("release discovery must fail closed on indeterminate GitHub API results")
+
+    deployment = (REPOSITORY_ROOT / "docs" / "release-readiness.md").read_text(encoding="utf-8")
+    if "--stop-timeout 130" not in deployment or "stop_grace_period: 2m10s" not in deployment:
+        fail("deployment examples must exceed the two-minute Generic Host shutdown budget")
 
     dockerfile = (REPOSITORY_ROOT / "Dockerfile").read_text(encoding="utf-8")
     if dockerfile.count("@sha256:") != 2 or "USER $APP_UID" not in dockerfile:

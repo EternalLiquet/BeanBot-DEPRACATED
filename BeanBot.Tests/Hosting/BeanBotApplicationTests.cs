@@ -65,7 +65,7 @@ public class BeanBotApplicationTests
     {
         var runtime = new RecordingRuntime
         {
-            HasUnfinishedDiscordStartupOperation = true
+            HasActiveDiscordLifecycleOperation = true
         };
         var application = new BeanBotApplication(runtime, NullLogger<BeanBotApplication>.Instance);
 
@@ -75,6 +75,54 @@ public class BeanBotApplicationTests
         Assert.DoesNotContain("dispose-discord", runtime.Calls);
         Assert.Equal(2, runtime.Calls.Count(call => call == "flush-alerts"));
         Assert.Contains("unsubscribe-events", runtime.Calls);
+    }
+
+    [Fact]
+    public async Task StopAsync_RecoveryBoundExpiresWhileLifecycleOwnsClient_SkipsCompetingShutdown()
+    {
+        var recovery = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runtime = new RecordingRuntime
+        {
+            IncompleteOperation = "stop-recovery",
+            IncompleteCompletion = recovery,
+            ActivateDiscordLifecycleOnIncompleteOperation = true
+        };
+        var application = new BeanBotApplication(
+            runtime,
+            NullLogger<BeanBotApplication>.Instance,
+            TimeSpan.FromMilliseconds(25));
+
+        await Assert.ThrowsAsync<TimeoutException>(
+            () => application.StopAsync(CancellationToken.None));
+
+        Assert.Contains("unsubscribe-events", runtime.Calls);
+        Assert.Contains("stop-health", runtime.Calls);
+        Assert.DoesNotContain("stop-discord", runtime.Calls);
+        Assert.DoesNotContain("dispose-discord", runtime.Calls);
+        recovery.SetResult();
+    }
+
+    [Fact]
+    public async Task StopAsync_DiscordShutdownExceedsApplicationBound_SkipsDisposeAndRunsFinalCleanup()
+    {
+        var discordShutdown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runtime = new RecordingRuntime
+        {
+            IncompleteOperation = "stop-discord",
+            IncompleteCompletion = discordShutdown
+        };
+        var application = new BeanBotApplication(
+            runtime,
+            NullLogger<BeanBotApplication>.Instance,
+            TimeSpan.FromMilliseconds(25));
+
+        await Assert.ThrowsAsync<TimeoutException>(
+            () => application.StopAsync(CancellationToken.None));
+
+        Assert.Equal(1, runtime.Calls.Count(call => call == "stop-discord"));
+        Assert.DoesNotContain("dispose-discord", runtime.Calls);
+        Assert.Equal(2, runtime.Calls.Count(call => call == "flush-alerts"));
+        discordShutdown.SetResult();
     }
 
     [Theory]
@@ -90,7 +138,7 @@ public class BeanBotApplicationTests
     [InlineData("stop-pun", "stop-health")]
     [InlineData("stop-health", "flush-alerts")]
     [InlineData("flush-alerts", "stop-discord")]
-    [InlineData("stop-discord", "dispose-discord")]
+    [InlineData("stop-discord", "flush-alerts")]
     [InlineData("dispose-discord", "flush-alerts")]
     public async Task StopAsync_StageFailure_ContinuesLaterSafeCleanupAndPreservesFirstFailure(
         string failingOperation,
@@ -109,7 +157,7 @@ public class BeanBotApplicationTests
     }
 
     [Fact]
-    public async Task StopAsync_HostCancellation_SkipsNewNetworkCleanupButDisposesClient()
+    public async Task StopAsync_HostCancellation_SkipsNewDiscordLifecycleAndDisposal()
     {
         using var cancellation = new CancellationTokenSource();
         var runtime = new RecordingRuntime
@@ -124,7 +172,27 @@ public class BeanBotApplicationTests
 
         Assert.DoesNotContain("flush-alerts", runtime.Calls);
         Assert.DoesNotContain("stop-discord", runtime.Calls);
-        Assert.Contains("dispose-discord", runtime.Calls);
+        Assert.DoesNotContain("dispose-discord", runtime.Calls);
+        Assert.False(runtime.HealthStopTokenWasAlreadyCanceled);
+    }
+
+    [Fact]
+    public async Task StopAsync_PreCanceledHostToken_GivesHealthServerFreshCleanupToken()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var runtime = new RecordingRuntime();
+        var application = new BeanBotApplication(
+            runtime,
+            NullLogger<BeanBotApplication>.Instance,
+            TimeSpan.FromMilliseconds(100));
+
+        await application.StopAsync(cancellation.Token).WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Contains("stop-health", runtime.Calls);
+        Assert.False(runtime.HealthStopTokenWasAlreadyCanceled);
+        Assert.DoesNotContain("stop-discord", runtime.Calls);
+        Assert.DoesNotContain("dispose-discord", runtime.Calls);
     }
 
     [Fact]
@@ -199,11 +267,15 @@ public class BeanBotApplicationTests
         public string? FailingOperation { get; init; }
         public string? CancelOnOperation { get; init; }
         public string? IncompleteOperation { get; init; }
+        public TaskCompletionSource? IncompleteCompletion { get; init; }
+        public bool ActivateDiscordLifecycleOnIncompleteOperation { get; init; }
         public string? BlockingOperation { get; init; }
         public ManualResetEventSlim? BlockingRelease { get; init; }
         public CancellationTokenSource? ShutdownCancellation { get; init; }
         public InvalidOperationException Failure { get; } = new("injected shutdown failure");
-        public bool HasUnfinishedDiscordStartupOperation { get; init; }
+        public bool HasActiveDiscordLifecycleOperation { get; set; }
+        public bool CanDisposeDiscordClient { get; private set; }
+        public bool HealthStopTokenWasAlreadyCanceled { get; private set; }
         private bool _failureThrown;
 
         public void SubscribeApplicationEvents() => Record("subscribe-events");
@@ -225,10 +297,18 @@ public class BeanBotApplicationTests
         public void UnsubscribeApplicationEvents() => Record("unsubscribe-events");
         public Task StopPunServiceAsync() => RecordAsync("stop-pun");
         public Task StopHealthServerAsync(CancellationToken cancellationToken)
-            => RecordAsync("stop-health");
+        {
+            HealthStopTokenWasAlreadyCanceled = cancellationToken.IsCancellationRequested;
+            return RecordAsync("stop-health");
+        }
         public Task FlushOwnerAlertsAsync() => RecordAsync("flush-alerts");
         public Task StopDiscordAsync(CancellationToken cancellationToken)
-            => RecordAsync("stop-discord");
+        {
+            CanDisposeDiscordClient = IncompleteOperation != "stop-discord" &&
+                !cancellationToken.IsCancellationRequested &&
+                FailingOperation != "stop-discord";
+            return RecordAsync("stop-discord");
+        }
         public void DisposeDiscordClient() => Record("dispose-discord");
 
         private void Record(string operation)
@@ -255,7 +335,12 @@ public class BeanBotApplicationTests
             if (IncompleteOperation == operation)
             {
                 Calls.Add(operation);
-                return new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task;
+                if (ActivateDiscordLifecycleOnIncompleteOperation)
+                {
+                    HasActiveDiscordLifecycleOperation = true;
+                }
+                return IncompleteCompletion?.Task ??
+                    new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task;
             }
 
             try

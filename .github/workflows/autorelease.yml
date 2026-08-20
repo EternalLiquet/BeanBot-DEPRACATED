@@ -27,9 +27,9 @@ jobs:
       id-token: write
       attestations: write
     outputs:
-      image-name: ${{ steps.release-metadata.outputs.image-name }}
-      image-digest: ${{ steps.release-metadata.outputs.image-digest }}
-      release-version: ${{ steps.release-metadata.outputs.release-version }}
+      image-name: ${{ steps.selected-image.outputs.image-name }}
+      image-digest: ${{ steps.selected-image.outputs.image-digest }}
+      release-version: ${{ steps.selected-image.outputs.release-version }}
 
     steps:
       - name: Check out exact master commit
@@ -66,13 +66,6 @@ jobs:
           echo "IMAGE_NAME=$image_name" >>"$GITHUB_ENV"
           echo "RELEASE_VERSION=$RELEASE_VERSION" >>"$GITHUB_ENV"
 
-      - name: Full release-quality verification
-        run: |
-          BEANBOT_VERIFY_DOCKER_TAG="$IMAGE_NAME:$GITHUB_SHA" \
-          BEANBOT_BUILD_VERSION="$RELEASE_VERSION" \
-          BEANBOT_BUILD_COMMIT_SHA="$GITHUB_SHA" \
-            ./scripts/verify.sh full
-
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -80,47 +73,48 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish verified image
-        id: release-metadata
+      - name: Inspect existing GitHub release transaction
+        id: existing-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          resolve_digest() {
-            docker buildx imagetools inspect "$1" 2>/dev/null \
-              | awk '$1 == "Digest:" { print $2; exit }'
-          }
-          candidate_tag="$IMAGE_NAME:release-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          docker tag "$IMAGE_NAME:${GITHUB_SHA}" "$candidate_tag"
-          docker push "$candidate_tag"
-          image_digest="$(resolve_digest "$candidate_tag")"
-          if [[ ! "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "Could not resolve the staged candidate image digest." >&2
-            exit 1
-          fi
+          ./scripts/release-assets.sh inspect \
+            "$GITHUB_REPOSITORY" "$RELEASE_VERSION" "$GITHUB_SHA" \
+            "$IMAGE_NAME" "$GITHUB_OUTPUT"
 
-          existing_commit_digest="$(resolve_digest "$IMAGE_NAME:${GITHUB_SHA}" || true)"
-          existing_version_digest="$(resolve_digest "$IMAGE_NAME:$RELEASE_VERSION" || true)"
-          for existing_digest in "$existing_commit_digest" "$existing_version_digest"; do
-            if [[ -n "$existing_digest" && "$existing_digest" != "$image_digest" ]]; then
-              echo "An immutable GHCR tag already points to a different digest." >&2
-              exit 1
-            fi
-          done
+      - name: Inspect existing image transaction
+        id: existing-image
+        env:
+          RELEASE_DIGEST: ${{ steps.existing-release.outputs.release-digest }}
+        run: |
+          ./scripts/release-image.sh inspect \
+            "$IMAGE_NAME" "$GITHUB_SHA" "$RELEASE_VERSION" "$GITHUB_OUTPUT" \
+            "$RELEASE_DIGEST"
 
-          if [[ -z "$existing_commit_digest" ]]; then
-            docker buildx imagetools create \
-              --prefer-index=false \
-              --tag "$IMAGE_NAME:${GITHUB_SHA}" "$IMAGE_NAME@$image_digest"
-          fi
-          if [[ -z "$existing_version_digest" ]]; then
-            docker buildx imagetools create \
-              --prefer-index=false \
-              --tag "$IMAGE_NAME:$RELEASE_VERSION" "$IMAGE_NAME@$image_digest"
-          fi
-          if [[ "$(resolve_digest "$IMAGE_NAME:${GITHUB_SHA}")" != "$image_digest" \
-            || "$(resolve_digest "$IMAGE_NAME:$RELEASE_VERSION")" != "$image_digest" ]]; then
-            echo "Published immutable tags do not match the staged candidate image." >&2
-            exit 1
-          fi
-          echo "Immutable commit and version tags resolve to the verified digest."
+      - name: Full release-quality verification
+        run: |
+          BEANBOT_VERIFY_DOCKER_TAG="$IMAGE_NAME:$GITHUB_SHA" \
+          BEANBOT_BUILD_VERSION="$RELEASE_VERSION" \
+          BEANBOT_BUILD_COMMIT_SHA="$GITHUB_SHA" \
+            ./scripts/verify.sh full
+
+      - name: Stage verified image candidate
+        if: steps.existing-image.outputs.reuse != 'true'
+        id: staged-image
+        run: |
+          ./scripts/release-image.sh stage \
+            "$IMAGE_NAME" "$GITHUB_SHA" "$RELEASE_VERSION" "$GITHUB_OUTPUT" \
+            "$IMAGE_NAME:$GITHUB_SHA"
+
+      - name: Select release image identity
+        id: selected-image
+        env:
+          EXISTING_DIGEST: ${{ steps.existing-image.outputs.image-digest }}
+          STAGED_DIGEST: ${{ steps.staged-image.outputs.image-digest }}
+        run: |
+          image_digest="${EXISTING_DIGEST:-$STAGED_DIGEST}"
+          [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo "No valid release image digest was selected." >&2; exit 1; }
           echo "image-name=$IMAGE_NAME" >>"$GITHUB_OUTPUT"
           echo "image-digest=$image_digest" >>"$GITHUB_OUTPUT"
           echo "release-version=$RELEASE_VERSION" >>"$GITHUB_OUTPUT"
@@ -129,7 +123,7 @@ jobs:
       - name: Generate SPDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
-          image: ${{ steps.release-metadata.outputs.image-name }}@${{ steps.release-metadata.outputs.image-digest }}
+          image: ${{ steps.selected-image.outputs.image-name }}@${{ steps.selected-image.outputs.image-digest }}
           format: spdx-json
           output-file: .artifacts/release/beanbot.spdx.json
           upload-artifact: false
@@ -138,15 +132,15 @@ jobs:
       - name: Attest image provenance
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
-          subject-name: ${{ steps.release-metadata.outputs.image-name }}
-          subject-digest: ${{ steps.release-metadata.outputs.image-digest }}
+          subject-name: ${{ steps.selected-image.outputs.image-name }}
+          subject-digest: ${{ steps.selected-image.outputs.image-digest }}
           push-to-registry: true
 
       - name: Attest image SBOM
         uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
         with:
-          subject-name: ${{ steps.release-metadata.outputs.image-name }}
-          subject-digest: ${{ steps.release-metadata.outputs.image-digest }}
+          subject-name: ${{ steps.selected-image.outputs.image-name }}
+          subject-digest: ${{ steps.selected-image.outputs.image-digest }}
           sbom-path: .artifacts/release/beanbot.spdx.json
           push-to-registry: true
 
@@ -156,23 +150,26 @@ jobs:
             --arg version "$RELEASE_VERSION" \
             --arg commitSha "$GITHUB_SHA" \
             --arg image "$IMAGE_NAME" \
-            --arg digest "${{ steps.release-metadata.outputs.image-digest }}" \
+            --arg digest "${{ steps.selected-image.outputs.image-digest }}" \
             '{version:$version,commitSha:$commitSha,image:$image,digest:$digest}' \
             >.artifacts/release/release-metadata.json
-          sha256sum \
-            .artifacts/release/beanbot.spdx.json \
-            .artifacts/release/release-metadata.json \
-            >.artifacts/release/SHA256SUMS
+          ./scripts/create-release-checksums.sh
 
       - name: Upload release evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-evidence-${{ github.sha }}
+          name: release-evidence-${{ github.sha }}-${{ github.run_attempt }}
           path: |
             .artifacts/release
             .artifacts/coverage
           if-no-files-found: error
           retention-days: 30
+
+      - name: Promote immutable image tags
+        run: |
+          ./scripts/release-image.sh promote \
+            "$IMAGE_NAME" "$GITHUB_SHA" "$RELEASE_VERSION" \
+            "${{ steps.selected-image.outputs.image-digest }}"
 
   create-github-release:
     name: Create GitHub Release
@@ -183,10 +180,15 @@ jobs:
       contents: write
 
     steps:
+      - name: Check out release scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
       - name: Download release evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: release-evidence-${{ github.sha }}
+          name: release-evidence-${{ github.sha }}-${{ github.run_attempt }}
           path: release-evidence
 
       - name: Create release with generated notes
@@ -196,27 +198,6 @@ jobs:
           IMAGE_NAME: ${{ needs.verify-and-publish-image.outputs.image-name }}
           IMAGE_DIGEST: ${{ needs.verify-and-publish-image.outputs.image-digest }}
         run: |
-          assets=(
-            release-evidence/release/beanbot.spdx.json
-            release-evidence/release/release-metadata.json
-            release-evidence/release/SHA256SUMS
-          )
-          if gh release view "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            release_target="$(gh release view "v$RELEASE_VERSION" \
-              --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)"
-            if [[ "$release_target" != "$GITHUB_SHA" ]]; then
-              echo "Existing release v$RELEASE_VERSION targets a different commit." >&2
-              exit 1
-            fi
-            gh release upload "v$RELEASE_VERSION" "${assets[@]}" \
-              --repo "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create "v$RELEASE_VERSION" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "BeanBot v$RELEASE_VERSION" \
-              --generate-notes \
-              --fail-on-no-commits \
-              --notes "Verified image: $IMAGE_NAME@$IMAGE_DIGEST" \
-              "${assets[@]}"
-          fi
+          ./scripts/release-assets.sh publish \
+            "$GITHUB_REPOSITORY" "$RELEASE_VERSION" "$GITHUB_SHA" \
+            release-evidence/release "$IMAGE_NAME" "$IMAGE_DIGEST"

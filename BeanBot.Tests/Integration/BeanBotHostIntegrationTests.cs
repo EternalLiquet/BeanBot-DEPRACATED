@@ -282,7 +282,8 @@ public class BeanBotHostIntegrationTests
 
         public List<string> Calls { get; } = [];
         public Func<CancellationToken, Task>? StartDiscord { get; init; }
-        public bool HasUnfinishedDiscordStartupOperation => false;
+        public bool HasActiveDiscordLifecycleOperation => false;
+        public bool CanDisposeDiscordClient => true;
         public int HealthPort => _healthServer.BoundPort;
 
         public void SetHealthSnapshot(DiscordHealthSnapshot snapshot)

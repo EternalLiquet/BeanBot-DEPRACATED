@@ -6,7 +6,8 @@ namespace BeanBot.Hosting;
 
 internal interface IBeanBotRuntime
 {
-    bool HasUnfinishedDiscordStartupOperation { get; }
+    bool HasActiveDiscordLifecycleOperation { get; }
+    bool CanDisposeDiscordClient { get; }
     void SubscribeApplicationEvents();
     Task StartHealthServerAsync(CancellationToken cancellationToken);
     Task StartDiscordAsync(CancellationToken cancellationToken);
@@ -140,13 +141,13 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         await RunStageAsync("gateway-recovery", _runtime.StopGatewayRecoveryAsync);
         await RunSynchronousStageAsync("application-events", _runtime.UnsubscribeApplicationEvents);
         await RunStageAsync("pun-service", _runtime.StopPunServiceAsync);
-        await RunStageAsync("health-server", () => _runtime.StopHealthServerAsync(cancellationToken));
+        await RunStageAsync("health-server", StopHealthServerAsync);
         await RunStageAsync("owner-alerts-before-discord", _runtime.FlushOwnerAlertsAsync, false);
 
         var canStopDiscord = false;
         await RunSynchronousStageAsync(
             "discord-startup-state",
-            () => canStopDiscord = !_runtime.HasUnfinishedDiscordStartupOperation);
+            () => canStopDiscord = !_runtime.HasActiveDiscordLifecycleOperation);
         if (!canStopDiscord)
         {
             BeanBotLog.DiscordStopSkipped(_logger);
@@ -157,7 +158,14 @@ internal sealed class BeanBotApplication : IBeanBotApplication
                 "discord-stop",
                 () => _runtime.StopDiscordAsync(cancellationToken),
                 false);
-            await RunSynchronousStageAsync("discord-client-disposal", _runtime.DisposeDiscordClient);
+            if (_runtime.CanDisposeDiscordClient)
+            {
+                await RunSynchronousStageAsync("discord-client-disposal", _runtime.DisposeDiscordClient);
+            }
+            else
+            {
+                BeanBotLog.DiscordDisposalSkipped(_logger);
+            }
         }
 
         await RunStageAsync("owner-alerts-final", _runtime.FlushOwnerAlertsAsync, false);
@@ -169,6 +177,23 @@ internal sealed class BeanBotApplication : IBeanBotApplication
 
         Task RunSynchronousStageAsync(string stageName, Action stage)
             => RunStageAsync(stageName, () => Task.Run(stage, CancellationToken.None));
+
+        Task StopHealthServerAsync()
+        {
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                return _runtime.StopHealthServerAsync(cancellationToken);
+            }
+
+            return StopHealthWithFreshTokenAsync();
+        }
+
+        async Task StopHealthWithFreshTokenAsync()
+        {
+            using var healthCleanup = new CancellationTokenSource(
+                Min(_shutdownStageTimeout, PostCancellationStageTimeout));
+            await _runtime.StopHealthServerAsync(healthCleanup.Token);
+        }
 
         static TimeSpan Min(TimeSpan left, TimeSpan right)
             => left <= right ? left : right;
