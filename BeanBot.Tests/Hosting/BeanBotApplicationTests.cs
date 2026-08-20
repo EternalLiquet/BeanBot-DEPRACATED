@@ -216,10 +216,19 @@ public class BeanBotApplicationTests
     public async Task StopAsync_SynchronousStageBlocks_ContinuesCleanupAfterBound()
     {
         using var blockingRelease = new ManualResetEventSlim();
+        var nextStageStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         var runtime = new RecordingRuntime
         {
             BlockingOperation = "stop-reaction",
-            BlockingRelease = blockingRelease
+            BlockingRelease = blockingRelease,
+            OperationRecorded = operation =>
+            {
+                if (operation == "stop-new-member")
+                {
+                    nextStageStarted.TrySetResult();
+                }
+            }
         };
         var application = new BeanBotApplication(
             runtime,
@@ -228,8 +237,10 @@ public class BeanBotApplicationTests
 
         try
         {
-            await Assert.ThrowsAsync<TimeoutException>(
-                () => application.StopAsync(CancellationToken.None));
+            var stopTask = application.StopAsync(CancellationToken.None);
+            await nextStageStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            blockingRelease.Set();
+            await Assert.ThrowsAsync<TimeoutException>(() => stopTask);
 
             Assert.Contains("stop-new-member", runtime.Calls);
             Assert.Contains("stop-health", runtime.Calls);
@@ -272,6 +283,7 @@ public class BeanBotApplicationTests
         public string? BlockingOperation { get; init; }
         public ManualResetEventSlim? BlockingRelease { get; init; }
         public CancellationTokenSource? ShutdownCancellation { get; init; }
+        public Action<string>? OperationRecorded { get; init; }
         public InvalidOperationException Failure { get; } = new("injected shutdown failure");
         public bool HasActiveDiscordLifecycleOperation { get; set; }
         public bool CanDisposeDiscordClient { get; private set; }
@@ -314,6 +326,7 @@ public class BeanBotApplicationTests
         private void Record(string operation)
         {
             Calls.Add(operation);
+            OperationRecorded?.Invoke(operation);
             if (BlockingOperation == operation)
             {
                 BlockingRelease?.Wait();
