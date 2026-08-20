@@ -14,7 +14,7 @@ The existing `%`, `succ `, and mention-prefix commands remain supported and are 
 
 The bot installation must include the `applications.commands` OAuth2 scope in addition to the permissions already required by BeanBot. Existing installations created with a modern Discord bot authorization URL may already include application-command access; if slash commands do not appear, re-authorize the application with the required scope.
 
-BeanBot registers its interaction modules globally after the Discord client is connected. Registration is process-idempotent: repeated `Ready` events share the same registration operation and do not create competing command-registration calls. A failed registration can retry on a later `Ready` event. Registration waits are bounded so an unresponsive Discord REST call does not block the hosted service forever.
+BeanBot registers its interaction modules globally after the Discord client is connected. Normal concurrent or repeated `Ready` events share the same in-flight registration operation, and successful registration becomes a process-level no-op on later `Ready` events. Completed failures can retry on a later `Ready`. Registration waits are bounded; if a Discord REST registration attempt exceeds that bound, BeanBot observes any late fault and abandons that attempt so a later `Ready` can start a fresh registration rather than waiting forever on the stalled task.
 
 Global application-command changes can take time to propagate in Discord. Do not repeatedly restart BeanBot to force propagation.
 
