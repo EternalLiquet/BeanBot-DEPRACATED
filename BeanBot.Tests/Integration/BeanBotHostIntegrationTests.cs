@@ -70,10 +70,17 @@ public class BeanBotHostIntegrationTests
                 "start-recovery",
                 "start-commands",
                 "start-event-background",
-                "stop-event-command",
+                "stop-reaction",
+                "stop-new-member",
+                "stop-edited-message",
+                "stop-command",
+                "stop-message-waiter",
+                "stop-paginator",
+                "unsubscribe-discord-log",
                 "stop-recovery",
                 "unsubscribe-events",
-                "stop-background",
+                "stop-pun",
+                "stop-health",
                 "flush-alerts",
                 "stop-discord",
                 "dispose-discord",
@@ -128,7 +135,7 @@ public class BeanBotHostIntegrationTests
             new[] { TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15) },
             delay.RequestedDelays);
         Assert.Equal(1, runtime.Calls.Count(call => call == "unsubscribe-events"));
-        Assert.Equal(1, runtime.Calls.Count(call => call == "stop-background"));
+        Assert.Equal(1, runtime.Calls.Count(call => call == "stop-health"));
         Assert.Equal(1, runtime.Calls.Count(call => call == "dispose-discord"));
     }
 
@@ -154,7 +161,7 @@ public class BeanBotHostIntegrationTests
         Assert.Equal(1, lifecycle.LoginCount);
         Assert.Equal(0, lifecycle.StartCount);
         Assert.Equal(1, runtime.Calls.Count(call => call == "unsubscribe-events"));
-        Assert.Equal(1, runtime.Calls.Count(call => call == "stop-background"));
+        Assert.Equal(1, runtime.Calls.Count(call => call == "stop-health"));
         Assert.Equal(1, runtime.Calls.Count(call => call == "dispose-discord"));
     }
 
@@ -275,7 +282,8 @@ public class BeanBotHostIntegrationTests
 
         public List<string> Calls { get; } = [];
         public Func<CancellationToken, Task>? StartDiscord { get; init; }
-        public bool HasUnfinishedDiscordStartupOperation => false;
+        public bool HasActiveDiscordLifecycleOperation => false;
+        public bool CanDisposeDiscordClient => true;
         public int HealthPort => _healthServer.BoundPort;
 
         public void SetHealthSnapshot(DiscordHealthSnapshot snapshot)
@@ -304,7 +312,13 @@ public class BeanBotHostIntegrationTests
         }
 
         public void StartEventAndBackgroundServices() => Calls.Add("start-event-background");
-        public void StopEventAndCommandServices() => Calls.Add("stop-event-command");
+        public void StopReactionServices() => Calls.Add("stop-reaction");
+        public void StopNewMemberEvents() => Calls.Add("stop-new-member");
+        public void StopEditedMessageEvents() => Calls.Add("stop-edited-message");
+        public void StopCommandServices() => Calls.Add("stop-command");
+        public void StopMessageWaiter() => Calls.Add("stop-message-waiter");
+        public void StopPaginator() => Calls.Add("stop-paginator");
+        public void UnsubscribeDiscordLog() => Calls.Add("unsubscribe-discord-log");
 
         public Task StopGatewayRecoveryAsync()
         {
@@ -314,9 +328,15 @@ public class BeanBotHostIntegrationTests
 
         public void UnsubscribeApplicationEvents() => Calls.Add("unsubscribe-events");
 
-        public async Task StopBackgroundServicesAsync(CancellationToken cancellationToken)
+        public Task StopPunServiceAsync()
         {
-            Calls.Add("stop-background");
+            Calls.Add("stop-pun");
+            return Task.CompletedTask;
+        }
+
+        public async Task StopHealthServerAsync(CancellationToken cancellationToken)
+        {
+            Calls.Add("stop-health");
             await _healthServer.StopAsync(cancellationToken);
         }
 

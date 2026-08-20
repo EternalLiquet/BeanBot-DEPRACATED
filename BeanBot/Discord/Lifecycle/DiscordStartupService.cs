@@ -3,6 +3,7 @@ using BeanBot.Logging;
 using Discord;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BeanBot.Discord.Lifecycle;
 
@@ -54,19 +55,17 @@ internal sealed class DiscordStartupDelay : IDiscordStartupDelay
 internal sealed class DiscordStartupLifecycle : IDiscordStartupLifecycle
 {
     private const string GameStatus = "My purpose is to bully Hatate and succ the world dry";
-    private readonly object _syncRoot = new();
     private readonly Func<Task> _login;
     private readonly Func<Task> _start;
     private readonly Func<Task> _setPresence;
     private readonly TimeSpan _operationTimeout;
-    private readonly Action<Exception, string> _lateFailureObserver;
-    private readonly ILogger<DiscordStartupLifecycle> _logger;
-    private Task? _unfinishedOperation;
+    private readonly DiscordLifecycleCoordinator _coordinator;
 
     public DiscordStartupLifecycle(
         DiscordSocketClient client,
         string botToken,
         TimeSpan operationTimeout,
+        DiscordLifecycleCoordinator coordinator,
         ILogger<DiscordStartupLifecycle> logger)
     {
         ArgumentNullException.ThrowIfNull(client);
@@ -75,8 +74,8 @@ internal sealed class DiscordStartupLifecycle : IDiscordStartupLifecycle
         _start = client.StartAsync;
         _setPresence = () => client.SetGameAsync(GameStatus, null, ActivityType.Playing);
         _operationTimeout = operationTimeout;
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _lateFailureObserver = LogLateFailure;
+        _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+        ArgumentNullException.ThrowIfNull(logger);
     }
 
     internal DiscordStartupLifecycle(
@@ -91,19 +90,17 @@ internal sealed class DiscordStartupLifecycle : IDiscordStartupLifecycle
         _start = start ?? throw new ArgumentNullException(nameof(start));
         _setPresence = setPresence ?? throw new ArgumentNullException(nameof(setPresence));
         _operationTimeout = operationTimeout;
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _lateFailureObserver = lateFailureObserver ?? LogLateFailure;
+        ArgumentNullException.ThrowIfNull(logger);
+        _coordinator = new DiscordLifecycleCoordinator(
+            NullLogger<DiscordLifecycleCoordinator>.Instance,
+            lateFailureObserver is null
+                ? null
+                : (exception, _, operation) => lateFailureObserver(exception, operation));
     }
 
     internal bool HasUnfinishedOperation
     {
-        get
-        {
-            lock (_syncRoot)
-            {
-                return _unfinishedOperation?.IsCompleted == false;
-            }
-        }
+        get => _coordinator.HasActiveSequence;
     }
 
     public Task LoginAsync(CancellationToken cancellationToken)
@@ -129,56 +126,17 @@ internal sealed class DiscordStartupLifecycle : IDiscordStartupLifecycle
         string operationName,
         CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var operation = beginOperation();
-        try
+        var outcome = await _coordinator.RunSequenceAsync(
+            $"startup-{operationName}",
+            [new DiscordLifecycleStep(operationName, beginOperation)],
+            _operationTimeout,
+            cancellationToken);
+        if (!outcome.IsCompleted)
         {
-            // Discord.Net does not accept cancellation tokens for these operations,
-            // so BeanBot bounds its own wait and records an abandoned operation. The
-            // caller can then avoid racing teardown against the same client.
-            await operation.WaitAsync(_operationTimeout, cancellationToken);
-        }
-        catch
-        {
-            if (!operation.IsCompleted)
-            {
-                TrackUnfinishedOperation(operation, operationName);
-            }
-
-            throw;
+            throw outcome.Exception ?? new InvalidOperationException(
+                $"Discord startup operation '{operationName}' did not start.");
         }
     }
-
-    private void TrackUnfinishedOperation(Task operation, string operationName)
-    {
-        lock (_syncRoot)
-        {
-            _unfinishedOperation = operation;
-        }
-
-        _ = operation.ContinueWith(
-            completedTask =>
-            {
-                if (completedTask.IsFaulted)
-                {
-                    _lateFailureObserver(completedTask.Exception!, operationName);
-                }
-
-                lock (_syncRoot)
-                {
-                    if (ReferenceEquals(_unfinishedOperation, completedTask))
-                    {
-                        _unfinishedOperation = null;
-                    }
-                }
-            },
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-    }
-
-    private void LogLateFailure(Exception exception, string operationName)
-        => BeanBotLog.DiscordStartupLateFailure(_logger, operationName, exception);
 }
 
 internal sealed class DiscordStartupService

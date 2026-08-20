@@ -54,6 +54,7 @@ internal static class BeanBotServiceCollectionExtensions
             provider.GetRequiredService<MongoClient>().GetDatabase("BeanBotDB"));
 
         services.AddSingleton<DiscordConnectionHealth>();
+        services.AddSingleton<DiscordLifecycleCoordinator>();
         services.AddSingleton(DiscordStartupOptions.Default);
         services.AddSingleton<DiscordStartupLifecycle>(provider =>
         {
@@ -62,6 +63,7 @@ internal static class BeanBotServiceCollectionExtensions
                 provider.GetRequiredService<DiscordSocketClient>(),
                 provider.GetRequiredService<BeanBotOptions>().BotToken,
                 options.LifecycleOperationTimeout,
+                provider.GetRequiredService<DiscordLifecycleCoordinator>(),
                 provider.GetRequiredService<ILogger<DiscordStartupLifecycle>>());
         });
         services.AddSingleton<IDiscordStartupLifecycle>(provider =>
@@ -77,6 +79,7 @@ internal static class BeanBotServiceCollectionExtensions
                 provider.GetRequiredService<DiscordSocketClient>(),
                 provider.GetRequiredService<BeanBotOptions>().BotToken,
                 options.LifecycleOperationTimeout,
+                provider.GetRequiredService<DiscordLifecycleCoordinator>(),
                 provider.GetRequiredService<ILogger<DiscordGatewayLifecycle>>());
         });
         services.AddSingleton<IRecoveryDelay, TaskRecoveryDelay>();

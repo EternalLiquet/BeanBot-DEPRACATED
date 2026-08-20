@@ -2,7 +2,16 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <BeanBotReleaseVersion Condition="'$(BeanBotReleaseVersion)' == ''">0.0.0-local</BeanBotReleaseVersion>
+    <BeanBotCommitSha Condition="'$(BeanBotCommitSha)' == ''">unknown</BeanBotCommitSha>
+    <Version>$(BeanBotReleaseVersion)</Version>
+    <InformationalVersion>$(BeanBotReleaseVersion)+$(BeanBotCommitSha)</InformationalVersion>
   </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="BeanBotReleaseVersion" Value="$(BeanBotReleaseVersion)" />
+    <AssemblyMetadata Include="BeanBotCommitSha" Value="$(BeanBotCommitSha)" />
+  </ItemGroup>
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
@@ -35,9 +44,6 @@
     <PackageReference Include="Serilog.Sinks.Async" />
     <PackageReference Include="Serilog.Sinks.Console" />
     <PackageReference Include="Serilog.Sinks.File" />
-    <!-- Pin secure versions of vulnerable transitive MongoDB.Driver dependencies. -->
-    <PackageReference Include="SharpCompress" />
-    <PackageReference Include="Snappier" />
   </ItemGroup>
 
   <ItemGroup>

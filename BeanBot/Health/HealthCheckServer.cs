@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using BeanBot.Configuration;
+using BeanBot.Hosting;
 using BeanBot.Logging;
 using Discord.WebSocket;
 using Microsoft.AspNetCore.Builder;
@@ -336,6 +337,8 @@ public sealed class HealthCheckServer : IAsyncDisposable
             new
             {
                 status = healthSnapshot.IsHealthy ? "ok" : "unhealthy",
+                version = BuildIdentity.Current.Version,
+                commitSha = BuildIdentity.Current.CommitSha,
                 discordConnected = healthSnapshot.IsHealthy,
                 message = healthSnapshot.StatusMessage,
                 loginState = healthSnapshot.LoginState,
