@@ -7,6 +7,10 @@ real_python="$(command -v python3)"
 temporary_directory="$(mktemp -d)"
 trap 'rm -rf -- "$temporary_directory"' EXIT
 
+grep -Fq 'run_stage "Test release provenance" scripts/test-release-provenance.sh' \
+  "$verify_script" \
+  || { echo "Verification orchestration omits release provenance tests." >&2; exit 1; }
+
 stub_directory="$temporary_directory/bin"
 mkdir -p "$stub_directory"
 stub="$temporary_directory/command-stub"

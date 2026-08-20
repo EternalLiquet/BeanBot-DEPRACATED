@@ -98,6 +98,9 @@ def validate_workflows() -> None:
     for path in (*workflow_paths, dependabot_path):
         validate_yaml(path)
 
+    if yaml is None:
+        fail("PyYAML is required to validate release workflow state transitions")
+
     validation = validation_path.read_text(encoding="utf-8")
     release = release_path.read_text(encoding="utf-8")
     dependency_review = dependency_review_path.read_text(encoding="utf-8")
@@ -126,6 +129,8 @@ def validate_workflows() -> None:
         "./scripts/release-image.sh inspect",
         "./scripts/release-image.sh stage",
         "./scripts/release-image.sh promote",
+        "./scripts/select-release-image.sh",
+        "./scripts/verify-release-provenance.sh",
         "./scripts/create-release-checksums.sh",
         "RELEASE_DIGEST: ${{ steps.existing-release.outputs.release-digest }}",
         "cancel-in-progress: false",
@@ -146,8 +151,9 @@ def validate_workflows() -> None:
         "- name: Inspect existing image transaction",
         "- name: Full release-quality verification",
         "- name: Stage verified image candidate",
+        "- name: Generate build provenance",
+        "- name: Verify existing build provenance",
         "- name: Generate SPDX SBOM",
-        "- name: Attest image provenance",
         "- name: Attest image SBOM",
         "- name: Create release metadata and checksums",
         "- name: Upload release evidence",
@@ -156,6 +162,85 @@ def validate_workflows() -> None:
     step_positions = [release.index(step) for step in ordered_release_steps]
     if step_positions != sorted(step_positions):
         fail("release transaction steps are not in durable preflight/evidence/promotion order")
+
+    release_workflow = yaml.safe_load(release)
+    release_jobs = release_workflow.get("jobs", {})
+    producer = release_jobs.get("verify-and-publish-image", {})
+    consumer = release_jobs.get("create-github-release", {})
+    producer_steps = {step.get("name"): step for step in producer.get("steps", [])}
+    consumer_steps = {step.get("name"): step for step in consumer.get("steps", [])}
+
+    upload_step = producer_steps.get("Upload release evidence", {})
+    download_step = consumer_steps.get("Download release evidence", {})
+    upload_inputs = upload_step.get("with", {})
+    download_inputs = download_step.get("with", {})
+    upload_name = upload_inputs.get("name")
+    download_name = download_inputs.get("name")
+    expected_evidence_name = "release-evidence-${{ github.run_id }}"
+    if upload_name != expected_evidence_name or download_name != expected_evidence_name:
+        fail("release evidence upload and download must use the same stable workflow-run identity")
+    if "github.run_attempt" in upload_name or "github.run_attempt" in download_name:
+        fail("durable cross-job release evidence must not depend on github.run_attempt")
+    if upload_inputs.get("overwrite") is not True:
+        fail("complete release workflow reruns must explicitly replace the stable evidence artifact")
+
+    def evidence_name(run_id: int, run_attempt: int) -> str:
+        return upload_name.replace("${{ github.run_id }}", str(run_id)).replace(
+            "${{ github.run_attempt }}", str(run_attempt)
+        )
+
+    first_attempt_upload = evidence_name(1234, 1)
+    failed_job_rerun_download = download_name.replace(
+        "${{ github.run_id }}", "1234"
+    ).replace("${{ github.run_attempt }}", "2")
+    complete_rerun_upload = evidence_name(1234, 2)
+    if first_attempt_upload != failed_job_rerun_download:
+        fail("a failed-job-only rerun cannot recover the producer's release evidence")
+    if complete_rerun_upload != first_attempt_upload:
+        fail("a complete rerun must intentionally replace the same workflow-run evidence identity")
+
+    selected_step = producer_steps.get("Select release image identity", {})
+    selected_script = selected_step.get("run", "")
+    for fragment in (
+        "./scripts/select-release-image.sh",
+        '"$EXISTING_DIGEST"',
+        '"$STAGED_DIGEST"',
+        '"$GITHUB_OUTPUT"',
+    ):
+        if fragment not in selected_script:
+            fail(f"release image selection is missing executable state input: {fragment}")
+
+    generate_step = producer_steps.get("Generate build provenance", {})
+    verify_step = producer_steps.get("Verify existing build provenance", {})
+    if generate_step.get("if") != "steps.selected-image.outputs.provenance-action == 'generate'":
+        fail("build provenance generation must be limited to the digest staged by this attempt")
+    if verify_step.get("if") != "steps.selected-image.outputs.provenance-action == 'verify'":
+        fail("reused image digests must take the existing-provenance verification path")
+    if not str(generate_step.get("uses", "")).startswith("actions/attest-build-provenance@"):
+        fail("newly staged images must use the pinned build-provenance action")
+    verify_script = verify_step.get("run", "")
+    for fragment in (
+        "./scripts/verify-release-provenance.sh",
+        '"$IMAGE_NAME"',
+        '"$IMAGE_DIGEST"',
+        '"$GITHUB_REPOSITORY"',
+        '"$GITHUB_SHA"',
+        '"refs/heads/master"',
+    ):
+        if fragment not in verify_script:
+            fail(f"reused image provenance verification is missing: {fragment}")
+
+    step_names = [step.get("name") for step in producer.get("steps", [])]
+    generate_position = step_names.index("Generate build provenance")
+    verify_position = step_names.index("Verify existing build provenance")
+    sbom_position = step_names.index("Generate SPDX SBOM")
+    evidence_position = step_names.index("Upload release evidence")
+    promotion_position = step_names.index("Promote immutable image tags")
+    if not (
+        generate_position < sbom_position < evidence_position < promotion_position
+        and verify_position < sbom_position < evidence_position < promotion_position
+    ):
+        fail("provenance establishment must precede SBOM evidence and immutable tag promotion")
 
     for fragment in ("fail-on-severity: high", "timeout-minutes:"):
         if fragment not in dependency_review:
@@ -201,6 +286,9 @@ def validate_policy_and_scripts() -> None:
         "scripts/release-image.sh",
         "scripts/release-assets.sh",
         "scripts/create-release-checksums.sh",
+        "scripts/select-release-image.sh",
+        "scripts/verify-release-provenance.sh",
+        "scripts/test-release-provenance.sh",
         "scripts/test-release-resume.sh",
         "scripts/test-release-checksums.sh",
     ):
@@ -227,6 +315,8 @@ def validate_policy_and_scripts() -> None:
         fail("full verification must smoke test the hardened image")
     if "scripts/test-release-resume.sh" not in verifier or "scripts/test-release-checksums.sh" not in verifier:
         fail("repository verification must exercise release resumption and portable checksums")
+    if 'run_stage "Test release provenance" scripts/test-release-provenance.sh' not in verifier:
+        fail("repository verification must exercise reused image provenance verification")
 
     release_image = (REPOSITORY_ROOT / "scripts" / "release-image.sh").read_text(encoding="utf-8")
     release_assets = (REPOSITORY_ROOT / "scripts" / "release-assets.sh").read_text(encoding="utf-8")

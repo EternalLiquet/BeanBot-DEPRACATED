@@ -45,6 +45,7 @@ self_test_workflow() {
   run_stage "Test branch integrity guard" scripts/test-branch-integrity.sh
   run_stage "Test resumable release transaction" scripts/test-release-resume.sh
   run_stage "Test portable release checksums" scripts/test-release-checksums.sh
+  run_stage "Test release provenance" scripts/test-release-provenance.sh
 }
 
 build_and_test() {

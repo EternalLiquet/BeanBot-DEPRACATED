@@ -112,13 +112,28 @@ jobs:
           EXISTING_DIGEST: ${{ steps.existing-image.outputs.image-digest }}
           STAGED_DIGEST: ${{ steps.staged-image.outputs.image-digest }}
         run: |
-          image_digest="${EXISTING_DIGEST:-$STAGED_DIGEST}"
-          [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]] \
-            || { echo "No valid release image digest was selected." >&2; exit 1; }
-          echo "image-name=$IMAGE_NAME" >>"$GITHUB_OUTPUT"
-          echo "image-digest=$image_digest" >>"$GITHUB_OUTPUT"
-          echo "release-version=$RELEASE_VERSION" >>"$GITHUB_OUTPUT"
+          ./scripts/select-release-image.sh \
+            "$IMAGE_NAME" "$EXISTING_DIGEST" "$STAGED_DIGEST" \
+            "$RELEASE_VERSION" "$GITHUB_OUTPUT"
           mkdir -p .artifacts/release
+
+      - name: Generate build provenance
+        if: steps.selected-image.outputs.provenance-action == 'generate'
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-name: ${{ steps.selected-image.outputs.image-name }}
+          subject-digest: ${{ steps.selected-image.outputs.image-digest }}
+          push-to-registry: true
+
+      - name: Verify existing build provenance
+        if: steps.selected-image.outputs.provenance-action == 'verify'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_DIGEST: ${{ steps.selected-image.outputs.image-digest }}
+        run: |
+          ./scripts/verify-release-provenance.sh \
+            "$IMAGE_NAME" "$IMAGE_DIGEST" "$GITHUB_REPOSITORY" \
+            "$GITHUB_SHA" "refs/heads/master"
 
       - name: Generate SPDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
@@ -128,13 +143,6 @@ jobs:
           output-file: .artifacts/release/beanbot.spdx.json
           upload-artifact: false
           upload-release-assets: false
-
-      - name: Attest image provenance
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
-        with:
-          subject-name: ${{ steps.selected-image.outputs.image-name }}
-          subject-digest: ${{ steps.selected-image.outputs.image-digest }}
-          push-to-registry: true
 
       - name: Attest image SBOM
         uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
@@ -158,12 +166,13 @@ jobs:
       - name: Upload release evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          name: release-evidence-${{ github.run_id }}
           path: |
             .artifacts/release
             .artifacts/coverage
           if-no-files-found: error
           retention-days: 30
+          overwrite: true
 
       - name: Promote immutable image tags
         run: |
@@ -188,7 +197,7 @@ jobs:
       - name: Download release evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: release-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          name: release-evidence-${{ github.run_id }}
           path: release-evidence
 
       - name: Create release with generated notes
