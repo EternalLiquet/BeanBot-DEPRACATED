@@ -60,17 +60,10 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         try
         {
             var sessionResult = _messageWaiter.AcquireInteractionSession(Context, out interactionSession);
-            if (sessionResult == InteractionSessionAcquireResult.AlreadyActive)
+            var sessionFailureMessage = GetInteractionSessionFailureMessage(sessionResult);
+            if (sessionFailureMessage is not null)
             {
-                messagesInInteraction.Add(await ReplyAsync(
-                    "A role setup is already active for you in this channel. Finish it before starting another."));
-                return;
-            }
-
-            if (sessionResult == InteractionSessionAcquireResult.CapacityReached)
-            {
-                messagesInInteraction.Add(await ReplyAsync(
-                    "Bean Bot is already handling the maximum number of interactive setup sessions. Try again shortly."));
+                messagesInInteraction.Add(await ReplyAsync(sessionFailureMessage));
                 return;
             }
 
@@ -138,6 +131,19 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
             interactionSession?.Dispose();
             await CleanUpMessagesAsync(messagesInInteraction);
         }
+    }
+
+    internal static string? GetInteractionSessionFailureMessage(InteractionSessionAcquireResult result)
+    {
+        return result switch
+        {
+            InteractionSessionAcquireResult.Acquired => null,
+            InteractionSessionAcquireResult.AlreadyActive =>
+                "A role setup is already active for you in this channel. Finish it before starting another.",
+            InteractionSessionAcquireResult.CapacityReached =>
+                "Bean Bot is already handling the maximum number of interactive setup sessions. Try again shortly.",
+            _ => throw new ArgumentOutOfRangeException(nameof(result), result, null)
+        };
     }
 
     private async Task<IUserMessage> CreateRoleMessageAsync(IEnumerable<RoleEmotePair> roleEmotePairs, string roleGroupLabel)
