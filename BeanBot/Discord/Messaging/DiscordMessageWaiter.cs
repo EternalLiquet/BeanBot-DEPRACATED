@@ -1,9 +1,15 @@
 using System.Collections.Concurrent;
-using System.Diagnostics.CodeAnalysis;
 using Discord.Commands;
 using Discord.WebSocket;
 
 namespace BeanBot.Discord.Messaging;
+
+internal enum InteractionSessionAcquireResult
+{
+    Acquired,
+    AlreadyActive,
+    CapacityReached
+}
 
 public sealed class DiscordMessageWaiter : IDisposable
 {
@@ -26,13 +32,13 @@ public sealed class DiscordMessageWaiter : IDisposable
             cancellationToken);
     }
 
-    public bool TryAcquireInteractionSession(
+    internal InteractionSessionAcquireResult AcquireInteractionSession(
         SocketCommandContext context,
-        [NotNullWhen(true)] out IDisposable? lease)
+        out IDisposable? lease)
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        return _sessions.TryAcquire(context.User.Id, context.Channel.Id, out lease);
+        return _sessions.Acquire(context.User.Id, context.Channel.Id, out lease);
     }
 
     public bool TryPublish(SocketMessage message)
@@ -80,38 +86,36 @@ internal sealed class BoundedInteractionSessionRegistry : IDisposable
         }
     }
 
-    public bool TryAcquire(
+    public InteractionSessionAcquireResult Acquire(
         ulong userId,
         ulong channelId,
-        [NotNullWhen(true)] out IDisposable? lease)
+        out IDisposable? lease)
     {
         lease = null;
         ThrowIfDisposed();
-
-        if (!_availableSlots.Wait(0))
-        {
-            return false;
-        }
 
         lock (_syncRoot)
         {
             if (Volatile.Read(ref _disposed) != 0)
             {
-                _availableSlots.Release();
                 throw new ObjectDisposedException(nameof(BoundedInteractionSessionRegistry));
             }
 
             var key = new InteractionSessionKey(userId, channelId);
             if (_activeSessions.ContainsKey(key))
             {
-                _availableSlots.Release();
-                return false;
+                return InteractionSessionAcquireResult.AlreadyActive;
+            }
+
+            if (!_availableSlots.Wait(0))
+            {
+                return InteractionSessionAcquireResult.CapacityReached;
             }
 
             var sessionLease = new InteractionSessionLease(this, key);
             _activeSessions.Add(key, sessionLease);
             lease = sessionLease;
-            return true;
+            return InteractionSessionAcquireResult.Acquired;
         }
     }
 
