@@ -96,4 +96,50 @@ public class DiscordMessageWaiterTests
         await Assert.ThrowsAsync<ObjectDisposedException>(
             () => waiter.WaitAsync(11, 21, TimeSpan.FromSeconds(1)));
     }
+
+    [Fact]
+    public void InteractionSession_DuplicateUserAndChannelIsRejectedUntilLeaseReleased()
+    {
+        using var sessions = new BoundedInteractionSessionRegistry(2);
+
+        Assert.True(sessions.TryAcquire(10, 20, out var firstLease));
+        Assert.Equal(1, sessions.ActiveCount);
+        Assert.False(sessions.TryAcquire(10, 20, out var duplicateLease));
+        Assert.Null(duplicateLease);
+
+        firstLease!.Dispose();
+
+        Assert.Equal(0, sessions.ActiveCount);
+        Assert.True(sessions.TryAcquire(10, 20, out var retriedLease));
+        retriedLease!.Dispose();
+        Assert.Equal(0, sessions.ActiveCount);
+    }
+
+    [Fact]
+    public void InteractionSession_CapacityIsBoundedAndReleased()
+    {
+        using var sessions = new BoundedInteractionSessionRegistry(1);
+
+        Assert.True(sessions.TryAcquire(10, 20, out var firstLease));
+        Assert.False(sessions.TryAcquire(11, 21, out var blockedLease));
+        Assert.Null(blockedLease);
+
+        firstLease!.Dispose();
+
+        Assert.True(sessions.TryAcquire(11, 21, out var secondLease));
+        secondLease!.Dispose();
+        Assert.Equal(0, sessions.ActiveCount);
+    }
+
+    [Fact]
+    public void InteractionSession_DisposeRejectsNewSessionsAndLateLeaseDisposeIsSafe()
+    {
+        var sessions = new BoundedInteractionSessionRegistry(1);
+        Assert.True(sessions.TryAcquire(10, 20, out var lease));
+
+        sessions.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => sessions.TryAcquire(11, 21, out _));
+        lease!.Dispose();
+    }
 }
