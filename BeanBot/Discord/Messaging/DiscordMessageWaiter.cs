@@ -58,7 +58,7 @@ public sealed class DiscordMessageWaiter : IDisposable
 
 internal sealed class BoundedInteractionSessionRegistry : IDisposable
 {
-    private readonly Dictionary<InteractionSessionKey, InteractionSessionLease> _activeSessions = new();
+    private readonly Dictionary<InteractionSessionKey, InteractionSessionLease> _activeSessions = [];
     private readonly SemaphoreSlim _availableSlots;
     private readonly object _syncRoot = new();
     private int _disposed;
