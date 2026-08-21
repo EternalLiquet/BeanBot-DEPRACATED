@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using Discord.Commands;
 using Discord.WebSocket;
 
@@ -7,7 +8,9 @@ namespace BeanBot.Discord.Messaging;
 public sealed class DiscordMessageWaiter : IDisposable
 {
     internal const int MaximumPendingWaits = 64;
+    internal const int MaximumInteractionSessions = 64;
     private readonly BoundedMessageWaiter<SocketMessage> _waiter = new(MaximumPendingWaits);
+    private readonly BoundedInteractionSessionRegistry _sessions = new(MaximumInteractionSessions);
 
     public Task<SocketMessage?> WaitForNextMessageAsync(
         SocketCommandContext context,
@@ -21,6 +24,15 @@ public sealed class DiscordMessageWaiter : IDisposable
             context.Channel.Id,
             timeout,
             cancellationToken);
+    }
+
+    public bool TryAcquireInteractionSession(
+        SocketCommandContext context,
+        [NotNullWhen(true)] out IDisposable? lease)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        return _sessions.TryAcquire(context.User.Id, context.Channel.Id, out lease);
     }
 
     public bool TryPublish(SocketMessage message)
@@ -37,7 +49,131 @@ public sealed class DiscordMessageWaiter : IDisposable
             message);
     }
 
-    public void Dispose() => _waiter.Dispose();
+    public void Dispose()
+    {
+        _sessions.Dispose();
+        _waiter.Dispose();
+    }
+}
+
+internal sealed class BoundedInteractionSessionRegistry : IDisposable
+{
+    private readonly Dictionary<InteractionSessionKey, InteractionSessionLease> _activeSessions = new();
+    private readonly SemaphoreSlim _availableSlots;
+    private readonly object _syncRoot = new();
+    private int _disposed;
+
+    public BoundedInteractionSessionRegistry(int maximumSessions)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumSessions);
+        _availableSlots = new SemaphoreSlim(maximumSessions, maximumSessions);
+    }
+
+    internal int ActiveCount
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                return _activeSessions.Count;
+            }
+        }
+    }
+
+    public bool TryAcquire(
+        ulong userId,
+        ulong channelId,
+        [NotNullWhen(true)] out IDisposable? lease)
+    {
+        lease = null;
+        ThrowIfDisposed();
+
+        if (!_availableSlots.Wait(0))
+        {
+            return false;
+        }
+
+        lock (_syncRoot)
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                _availableSlots.Release();
+                throw new ObjectDisposedException(nameof(BoundedInteractionSessionRegistry));
+            }
+
+            var key = new InteractionSessionKey(userId, channelId);
+            if (_activeSessions.ContainsKey(key))
+            {
+                _availableSlots.Release();
+                return false;
+            }
+
+            var sessionLease = new InteractionSessionLease(this, key);
+            _activeSessions.Add(key, sessionLease);
+            lease = sessionLease;
+            return true;
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_syncRoot)
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                return;
+            }
+
+            _activeSessions.Clear();
+        }
+    }
+
+    private void Release(InteractionSessionKey key, InteractionSessionLease lease)
+    {
+        lock (_syncRoot)
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                return;
+            }
+
+            if (_activeSessions.TryGetValue(key, out var activeLease) &&
+                ReferenceEquals(activeLease, lease))
+            {
+                _activeSessions.Remove(key);
+                _availableSlots.Release();
+            }
+        }
+    }
+
+    private void ThrowIfDisposed()
+    {
+        ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _disposed) != 0,
+            this);
+    }
+
+    private readonly record struct InteractionSessionKey(ulong UserId, ulong ChannelId);
+
+    private sealed class InteractionSessionLease : IDisposable
+    {
+        private readonly InteractionSessionKey _key;
+        private BoundedInteractionSessionRegistry? _owner;
+
+        public InteractionSessionLease(
+            BoundedInteractionSessionRegistry owner,
+            InteractionSessionKey key)
+        {
+            _owner = owner;
+            _key = key;
+        }
+
+        public void Dispose()
+        {
+            var owner = Interlocked.Exchange(ref _owner, null);
+            owner?.Release(_key, this);
+        }
+    }
 }
 
 internal sealed class BoundedMessageWaiter<TMessage> : IDisposable
