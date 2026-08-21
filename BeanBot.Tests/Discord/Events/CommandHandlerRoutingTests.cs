@@ -6,19 +6,17 @@ namespace BeanBot.Tests.Discord.Events;
 
 public class CommandHandlerRoutingTests
 {
-    [Theory]
-    [InlineData(CommandHandler.CommandPrefixKind.Succ)]
-    [InlineData(CommandHandler.CommandPrefixKind.Mention)]
-    [InlineData(CommandHandler.CommandPrefixKind.Percent)]
-    public void CommandPrefix_RoutesOnlyToCommandExecution(CommandHandler.CommandPrefixKind commandPrefix)
-    {
-        var route = CommandHandler.ResolveMessageRoute(
-            isSystemMessage: false,
-            isBot: false,
-            commandPrefix);
+    [Fact]
+    public void SuccPrefix_RoutesOnlyToCommandExecution()
+        => AssertCommandPrefixRoutesOnlyToCommandExecution(CommandHandler.CommandPrefixKind.Succ);
 
-        Assert.Equal(CommandHandler.CommandMessageRoute.ExecuteCommand, route);
-    }
+    [Fact]
+    public void MentionPrefix_RoutesOnlyToCommandExecution()
+        => AssertCommandPrefixRoutesOnlyToCommandExecution(CommandHandler.CommandPrefixKind.Mention);
+
+    [Fact]
+    public void PercentPrefix_RoutesOnlyToCommandExecution()
+        => AssertCommandPrefixRoutesOnlyToCommandExecution(CommandHandler.CommandPrefixKind.Percent);
 
     [Fact]
     public void NonCommandUserMessage_RoutesToMessageWaiter()
@@ -70,5 +68,15 @@ public class CommandHandlerRoutingTests
         Assert.True(waiter.TryPublish(10, 20, isBot: false, "2"));
 
         Assert.Equal("2", await pendingAnswer);
+    }
+
+    private static void AssertCommandPrefixRoutesOnlyToCommandExecution(CommandHandler.CommandPrefixKind commandPrefix)
+    {
+        var route = CommandHandler.ResolveMessageRoute(
+            isSystemMessage: false,
+            isBot: false,
+            commandPrefix);
+
+        Assert.Equal(CommandHandler.CommandMessageRoute.ExecuteCommand, route);
     }
 }
