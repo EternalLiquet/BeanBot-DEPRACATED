@@ -13,6 +13,14 @@ namespace BeanBot.Discord.Events;
 
 public sealed class CommandHandler : IDisposable
 {
+    internal enum CommandPrefixKind
+    {
+        None,
+        Succ,
+        Mention,
+        Percent
+    }
+
     internal enum CommandMessageRoute
     {
         Ignore,
@@ -80,7 +88,7 @@ public sealed class CommandHandler : IDisposable
         }
 
         var argPos = 0;
-        var hasCommandPrefix = MessageHasCommandPrefix(discordMessage, ref argPos);
+        var commandPrefix = GetCommandPrefix(discordMessage, ref argPos);
 
         if (discordMessage.Author.Id == BotOwner.DiscordUserId &&
             discordMessage.Content.Contains("queue8", StringComparison.OrdinalIgnoreCase))
@@ -93,7 +101,7 @@ public sealed class CommandHandler : IDisposable
         var route = ResolveMessageRoute(
             isSystemMessage: false,
             messageEvent.Author.IsBot,
-            hasCommandPrefix);
+            commandPrefix);
         if (route == CommandMessageRoute.PublishToMessageWaiter)
         {
             _messageWaiter.TryPublish(messageEvent);
@@ -112,26 +120,36 @@ public sealed class CommandHandler : IDisposable
             services: _services);
     }
 
-    internal bool MessageHasCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
+    internal CommandPrefixKind GetCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
     {
-        return discordMessage.HasStringPrefix("succ ", ref argPos, StringComparison.OrdinalIgnoreCase) ||
-               discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos) ||
-               discordMessage.HasCharPrefix('%', ref argPos);
+        if (discordMessage.HasStringPrefix("succ ", ref argPos, StringComparison.OrdinalIgnoreCase))
+        {
+            return CommandPrefixKind.Succ;
+        }
+
+        if (discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos))
+        {
+            return CommandPrefixKind.Mention;
+        }
+
+        return discordMessage.HasCharPrefix('%', ref argPos)
+            ? CommandPrefixKind.Percent
+            : CommandPrefixKind.None;
     }
 
     internal static CommandMessageRoute ResolveMessageRoute(
         bool isSystemMessage,
         bool isBot,
-        bool hasCommandPrefix)
+        CommandPrefixKind commandPrefix)
     {
         if (isSystemMessage || isBot)
         {
             return CommandMessageRoute.Ignore;
         }
 
-        return hasCommandPrefix
-            ? CommandMessageRoute.ExecuteCommand
-            : CommandMessageRoute.PublishToMessageWaiter;
+        return commandPrefix == CommandPrefixKind.None
+            ? CommandMessageRoute.PublishToMessageWaiter
+            : CommandMessageRoute.ExecuteCommand;
     }
 
     internal static bool MessageIsSystemMessage([NotNullWhen(false)] SocketUserMessage? discordMessage)
