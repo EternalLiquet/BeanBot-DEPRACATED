@@ -306,6 +306,7 @@
           "CsvHelper": "[33.1.0, )",
           "Discord.Net.Commands": "[3.20.1, )",
           "Discord.Net.Core": "[3.20.1, )",
+          "Discord.Net.Interactions": "[3.20.1, )",
           "Discord.Net.Rest": "[3.20.1, )",
           "Discord.Net.WebSocket": "[3.20.1, )",
           "LQ.MemeApiDotNetWrapper": "[1.5.1, )",
@@ -342,6 +343,17 @@
         "contentHash": "fgWdbTlcd2ck05OoS03UBd/7kyrgHWATV9o2mvTwReqIB2CCcVPf5Qu8BpUpr3IgGYNHeVg+9J4KnK9DznYT4Q==",
         "dependencies": {
           "Newtonsoft.Json": "13.0.4"
+        }
+      },
+      "Discord.Net.Interactions": {
+        "type": "CentralTransitive",
+        "requested": "[3.20.1, )",
+        "resolved": "3.20.1",
+        "contentHash": "beNXMFsKwIW2OlCniG+QRAWvuC1bSypSktvMrhihIug02FgAlZKqcjt/EUHfOnMouOdtUXX0tY7NRKreEFIgEQ==",
+        "dependencies": {
+          "Discord.Net.Core": "3.20.1",
+          "Discord.Net.Rest": "3.20.1",
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.0"
         }
       },
       "Discord.Net.Rest": {

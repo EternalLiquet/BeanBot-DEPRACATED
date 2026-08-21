@@ -26,6 +26,16 @@
           "Newtonsoft.Json": "13.0.4"
         }
       },
+      "Discord.Net.Interactions": {
+        "type": "Direct",
+        "requested": "[3.20.1, )",
+        "resolved": "3.20.1",
+        "contentHash": "beNXMFsKwIW2OlCniG+QRAWvuC1bSypSktvMrhihIug02FgAlZKqcjt/EUHfOnMouOdtUXX0tY7NRKreEFIgEQ==",
+        "dependencies": {
+          "Discord.Net.Core": "3.20.1",
+          "Discord.Net.Rest": "3.20.1"
+        }
+      },
       "Discord.Net.Rest": {
         "type": "Direct",
         "requested": "[3.20.1, )",
