@@ -102,15 +102,21 @@ public class DiscordMessageWaiterTests
     {
         using var sessions = new BoundedInteractionSessionRegistry(2);
 
-        Assert.True(sessions.TryAcquire(10, 20, out var firstLease));
+        Assert.Equal(
+            InteractionSessionAcquireResult.Acquired,
+            sessions.Acquire(10, 20, out var firstLease));
         Assert.Equal(1, sessions.ActiveCount);
-        Assert.False(sessions.TryAcquire(10, 20, out var duplicateLease));
+        Assert.Equal(
+            InteractionSessionAcquireResult.AlreadyActive,
+            sessions.Acquire(10, 20, out var duplicateLease));
         Assert.Null(duplicateLease);
 
         firstLease!.Dispose();
 
         Assert.Equal(0, sessions.ActiveCount);
-        Assert.True(sessions.TryAcquire(10, 20, out var retriedLease));
+        Assert.Equal(
+            InteractionSessionAcquireResult.Acquired,
+            sessions.Acquire(10, 20, out var retriedLease));
         retriedLease!.Dispose();
         Assert.Equal(0, sessions.ActiveCount);
     }
@@ -120,13 +126,19 @@ public class DiscordMessageWaiterTests
     {
         using var sessions = new BoundedInteractionSessionRegistry(1);
 
-        Assert.True(sessions.TryAcquire(10, 20, out var firstLease));
-        Assert.False(sessions.TryAcquire(11, 21, out var blockedLease));
+        Assert.Equal(
+            InteractionSessionAcquireResult.Acquired,
+            sessions.Acquire(10, 20, out var firstLease));
+        Assert.Equal(
+            InteractionSessionAcquireResult.CapacityReached,
+            sessions.Acquire(11, 21, out var blockedLease));
         Assert.Null(blockedLease);
 
         firstLease!.Dispose();
 
-        Assert.True(sessions.TryAcquire(11, 21, out var secondLease));
+        Assert.Equal(
+            InteractionSessionAcquireResult.Acquired,
+            sessions.Acquire(11, 21, out var secondLease));
         secondLease!.Dispose();
         Assert.Equal(0, sessions.ActiveCount);
     }
@@ -135,11 +147,13 @@ public class DiscordMessageWaiterTests
     public void InteractionSession_DisposeRejectsNewSessionsAndLateLeaseDisposeIsSafe()
     {
         var sessions = new BoundedInteractionSessionRegistry(1);
-        Assert.True(sessions.TryAcquire(10, 20, out var lease));
+        Assert.Equal(
+            InteractionSessionAcquireResult.Acquired,
+            sessions.Acquire(10, 20, out var lease));
 
         sessions.Dispose();
 
-        Assert.Throws<ObjectDisposedException>(() => sessions.TryAcquire(11, 21, out _));
+        Assert.Throws<ObjectDisposedException>(() => sessions.Acquire(11, 21, out _));
         lease!.Dispose();
     }
 }
