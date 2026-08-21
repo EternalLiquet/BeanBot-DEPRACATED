@@ -1,4 +1,5 @@
 using BeanBot.Configuration;
+using BeanBot.Discord.Interactions;
 using BeanBot.Hosting;
 using BeanBot.Logging;
 using BeanBot.Persistence;
@@ -41,6 +42,7 @@ internal static class Program
             builder.Services.Configure<HostOptions>(options =>
                 options.ShutdownTimeout = HostShutdownTimeout);
             builder.Services.AddBeanBot(builder.Configuration);
+            builder.Services.AddBeanBotInteractions();
             builder.Services.AddSerilog((services, loggerConfiguration) =>
                 LogHandler.ConfigureLogger(
                     loggerConfiguration,
