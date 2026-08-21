@@ -56,8 +56,16 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
     internal async Task InvokeRoleSettingsAsync()
     {
         var messagesInInteraction = new List<IMessage> { Context.Message };
+        IDisposable? interactionSession = null;
         try
         {
+            if (!_messageWaiter.TryAcquireInteractionSession(Context, out interactionSession))
+            {
+                messagesInInteraction.Add(await ReplyAsync(
+                    "A role setup is already active for you in this channel. Finish it before starting another."));
+                return;
+            }
+
             var roleEmotePairs = new List<RoleEmotePair>();
             messagesInInteraction.Add(await ReplyAsync($"How many roles do you wish to configure? (1-{MaximumRolesPerGroup})"));
             var amountMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
@@ -119,6 +127,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         }
         finally
         {
+            interactionSession?.Dispose();
             await CleanUpMessagesAsync(messagesInInteraction);
         }
     }
