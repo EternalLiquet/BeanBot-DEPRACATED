@@ -56,8 +56,17 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
     internal async Task InvokeRoleSettingsAsync()
     {
         var messagesInInteraction = new List<IMessage> { Context.Message };
+        IDisposable? interactionSession = null;
         try
         {
+            var sessionResult = _messageWaiter.AcquireInteractionSession(Context, out interactionSession);
+            var sessionFailureMessage = GetInteractionSessionFailureMessage(sessionResult);
+            if (sessionFailureMessage is not null)
+            {
+                messagesInInteraction.Add(await ReplyAsync(sessionFailureMessage));
+                return;
+            }
+
             var roleEmotePairs = new List<RoleEmotePair>();
             messagesInInteraction.Add(await ReplyAsync($"How many roles do you wish to configure? (1-{MaximumRolesPerGroup})"));
             var amountMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
@@ -119,8 +128,22 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         }
         finally
         {
+            interactionSession?.Dispose();
             await CleanUpMessagesAsync(messagesInInteraction);
         }
+    }
+
+    internal static string? GetInteractionSessionFailureMessage(InteractionSessionAcquireResult result)
+    {
+        return result switch
+        {
+            InteractionSessionAcquireResult.Acquired => null,
+            InteractionSessionAcquireResult.AlreadyActive =>
+                "A role setup is already active for you in this channel. Finish it before starting another.",
+            InteractionSessionAcquireResult.CapacityReached =>
+                "Bean Bot is already handling the maximum number of interactive setup sessions. Try again shortly.",
+            _ => throw new ArgumentOutOfRangeException(nameof(result), result, null)
+        };
     }
 
     private async Task<IUserMessage> CreateRoleMessageAsync(IEnumerable<RoleEmotePair> roleEmotePairs, string roleGroupLabel)

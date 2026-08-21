@@ -1,4 +1,4 @@
-﻿using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using BeanBot.Discord;
 using BeanBot.Discord.Commands;
@@ -13,6 +13,21 @@ namespace BeanBot.Discord.Events;
 
 public sealed class CommandHandler : IDisposable
 {
+    internal enum CommandPrefixKind
+    {
+        None,
+        Succ,
+        Mention,
+        Percent
+    }
+
+    internal enum CommandMessageRoute
+    {
+        Ignore,
+        PublishToMessageWaiter,
+        ExecuteCommand
+    }
+
     private readonly DiscordSocketClient _discordClient;
     private readonly CommandService _commandService;
     private readonly IServiceProvider _services;
@@ -62,19 +77,19 @@ public sealed class CommandHandler : IDisposable
             _commandService.CommandExecuted -= _logHandler.LogCommands;
             _initialized = false;
         }
-
     }
 
     internal async Task HandleCommandAsync(SocketMessage messageEvent)
     {
-        _messageWaiter.TryPublish(messageEvent);
         var discordMessage = messageEvent as SocketUserMessage;
         if (MessageIsSystemMessage(discordMessage))
         {
-            return; //Return and ignore if the message is a discord system message
+            return; // Return and ignore if the message is a Discord system message.
         }
 
-        int argPos = 0;
+        var argPos = 0;
+        var commandPrefix = GetCommandPrefix(discordMessage, ref argPos);
+
         if (discordMessage.Author.Id == BotOwner.DiscordUserId &&
             discordMessage.Content.Contains("queue8", StringComparison.OrdinalIgnoreCase))
         {
@@ -82,10 +97,20 @@ public sealed class CommandHandler : IDisposable
                 discordMessage.Author.Id,
                 discordMessage.Content.Contains("yes", StringComparison.OrdinalIgnoreCase));
         }
-        if (!MessageHasCommandPrefix(discordMessage, ref argPos) ||
-            messageEvent.Author.IsBot)
+
+        var route = ResolveMessageRoute(
+            isSystemMessage: false,
+            messageEvent.Author.IsBot,
+            commandPrefix);
+        if (route == CommandMessageRoute.PublishToMessageWaiter)
         {
-            return; //Return and ignore if the discord message does not have the command prefixes or if the author of the message is a bot
+            _messageWaiter.TryPublish(messageEvent);
+            return;
+        }
+
+        if (route == CommandMessageRoute.Ignore)
+        {
+            return;
         }
 
         var context = new SocketCommandContext(_discordClient, discordMessage);
@@ -95,14 +120,38 @@ public sealed class CommandHandler : IDisposable
             services: _services);
     }
 
-    internal bool MessageHasCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
+    internal CommandPrefixKind GetCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
     {
-        return (discordMessage.HasStringPrefix("succ ", ref argPos, StringComparison.OrdinalIgnoreCase) ||
-                        discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos) ||
-                        discordMessage.HasCharPrefix('%', ref argPos));
+        if (discordMessage.HasStringPrefix("succ ", ref argPos, StringComparison.OrdinalIgnoreCase))
+        {
+            return CommandPrefixKind.Succ;
+        }
+
+        if (discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos))
+        {
+            return CommandPrefixKind.Mention;
+        }
+
+        return discordMessage.HasCharPrefix('%', ref argPos)
+            ? CommandPrefixKind.Percent
+            : CommandPrefixKind.None;
+    }
+
+    internal static CommandMessageRoute ResolveMessageRoute(
+        bool isSystemMessage,
+        bool isBot,
+        CommandPrefixKind commandPrefix)
+    {
+        if (isSystemMessage || isBot)
+        {
+            return CommandMessageRoute.Ignore;
+        }
+
+        return commandPrefix == CommandPrefixKind.None
+            ? CommandMessageRoute.PublishToMessageWaiter
+            : CommandMessageRoute.ExecuteCommand;
     }
 
     internal static bool MessageIsSystemMessage([NotNullWhen(false)] SocketUserMessage? discordMessage)
         => discordMessage == null;
-
 }
