@@ -59,10 +59,18 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         IDisposable? interactionSession = null;
         try
         {
-            if (!_messageWaiter.TryAcquireInteractionSession(Context, out interactionSession))
+            var sessionResult = _messageWaiter.AcquireInteractionSession(Context, out interactionSession);
+            if (sessionResult == InteractionSessionAcquireResult.AlreadyActive)
             {
                 messagesInInteraction.Add(await ReplyAsync(
                     "A role setup is already active for you in this channel. Finish it before starting another."));
+                return;
+            }
+
+            if (sessionResult == InteractionSessionAcquireResult.CapacityReached)
+            {
+                messagesInInteraction.Add(await ReplyAsync(
+                    "Bean Bot is already handling the maximum number of interactive setup sessions. Try again shortly."));
                 return;
             }
 
