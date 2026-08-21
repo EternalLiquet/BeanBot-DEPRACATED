@@ -96,10 +96,9 @@ internal sealed class BoundedInteractionSessionRegistry : IDisposable
 
         lock (_syncRoot)
         {
-            if (Volatile.Read(ref _disposed) != 0)
-            {
-                throw new ObjectDisposedException(nameof(BoundedInteractionSessionRegistry));
-            }
+            ObjectDisposedException.ThrowIf(
+                Volatile.Read(ref _disposed) != 0,
+                this);
 
             var key = new InteractionSessionKey(userId, channelId);
             if (_activeSessions.ContainsKey(key))
