@@ -677,11 +677,7 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
         var normalized = string.Join(' ', name.Split(
             (char[]?)null,
             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-        if (normalized.Length > 40)
-        {
-            normalized = normalized[..39] + "…";
-        }
-
+        normalized = RoleMenuText.TruncateWithEllipsis(normalized, 40);
         return normalized.Replace("`", "ʼ", StringComparison.Ordinal);
     }
 

@@ -105,9 +105,9 @@ internal static class RoleMenuComponents
             .ToList();
         var conflictingSingleSelection = settings.SelectionMode == RoleMenuSelectionMode.Single
             && currentConfiguredRoleIds.Count > 1;
-        var defaultRoleIds = conflictingSingleSelection
-            ? currentConfiguredRoleIds.Take(1).ToHashSet()
-            : currentConfiguredRoleIds.ToHashSet();
+        HashSet<ulong> defaultRoleIds = conflictingSingleSelection
+            ? [currentConfiguredRoleIds[0]]
+            : [.. currentConfiguredRoleIds];
 
         var selector = new SelectMenuBuilder()
             .WithCustomId(RoleMenuCustomIds.Save(settings.Id, userId, parsed.MessageId))
@@ -155,13 +155,15 @@ internal static class RoleMenuComponents
                 ? "Unknown creation date"
                 : menu.CreatedAtUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             selector.AddOption(
-                Truncate(
+                RoleMenuText.TruncateWithEllipsis(
                     string.IsNullOrWhiteSpace(menu.Title)
                         ? "Untitled or stale role menu"
                         : menu.Title,
                     SelectMenuOptionBuilder.MaxSelectLabelLength),
                 menu.Id.ToString(),
-                Truncate($"{mode} • {date}", SelectMenuOptionBuilder.MaxDescriptionLength));
+                RoleMenuText.TruncateWithEllipsis(
+                    $"{mode} • {date}",
+                    SelectMenuOptionBuilder.MaxDescriptionLength));
         }
 
         return new ComponentBuilder().WithSelectMenu(selector).Build();
@@ -201,15 +203,5 @@ internal static class RoleMenuComponents
                 button.CustomId,
                 expectedCustomId,
                 StringComparison.Ordinal));
-    }
-
-    private static string Truncate(string value, int maximumLength)
-    {
-        if (value.Length <= maximumLength)
-        {
-            return value;
-        }
-
-        return value[..(maximumLength - 1)] + "…";
     }
 }

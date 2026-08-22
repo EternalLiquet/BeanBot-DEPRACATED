@@ -1569,7 +1569,8 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         MessageComponent components)
     {
         properties.Content = content;
-        properties.Embeds = embed is null ? Array.Empty<Embed>() : new[] { embed };
+        Embed[] embeds = embed is null ? [] : [embed];
+        properties.Embeds = embeds;
         properties.Components = components;
         properties.AllowedMentions = AllowedMentions.None;
     }

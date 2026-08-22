@@ -121,9 +121,9 @@ public class RoleMenuRepositoryTests
         public Func<RoleMenuSettings, CancellationToken, Task> Upsert { get; init; }
             = (_, _) => Task.CompletedTask;
         public Func<ObjectId, string, CancellationToken, Task<RoleMenuSettings?>> GetById
-            { get; init; } = (_, _, _) => Task.FromResult<RoleMenuSettings?>(null);
+        { get; init; } = (_, _, _) => Task.FromResult<RoleMenuSettings?>(null);
         public Func<string, int, CancellationToken, Task<List<RoleMenuSettings>>> GetByGuild
-            { get; init; } = (_, _, _) => Task.FromResult(new List<RoleMenuSettings>());
+        { get; init; } = (_, _, _) => Task.FromResult(new List<RoleMenuSettings>());
         public Func<ObjectId, string, CancellationToken, Task<bool>> Delete { get; init; }
             = (_, _, _) => Task.FromResult(false);
 

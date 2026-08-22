@@ -31,9 +31,9 @@ public class RoleMenuInteractionMetadataTests
     [Fact]
     public void CreateModal_UsesNativeBoundedRoleAndTextChannelSelectors()
     {
-        var roles = Assert.IsType<PropertyInfo>(
+        var roles = Assert.IsAssignableFrom<PropertyInfo>(
             typeof(RoleMenuCreateModal).GetProperty(nameof(RoleMenuCreateModal.Roles)));
-        var channel = Assert.IsType<PropertyInfo>(
+        var channel = Assert.IsAssignableFrom<PropertyInfo>(
             typeof(RoleMenuCreateModal).GetProperty(nameof(RoleMenuCreateModal.TargetChannel)));
 
         var roleSelector = roles.GetCustomAttribute<ModalRoleSelectAttribute>();
@@ -53,7 +53,7 @@ public class RoleMenuInteractionMetadataTests
     [Fact]
     public void SelectionMode_IsNativeRadioGroupWithSingleAndMultipleChoices()
     {
-        var property = Assert.IsType<PropertyInfo>(
+        var property = Assert.IsAssignableFrom<PropertyInfo>(
             typeof(RoleMenuCreateModal).GetProperty(nameof(RoleMenuCreateModal.SelectionMode)));
 
         Assert.NotNull(property.GetCustomAttribute<ModalRadioGroupAttribute>());

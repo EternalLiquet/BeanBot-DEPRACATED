@@ -86,14 +86,14 @@ internal sealed class RoleMenuMutationCoordinator
         }
     }
 
-    private readonly AsyncReaderWriterStripe[] _menuLifecycles = Enumerable
-        .Range(0, StripeCount)
-        .Select(_ => new AsyncReaderWriterStripe())
-        .ToArray();
-    private readonly SemaphoreSlim[] _members = Enumerable
-        .Range(0, StripeCount)
-        .Select(_ => new SemaphoreSlim(1, 1))
-        .ToArray();
+    private readonly AsyncReaderWriterStripe[] _menuLifecycles =
+    [
+        .. Enumerable.Range(0, StripeCount).Select(_ => new AsyncReaderWriterStripe())
+    ];
+    private readonly SemaphoreSlim[] _members =
+    [
+        .. Enumerable.Range(0, StripeCount).Select(_ => new SemaphoreSlim(1, 1))
+    ];
 
     internal async Task<T> RunMenuWriteAsync<T>(
         string menuKey,
