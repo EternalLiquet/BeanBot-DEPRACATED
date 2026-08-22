@@ -19,36 +19,6 @@ namespace BeanBot.Discord.RoleMenus;
 [DefaultMemberPermissions(GuildPermission.ManageRoles)]
 public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractionContext>
 {
-    private enum PanelDeletionStatus
-    {
-        DeletedOrMissing,
-        UnexpectedMessage,
-        Failed,
-        OutcomeUnknown
-    }
-
-    private enum ConfigurationDeletionStatus
-    {
-        Deleted,
-        AlreadyMissing,
-        Kept,
-        OutcomeUnknown
-    }
-
-    private sealed record PanelDeletionResult(
-        PanelDeletionStatus Status,
-        Exception? Exception = null);
-
-    private sealed record MenuDeletionResult(
-        ConfigurationDeletionStatus ConfigurationStatus,
-        PanelDeletionStatus PanelStatus,
-        bool AuthorizationDenied = false,
-        Exception? Exception = null);
-
-    private sealed record PersistenceReconciliationResult(
-        bool ReadSucceeded,
-        RoleMenuSettings? Settings);
-
     private readonly RoleMenuInteractionService _roleMenuService;
     private readonly ILogger<RoleMenuAdminModule> _logger;
 
@@ -533,7 +503,7 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
             return;
         }
 
-        MenuDeletionResult result;
+        RoleMenuDeletionResult result;
         var mutationStarted = false;
         try
         {
@@ -578,35 +548,35 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         {
             { AuthorizationDenied: true } =>
                 "You no longer have the **Manage Roles** permission required to delete role menus.",
-            { PanelStatus: PanelDeletionStatus.Failed } =>
+            { PanelStatus: RoleMenuPanelDeletionStatus.Failed } =>
                 "The published panel is still present, so its saved configuration was kept. Fix " +
                 "the channel permissions and retry.",
-            { PanelStatus: PanelDeletionStatus.OutcomeUnknown } =>
+            { PanelStatus: RoleMenuPanelDeletionStatus.OutcomeUnknown } =>
                 "Bean Bot couldn't confirm whether the published panel was deleted, so its saved " +
                 "configuration was kept. Retry this command to finish cleanup safely.",
             {
-                PanelStatus: PanelDeletionStatus.UnexpectedMessage,
-                ConfigurationStatus: ConfigurationDeletionStatus.Kept
+                PanelStatus: RoleMenuPanelDeletionStatus.UnexpectedMessage,
+                ConfigurationStatus: RoleMenuConfigurationDeletionStatus.Kept
             } =>
                 "The referenced message no longer looked like Bean Bot's panel and was left " +
                 "untouched, but the saved configuration could not be deleted. Retry to finish cleanup.",
             {
-                PanelStatus: PanelDeletionStatus.UnexpectedMessage,
-                ConfigurationStatus: ConfigurationDeletionStatus.OutcomeUnknown
+                PanelStatus: RoleMenuPanelDeletionStatus.UnexpectedMessage,
+                ConfigurationStatus: RoleMenuConfigurationDeletionStatus.OutcomeUnknown
             } =>
                 "The referenced message no longer looked like Bean Bot's panel and was left " +
                 "untouched. Bean Bot couldn't confirm whether the saved configuration was deleted; " +
                 "run this command again to check.",
-            { PanelStatus: PanelDeletionStatus.UnexpectedMessage } =>
+            { PanelStatus: RoleMenuPanelDeletionStatus.UnexpectedMessage } =>
                 "The saved configuration was deleted, but the referenced message no longer looked like " +
                 "Bean Bot's panel and was left untouched.",
-            { ConfigurationStatus: ConfigurationDeletionStatus.Kept } =>
+            { ConfigurationStatus: RoleMenuConfigurationDeletionStatus.Kept } =>
                 "The published panel is gone, but Bean Bot couldn't delete the saved configuration. " +
                 "Retry this command to finish cleanup.",
-            { ConfigurationStatus: ConfigurationDeletionStatus.OutcomeUnknown } =>
+            { ConfigurationStatus: RoleMenuConfigurationDeletionStatus.OutcomeUnknown } =>
                 "The published panel is gone, but Bean Bot couldn't confirm whether its saved " +
                 "configuration was deleted. Run this command again to check.",
-            { ConfigurationStatus: ConfigurationDeletionStatus.AlreadyMissing } =>
+            { ConfigurationStatus: RoleMenuConfigurationDeletionStatus.AlreadyMissing } =>
                 "That role menu was already deleted.",
             _ => "Role menu and saved configuration deleted."
         };
@@ -975,319 +945,208 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         ulong administratorId,
         CancellationToken cancellationToken)
     {
-        var menuId = draft.MenuId;
-        var requestOptions = CreateRequestOptions(cancellationToken);
-        var existingSettings = await _roleMenuService.GetAsync(
-            menuId,
-            guildId,
-            cancellationToken);
-        var panel = await FindExistingPanelAsync(
-            targetChannel,
-            existingSettings,
-            menuId,
-            botUserId,
-            requestOptions);
-        if (panel is null)
-        {
-            try
-            {
-                panel = await targetChannel.SendMessageAsync(
-                    embed: RoleMenuComponents.BuildPublicEmbed(
-                        menuId,
-                        draft.Title,
-                        draft.Description,
-                        draft.SelectionMode),
-                    options: requestOptions,
-                    allowedMentions: AllowedMentions.None,
-                    components: RoleMenuComponents.BuildPublicComponents(menuId));
-            }
-            catch (Exception exception)
-            {
-                BeanBotLog.RoleMenuPublicationFailed(_logger, menuId.ToString(), exception);
-                panel = await TryReconcilePanelAsync(
-                    targetChannel,
-                    existingSettings,
-                    menuId,
-                    botUserId);
-                if (panel is null)
-                {
-                    _roleMenuService.CompletePublish(draft.Id, guildId, administratorId);
-                    await SendTerminalPublicationFeedbackAsync(
-                        menuId,
-                        "Discord reported an error while publishing, and Bean Bot could not " +
-                        "confirm whether a panel was created. Automatic retry was disabled to " +
-                        "prevent a duplicate. Check the target channel and remove any orphaned " +
-                        "panel before running `/role-menu create` again.");
-                    return null;
-                }
-            }
-        }
-
-        var publishedPanel = panel
-            ?? throw new InvalidOperationException(
-                "Role-menu publication did not produce a panel to persist.");
-        var settings = RoleMenuPublicationSettings.Create(
+        var result = await RoleMenuPublicationWorkflow.ExecuteAsync(
             draft,
-            publishedPanel.Id,
-            existingSettings?.CreatedAtUtc ?? default);
-        var persistenceCommitted = false;
-        try
+            botUserId,
+            CreatePublicationOperations(targetChannel, draft.MenuId),
+            cancellationToken);
+        if (result.Status == RoleMenuPublicationStatus.Published)
         {
-            await _roleMenuService.UpsertAsync(settings, cancellationToken);
-            persistenceCommitted = true;
+            _roleMenuService.CompletePublish(draft.Id, guildId, administratorId);
+            return result.MessageId
+                   ?? throw new InvalidOperationException(
+                       "A published role menu did not return its panel message ID.");
         }
-        catch (Exception exception)
+
+        if (result.CanRetry)
         {
-            BeanBotLog.RoleMenuPublicationFailed(_logger, menuId.ToString(), exception);
-            var persistence = await TryReconcilePersistenceAsync(
-                menuId,
-                guildId,
+            await RestorePreviewFreshAsync(
                 draft,
-                publishedPanel.Id);
-            persistenceCommitted = persistence.ReadSucceeded
-                && RoleMenuPublicationSettings.Matches(
-                    persistence.Settings,
-                    draft,
-                    publishedPanel.Id);
-            if (!persistenceCommitted && persistence.ReadSucceeded
-                && persistence.Settings is null)
-            {
-                var rollbackSucceeded = await TryRollbackPanelBoundedAsync(
-                    publishedPanel,
-                    menuId);
-                if (rollbackSucceeded)
-                {
-                    await RestorePreviewFreshAsync(
-                        draft,
-                        roles,
-                        "Bean Bot confirmed the settings were not saved and removed the panel. " +
-                        "You can retry this preview safely.");
-                }
-                else
-                {
-                    _roleMenuService.CompletePublish(draft.Id, guildId, administratorId);
-                    await SendTerminalPublicationFeedbackAsync(
-                        menuId,
-                        "Bean Bot confirmed the settings were not saved but could not remove the " +
-                        "panel. Automatic retry was disabled to prevent a duplicate. Delete that " +
-                        "orphaned panel manually before running `/role-menu create` again.");
-                }
-
-                return null;
-            }
-
-            if (!persistenceCommitted)
-            {
-                _roleMenuService.CompletePublish(draft.Id, guildId, administratorId);
-                await SendTerminalPublicationFeedbackAsync(
-                    menuId,
-                    "Bean Bot could not confirm whether MongoDB saved this panel. The public " +
-                    "panel was left in place to avoid deleting a possibly committed menu, and " +
-                    "automatic retry was disabled to prevent a duplicate. Inspect the target " +
-                    "channel before running `/role-menu create` again.");
-                return null;
-            }
+                roles,
+                "Bean Bot confirmed the settings were not saved and removed the panel. " +
+                "You can retry this preview safely.");
+            return null;
         }
 
         _roleMenuService.CompletePublish(draft.Id, guildId, administratorId);
-        return publishedPanel.Id;
+        BeanBotLog.RoleMenuConfigurationInvalid(
+            _logger,
+            draft.MenuId.ToString(),
+            $"publication ended in terminal state {result.Status}");
+        var message = result.Status switch
+        {
+            RoleMenuPublicationStatus.PanelOutcomeUnknown =>
+                "Discord reported an error while publishing, and Bean Bot could not confirm " +
+                "whether a panel was created. Automatic retry was disabled to prevent a duplicate. " +
+                "Check the target channel and remove any orphaned panel before running " +
+                "`/role-menu create` again.",
+            RoleMenuPublicationStatus.PersistenceAbsentRollbackFailed =>
+                "Bean Bot confirmed the settings were not saved but could not remove the panel. " +
+                "Automatic retry was disabled to prevent a duplicate. Delete that orphaned panel " +
+                "manually before running `/role-menu create` again.",
+            _ =>
+                "Bean Bot could not confirm whether MongoDB saved this panel. The public panel was " +
+                "left in place to avoid deleting a possibly committed menu, and automatic retry " +
+                "was disabled to prevent a duplicate. Inspect the target channel before running " +
+                "`/role-menu create` again."
+        };
+        await SendTerminalPublicationFeedbackAsync(draft.MenuId, message);
+        return null;
     }
 
-    private static async Task<IUserMessage?> FindExistingPanelAsync(
+    private RoleMenuPublicationOperations CreatePublicationOperations(
         ITextChannel targetChannel,
-        RoleMenuSettings? existingSettings,
+        ObjectId menuId)
+        => new(
+            (id, guildId, cancellationToken) => _roleMenuService.GetAsync(
+                id,
+                guildId,
+                cancellationToken),
+            (channelId, messageId, cancellationToken) =>
+                ReadPublicationPanelAsync(
+                    targetChannel,
+                    channelId,
+                    messageId,
+                    menuId,
+                    cancellationToken),
+            (channelId, maximumResults, cancellationToken) =>
+                ReadRecentPublicationPanelsAsync(
+                    targetChannel,
+                    channelId,
+                    maximumResults,
+                    menuId,
+                    cancellationToken),
+            (draft, cancellationToken) => SendPublicationPanelAsync(
+                targetChannel,
+                draft,
+                cancellationToken),
+            (settings, cancellationToken) =>
+                _roleMenuService.UpsertAsync(settings, cancellationToken),
+            (panel, cancellationToken) => RollbackPublicationPanelAsync(
+                targetChannel,
+                panel,
+                menuId,
+                cancellationToken));
+
+    private static async Task<RoleMenuPanelSnapshot?> ReadPublicationPanelAsync(
+        ITextChannel targetChannel,
+        ulong channelId,
+        ulong messageId,
         ObjectId menuId,
-        ulong botUserId,
-        RequestOptions requestOptions)
+        CancellationToken cancellationToken)
     {
-        if (existingSettings is not null
-            && RoleMenuCustomIds.TryParseSnowflake(
-                existingSettings.ChannelId,
-                out var existingChannelId)
-            && existingChannelId == targetChannel.Id
-            && RoleMenuCustomIds.TryParseSnowflake(
-                existingSettings.MessageId,
-                out var existingMessageId))
+        if (targetChannel.Id != channelId)
         {
-            try
-            {
-                var exactMessage = await targetChannel.GetMessageAsync(
-                    existingMessageId,
-                    CacheMode.AllowDownload,
-                    requestOptions);
-                if (exactMessage is IUserMessage exactPanel
-                    && IsExpectedPanel(exactPanel, menuId, botUserId))
-                {
-                    return exactPanel;
-                }
-            }
-            catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
-            {
-                // Fall through to the bounded recent-message reconciliation scan.
-            }
+            return null;
         }
 
-        var recentMessages = await targetChannel
-            .GetMessagesAsync(
-                RoleMenuConstants.PanelReconciliationSearchLimit,
-                CacheMode.AllowDownload,
-                requestOptions)
-            .FlattenAsync();
-        return recentMessages
-            .OfType<IUserMessage>()
-            .FirstOrDefault(message => IsExpectedPanel(message, menuId, botUserId));
-    }
-
-    private async Task<IUserMessage?> TryReconcilePanelAsync(
-        ITextChannel targetChannel,
-        RoleMenuSettings? existingSettings,
-        ObjectId menuId,
-        ulong botUserId)
-    {
-        using var cleanupCancellation = new CancellationTokenSource(
-            RoleMenuConstants.CleanupTimeout);
         try
         {
-            return await FindExistingPanelAsync(
-                targetChannel,
-                existingSettings,
-                menuId,
-                botUserId,
-                CreateRequestOptions(cleanupCancellation.Token));
+            var message = await targetChannel.GetMessageAsync(
+                messageId,
+                CacheMode.AllowDownload,
+                CreateRequestOptions(cancellationToken));
+            return message is IUserMessage userMessage
+                ? CreatePanelSnapshot(targetChannel, userMessage, menuId)
+                : null;
         }
-        catch (Exception exception)
+        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
         {
-            BeanBotLog.RoleMenuPanelReconciliationFailed(
-                _logger,
-                menuId.ToString(),
-                exception);
             return null;
         }
     }
 
-    private async Task<PersistenceReconciliationResult> TryReconcilePersistenceAsync(
-        ObjectId menuId,
-        ulong guildId,
+    private static async Task<IReadOnlyList<RoleMenuPanelSnapshot>>
+        ReadRecentPublicationPanelsAsync(
+            ITextChannel targetChannel,
+            ulong channelId,
+            int maximumResults,
+            ObjectId menuId,
+            CancellationToken cancellationToken)
+    {
+        if (targetChannel.Id != channelId)
+        {
+            return [];
+        }
+
+        var messages = await targetChannel
+            .GetMessagesAsync(
+                maximumResults,
+                CacheMode.AllowDownload,
+                CreateRequestOptions(cancellationToken))
+            .FlattenAsync();
+        return messages
+            .OfType<IUserMessage>()
+            .Select(message => CreatePanelSnapshot(targetChannel, message, menuId))
+            .ToList();
+    }
+
+    private static async Task<RoleMenuPanelSnapshot> SendPublicationPanelAsync(
+        ITextChannel targetChannel,
         RoleMenuDraft draft,
-        ulong panelMessageId)
+        CancellationToken cancellationToken)
     {
-        using var cleanupCancellation = new CancellationTokenSource(
-            RoleMenuConstants.CleanupTimeout);
-        try
-        {
-            var settings = await _roleMenuService.GetAsync(
-                menuId,
-                guildId,
-                cleanupCancellation.Token);
-            if (settings is not null
-                && !RoleMenuPublicationSettings.Matches(
-                    settings,
-                    draft,
-                    panelMessageId))
-            {
-                BeanBotLog.RoleMenuConfigurationInvalid(
-                    _logger,
-                    menuId.ToString(),
-                    "persisted publication did not match the attempted configuration");
-            }
-
-            return new PersistenceReconciliationResult(true, settings);
-        }
-        catch (Exception exception)
-        {
-            BeanBotLog.RoleMenuPersistenceReconciliationFailed(
-                _logger,
-                menuId.ToString(),
-                exception);
-            return new PersistenceReconciliationResult(false, null);
-        }
+        var message = await targetChannel.SendMessageAsync(
+            embed: RoleMenuComponents.BuildPublicEmbed(
+                draft.MenuId,
+                draft.Title,
+                draft.Description,
+                draft.SelectionMode),
+            options: CreateRequestOptions(cancellationToken),
+            allowedMentions: AllowedMentions.None,
+            components: RoleMenuComponents.BuildPublicComponents(draft.MenuId));
+        return CreatePanelSnapshot(targetChannel, message, draft.MenuId);
     }
 
-    private async Task<bool> TryRollbackPanelBoundedAsync(
-        IUserMessage panel,
-        ObjectId menuId)
-    {
-        using var cleanupCancellation = new CancellationTokenSource(
-            RoleMenuConstants.CleanupTimeout);
-        return await TryRollbackPanelAsync(
-            panel,
-            menuId,
-            cleanupCancellation.Token);
-    }
-
-    private async Task TrySendPublicationConfirmationAsync(
-        ulong guildId,
-        ulong channelId,
-        ulong messageId,
-        ObjectId menuId,
-        CancellationToken operationCancellationToken)
-    {
-        var content = $"Role menu published: {CreateMessageUrl(guildId, channelId, messageId)}";
-        if (!operationCancellationToken.IsCancellationRequested)
-        {
-            try
-            {
-                await ReplaceResponseAsync(content, operationCancellationToken);
-                return;
-            }
-            catch (Exception exception)
-            {
-                BeanBotLog.RoleMenuPublicationConfirmationFailed(
-                    _logger,
-                    menuId.ToString(),
-                    exception);
-            }
-        }
-
-        if (_roleMenuService.IsShuttingDown)
-        {
-            return;
-        }
-
-        using var feedbackCancellation = _roleMenuService.CreateFeedbackCancellation();
-        try
-        {
-            await ReplaceResponseAsync(content, feedbackCancellation.Token);
-        }
-        catch (Exception exception)
-        {
-            BeanBotLog.RoleMenuPublicationConfirmationFailed(
-                _logger,
-                menuId.ToString(),
-                exception);
-        }
-    }
-
-    private static bool IsExpectedPanel(
-        IUserMessage message,
-        ObjectId menuId,
-        ulong botUserId)
-        => message.Author.Id == botUserId
-           && RoleMenuComponents.HasManageButton(message, menuId);
-
-    private async Task<bool> TryRollbackPanelAsync(
-        IUserMessage panel,
+    private static async Task<bool> RollbackPublicationPanelAsync(
+        ITextChannel targetChannel,
+        RoleMenuPanelSnapshot panel,
         ObjectId menuId,
         CancellationToken cancellationToken)
     {
+        if (panel.GuildId != targetChannel.GuildId
+            || panel.ChannelId != targetChannel.Id
+            || !panel.HasManageButton)
+        {
+            return false;
+        }
+
         try
         {
-            await panel.DeleteAsync(CreateRequestOptions(cancellationToken));
+            var message = await targetChannel.GetMessageAsync(
+                panel.MessageId,
+                CacheMode.AllowDownload,
+                CreateRequestOptions(cancellationToken));
+            if (message is null)
+            {
+                return true;
+            }
+
+            if (message.Author.Id != panel.AuthorId
+                || !RoleMenuComponents.HasManageButton(message, menuId))
+            {
+                return false;
+            }
+
+            await message.DeleteAsync(CreateRequestOptions(cancellationToken));
             return true;
         }
         catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
         {
             return true;
         }
-        catch (Exception exception)
-        {
-            BeanBotLog.RoleMenuPublicationRollbackFailed(
-                _logger,
-                menuId.ToString(),
-                exception);
-            return false;
-        }
     }
+
+    private static RoleMenuPanelSnapshot CreatePanelSnapshot(
+        ITextChannel channel,
+        IUserMessage message,
+        ObjectId menuId)
+        => new(
+            channel.GuildId,
+            channel.Id,
+            message.Id,
+            message.Author.Id,
+            RoleMenuComponents.HasManageButton(message, menuId));
 
     private async Task ShowDeleteConfirmationAsync(
         RoleMenuSettings settings,
@@ -1300,7 +1159,7 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
                 Context.User.Id,
                 settings.Id));
 
-    private async Task<MenuDeletionResult> DeleteMenuCoreAsync(
+    private async Task<RoleMenuDeletionResult> DeleteMenuCoreAsync(
         ObjectId menuId,
         SocketGuild guild,
         SocketGuildUser bot,
@@ -1311,242 +1170,161 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
             guild.Id,
             administratorId,
             CreateRequestOptions(cancellationToken));
-        if (currentAdministrator is null
-            || !currentAdministrator.GuildPermissions.ManageRoles)
-        {
-            return new MenuDeletionResult(
-                ConfigurationDeletionStatus.Kept,
-                PanelDeletionStatus.DeletedOrMissing,
-                AuthorizationDenied: true);
-        }
-
-        var settings = await _roleMenuService.GetAsync(menuId, guild.Id, cancellationToken);
-        if (settings is null)
-        {
-            return new MenuDeletionResult(
-                ConfigurationDeletionStatus.AlreadyMissing,
-                PanelDeletionStatus.DeletedOrMissing);
-        }
-
-        var panelResult = await DeletePanelAsync(settings, guild, bot, cancellationToken);
-        if (panelResult.Status is PanelDeletionStatus.Failed
-            or PanelDeletionStatus.OutcomeUnknown)
+        var result = await RoleMenuDeletionWorkflow.ExecuteAsync(
+            menuId,
+            guild.Id,
+            bot.Id,
+            currentAdministrator?.GuildPermissions.ManageRoles == true,
+            CreateDeletionOperations(guild, menuId),
+            cancellationToken);
+        if (result.PanelStatus is RoleMenuPanelDeletionStatus.Failed
+            or RoleMenuPanelDeletionStatus.OutcomeUnknown)
         {
             BeanBotLog.RoleMenuPanelDeletionFailed(
                 _logger,
                 menuId.ToString(),
-                panelResult.Exception!);
-            return new MenuDeletionResult(
-                ConfigurationDeletionStatus.Kept,
-                panelResult.Status,
-                Exception: panelResult.Exception);
+                result.Exception ?? new InvalidOperationException(
+                    $"Panel deletion stopped with issue {result.PanelIssue}."));
         }
-
-        try
-        {
-            var deleted = await _roleMenuService.DeleteAsync(
-                menuId,
-                guild.Id,
-                cancellationToken);
-            return new MenuDeletionResult(
-                deleted
-                    ? ConfigurationDeletionStatus.Deleted
-                    : ConfigurationDeletionStatus.AlreadyMissing,
-                panelResult.Status);
-        }
-        catch (OperationCanceledException) when (_roleMenuService.IsShuttingDown)
-        {
-            BeanBotLog.RoleMenuDeletionInterrupted(
-                _logger,
-                menuId.ToString(),
-                "saved configuration deletion",
-                $"panel state: {panelResult.Status}; configuration outcome unknown");
-            throw;
-        }
-        catch (Exception exception)
+        else if (result.Exception is not null)
         {
             BeanBotLog.RoleMenuPersistenceDeletionFailed(
                 _logger,
                 menuId.ToString(),
-                exception);
-            var configurationStatus = await TryReconcileConfigurationDeletionAsync(
-                menuId,
-                guild.Id);
-            return new MenuDeletionResult(
-                configurationStatus,
-                panelResult.Status,
-                Exception: exception);
+                result.Exception);
         }
+
+        return result;
     }
 
-    private async Task<PanelDeletionResult> DeletePanelAsync(
-        RoleMenuSettings settings,
+    private RoleMenuDeletionOperations CreateDeletionOperations(
         SocketGuild guild,
-        SocketGuildUser bot,
+        ObjectId menuId)
+        => new(
+            (id, guildId, cancellationToken) => _roleMenuService.GetAsync(
+                id,
+                guildId,
+                cancellationToken),
+            (expectedMenuId, channelId, messageId, cancellationToken) =>
+                ReadDeletionPanelAsync(
+                    guild,
+                    expectedMenuId,
+                    channelId,
+                    messageId,
+                    cancellationToken),
+            (panel, cancellationToken) => DeleteDeletionPanelAsync(
+                guild,
+                menuId,
+                panel,
+                cancellationToken),
+            (id, guildId, cancellationToken) => _roleMenuService.DeleteAsync(
+                id,
+                guildId,
+                cancellationToken),
+            () => _roleMenuService.IsShuttingDown);
+
+    private async Task<RoleMenuPanelLookupResult> ReadDeletionPanelAsync(
+        SocketGuild guild,
+        ObjectId expectedMenuId,
+        ulong channelId,
+        ulong messageId,
         CancellationToken cancellationToken)
     {
-        if (!RoleMenuCustomIds.TryParseSnowflake(settings.ChannelId, out var channelId)
-            || !RoleMenuCustomIds.TryParseSnowflake(settings.MessageId, out var messageId))
+        var requestOptions = CreateRequestOptions(cancellationToken);
+        IChannel? channel;
+        try
         {
-            BeanBotLog.RoleMenuConfigurationInvalid(
-                _logger,
-                settings.Id.ToString(),
-                "invalid panel location");
-            return new PanelDeletionResult(PanelDeletionStatus.UnexpectedMessage);
+            channel = await Context.Client.Rest.GetChannelAsync(channelId, requestOptions);
+        }
+        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
+        {
+            return new RoleMenuPanelLookupResult(RoleMenuPanelLookupStatus.ChannelMissing);
+        }
+
+        if (channel is null)
+        {
+            return new RoleMenuPanelLookupResult(RoleMenuPanelLookupStatus.ChannelMissing);
+        }
+
+        if (channel is not ITextChannel textChannel || textChannel.GuildId != guild.Id)
+        {
+            return new RoleMenuPanelLookupResult(
+                RoleMenuPanelLookupStatus.UnexpectedChannelType);
+        }
+
+        IMessage? message;
+        try
+        {
+            message = await textChannel.GetMessageAsync(
+                messageId,
+                CacheMode.AllowDownload,
+                requestOptions);
+        }
+        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
+        {
+            return new RoleMenuPanelLookupResult(RoleMenuPanelLookupStatus.MessageMissing);
+        }
+
+        return message is null
+            ? new RoleMenuPanelLookupResult(RoleMenuPanelLookupStatus.MessageMissing)
+            : new RoleMenuPanelLookupResult(
+                RoleMenuPanelLookupStatus.Found,
+                new RoleMenuPanelSnapshot(
+                    textChannel.GuildId,
+                    textChannel.Id,
+                    message.Id,
+                    message.Author.Id,
+                    RoleMenuComponents.HasManageButton(message, expectedMenuId)));
+    }
+
+    private async Task<bool> DeleteDeletionPanelAsync(
+        SocketGuild guild,
+        ObjectId menuId,
+        RoleMenuPanelSnapshot panel,
+        CancellationToken cancellationToken)
+    {
+        if (panel.GuildId != guild.Id || !panel.HasManageButton)
+        {
+            return false;
         }
 
         var requestOptions = CreateRequestOptions(cancellationToken);
         try
         {
-            var channel = await Context.Client.Rest.GetChannelAsync(channelId, requestOptions);
+            var channel = await Context.Client.Rest.GetChannelAsync(
+                panel.ChannelId,
+                requestOptions);
             if (channel is null)
             {
-                return new PanelDeletionResult(PanelDeletionStatus.DeletedOrMissing);
+                return true;
             }
 
             if (channel is not ITextChannel textChannel || textChannel.GuildId != guild.Id)
             {
-                return new PanelDeletionResult(PanelDeletionStatus.UnexpectedMessage);
+                return false;
             }
 
             var message = await textChannel.GetMessageAsync(
-                messageId,
+                panel.MessageId,
                 CacheMode.AllowDownload,
                 requestOptions);
             if (message is null)
             {
-                return new PanelDeletionResult(PanelDeletionStatus.DeletedOrMissing);
+                return true;
             }
 
-            if (message.Author.Id != bot.Id
-                || !RoleMenuComponents.HasManageButton(message, settings.Id))
+            if (message.Author.Id != panel.AuthorId
+                || !RoleMenuComponents.HasManageButton(message, menuId))
             {
-                BeanBotLog.RoleMenuConfigurationInvalid(
-                    _logger,
-                    settings.Id.ToString(),
-                    "published message no longer matches the saved panel");
-                return new PanelDeletionResult(PanelDeletionStatus.UnexpectedMessage);
+                return false;
             }
 
             await message.DeleteAsync(requestOptions);
-            return new PanelDeletionResult(PanelDeletionStatus.DeletedOrMissing);
+            return true;
         }
         catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
         {
-            return new PanelDeletionResult(PanelDeletionStatus.DeletedOrMissing);
-        }
-        catch (OperationCanceledException) when (_roleMenuService.IsShuttingDown)
-        {
-            BeanBotLog.RoleMenuDeletionInterrupted(
-                _logger,
-                settings.Id.ToString(),
-                "published panel deletion",
-                "panel outcome unknown; saved configuration retained");
-            throw;
-        }
-        catch (Exception exception)
-        {
-            return await TryReconcilePanelDeletionAsync(
-                settings,
-                guild,
-                bot,
-                exception);
-        }
-    }
-
-    private async Task<PanelDeletionResult> TryReconcilePanelDeletionAsync(
-        RoleMenuSettings settings,
-        SocketGuild guild,
-        SocketGuildUser bot,
-        Exception deletionException)
-    {
-        using var cleanupCancellation = new CancellationTokenSource(
-            RoleMenuConstants.CleanupTimeout);
-        var requestOptions = CreateRequestOptions(cleanupCancellation.Token);
-        try
-        {
-            if (!RoleMenuCustomIds.TryParseSnowflake(settings.ChannelId, out var channelId)
-                || !RoleMenuCustomIds.TryParseSnowflake(settings.MessageId, out var messageId))
-            {
-                return new PanelDeletionResult(
-                    PanelDeletionStatus.UnexpectedMessage,
-                    deletionException);
-            }
-
-            var channel = await Context.Client.Rest.GetChannelAsync(channelId, requestOptions);
-            if (channel is null)
-            {
-                return new PanelDeletionResult(
-                    PanelDeletionStatus.DeletedOrMissing,
-                    deletionException);
-            }
-
-            if (channel is not ITextChannel textChannel || textChannel.GuildId != guild.Id)
-            {
-                return new PanelDeletionResult(
-                    PanelDeletionStatus.UnexpectedMessage,
-                    deletionException);
-            }
-
-            var message = await textChannel.GetMessageAsync(
-                messageId,
-                CacheMode.AllowDownload,
-                requestOptions);
-            if (message is null)
-            {
-                return new PanelDeletionResult(
-                    PanelDeletionStatus.DeletedOrMissing,
-                    deletionException);
-            }
-
-            return message.Author.Id == bot.Id
-                   && RoleMenuComponents.HasManageButton(message, settings.Id)
-                ? new PanelDeletionResult(PanelDeletionStatus.Failed, deletionException)
-                : new PanelDeletionResult(
-                    PanelDeletionStatus.UnexpectedMessage,
-                    deletionException);
-        }
-        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
-        {
-            return new PanelDeletionResult(
-                PanelDeletionStatus.DeletedOrMissing,
-                deletionException);
-        }
-        catch (Exception reconciliationException)
-        {
-            BeanBotLog.RoleMenuPanelDeletionReconciliationFailed(
-                _logger,
-                settings.Id.ToString(),
-                reconciliationException);
-            return new PanelDeletionResult(
-                PanelDeletionStatus.OutcomeUnknown,
-                deletionException);
-        }
-    }
-
-    private async Task<ConfigurationDeletionStatus> TryReconcileConfigurationDeletionAsync(
-        ObjectId menuId,
-        ulong guildId)
-    {
-        using var cleanupCancellation = new CancellationTokenSource(
-            RoleMenuConstants.CleanupTimeout);
-        try
-        {
-            var settings = await _roleMenuService.GetAsync(
-                menuId,
-                guildId,
-                cleanupCancellation.Token);
-            return settings is null
-                ? ConfigurationDeletionStatus.AlreadyMissing
-                : ConfigurationDeletionStatus.Kept;
-        }
-        catch (Exception exception)
-        {
-            BeanBotLog.RoleMenuDeletionReconciliationFailed(
-                _logger,
-                menuId.ToString(),
-                exception);
-            return ConfigurationDeletionStatus.OutcomeUnknown;
+            return true;
         }
     }
 

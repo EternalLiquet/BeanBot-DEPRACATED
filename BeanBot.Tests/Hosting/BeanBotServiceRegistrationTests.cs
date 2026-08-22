@@ -86,6 +86,7 @@ public class BeanBotServiceRegistrationTests
             "https://example.test/hatoete.png";
         builder.Configuration[BeanBotConfiguration.YoshimaruUrlVariable] =
             "https://example.test/yoshimaru.png";
+        builder.Configuration.AddBeanBotConfiguration([]);
         builder.Services.AddBeanBot(builder.Configuration);
         builder.Services.AddBeanBotInteractions();
         using var host = builder.Build();
