@@ -3,19 +3,24 @@ using BeanBot.Logging;
 using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace BeanBot.Discord.Interactions;
 
-internal sealed class InteractionHandler : IDisposable
+internal sealed class InteractionHandler : IAsyncDisposable
 {
     internal static readonly TimeSpan RegistrationTimeout = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan ShutdownDrainTimeout = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan FailureResponseTimeout = TimeSpan.FromSeconds(3);
     private const string SafeFailureMessage = "Bean Bot couldn't complete that command. Try again in a moment.";
 
     private readonly DiscordSocketClient _discordClient;
     private readonly InteractionService _interactionService;
     private readonly IServiceProvider _services;
     private readonly InteractionCommandRegistration _registration;
+    private readonly InteractionExecutionContext _executionContext;
+    private readonly InteractionOperationTracker _operationTracker;
     private readonly ILogger<InteractionHandler> _logger;
     private bool _initialized;
 
@@ -23,12 +28,20 @@ internal sealed class InteractionHandler : IDisposable
         DiscordSocketClient discordClient,
         InteractionService interactionService,
         IServiceProvider services,
+        InteractionExecutionContext executionContext,
+        IHostApplicationLifetime applicationLifetime,
         ILogger<InteractionHandler> logger)
     {
         _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
         _interactionService = interactionService ?? throw new ArgumentNullException(nameof(interactionService));
         _services = services ?? throw new ArgumentNullException(nameof(services));
+        _executionContext = executionContext ?? throw new ArgumentNullException(nameof(executionContext));
+        ArgumentNullException.ThrowIfNull(applicationLifetime);
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _operationTracker = new InteractionOperationTracker(
+            ShutdownDrainTimeout,
+            _logger,
+            applicationLifetime.ApplicationStopping);
         _registration = new InteractionCommandRegistration(
             () => _interactionService.RegisterCommandsGloballyAsync(deleteMissing: true),
             RegistrationTimeout);
@@ -56,27 +69,35 @@ internal sealed class InteractionHandler : IDisposable
         }
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        if (!_initialized)
+        if (_initialized)
         {
-            return;
+            _discordClient.InteractionCreated -= HandleInteractionAsync;
+            _discordClient.Ready -= HandleReadyAsync;
+            _initialized = false;
         }
 
-        _discordClient.InteractionCreated -= HandleInteractionAsync;
-        _discordClient.Ready -= HandleReadyAsync;
-        _initialized = false;
+        await _operationTracker.DisposeAsync();
     }
 
     internal Task HandleReadyAsync()
         => RegisterCommandsSafelyAsync();
 
-    internal async Task HandleInteractionAsync(SocketInteraction interaction)
+    internal Task HandleInteractionAsync(SocketInteraction interaction)
     {
         ArgumentNullException.ThrowIfNull(interaction);
+        return _operationTracker.TrackAsync(cancellationToken =>
+            ExecuteInteractionAsync(interaction, cancellationToken));
+    }
 
+    private async Task ExecuteInteractionAsync(
+        SocketInteraction interaction,
+        CancellationToken cancellationToken)
+    {
         try
         {
+            using var executionScope = _executionContext.Enter(cancellationToken);
             var context = new SocketInteractionContext(_discordClient, interaction);
             var result = await _interactionService.ExecuteCommandAsync(context, _services);
             if (result.IsSuccess)
@@ -85,12 +106,16 @@ internal sealed class InteractionHandler : IDisposable
             }
 
             BeanBotLog.InteractionCommandFailed(_logger, interaction.Type, result.ErrorReason);
-            await TryRespondWithFailureAsync(interaction);
+            await TryRespondWithFailureAsync(interaction, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            BeanBotLog.InteractionCanceledForShutdown(_logger, interaction.Type);
         }
         catch (Exception exception)
         {
             BeanBotLog.InteractionCommandThrew(_logger, interaction.Type, exception);
-            await TryRespondWithFailureAsync(interaction);
+            await TryRespondWithFailureAsync(interaction, cancellationToken);
         }
     }
 
@@ -109,18 +134,42 @@ internal sealed class InteractionHandler : IDisposable
         }
     }
 
-    private async Task TryRespondWithFailureAsync(SocketInteraction interaction)
+    private async Task TryRespondWithFailureAsync(
+        SocketInteraction interaction,
+        CancellationToken cancellationToken)
     {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+
+        using var responseCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken);
+        responseCancellation.CancelAfter(FailureResponseTimeout);
+        var requestOptions = new RequestOptions
+        {
+            CancelToken = responseCancellation.Token
+        };
         try
         {
             if (interaction.HasResponded)
             {
-                await interaction.FollowupAsync(SafeFailureMessage, ephemeral: true);
+                await interaction.FollowupAsync(
+                    SafeFailureMessage,
+                    ephemeral: true,
+                    options: requestOptions);
             }
             else
             {
-                await interaction.RespondAsync(SafeFailureMessage, ephemeral: true);
+                await interaction.RespondAsync(
+                    SafeFailureMessage,
+                    ephemeral: true,
+                    options: requestOptions);
             }
+        }
+        catch (OperationCanceledException) when (responseCancellation.IsCancellationRequested)
+        {
+            BeanBotLog.InteractionFailureResponseCanceled(_logger, interaction.Type);
         }
         catch (Exception exception)
         {

@@ -1,3 +1,5 @@
+using BeanBot.Discord.RoleMenus;
+using BeanBot.Persistence.Repositories;
 using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
@@ -16,8 +18,16 @@ internal static class BeanBotInteractionServiceCollectionExtensions
             provider.GetRequiredService<DiscordSocketClient>().Rest,
             new InteractionServiceConfig
             {
-                LogLevel = LogSeverity.Verbose
+                LogLevel = LogSeverity.Verbose,
+                UseCompiledLambda = true
             }));
+        services.AddSingleton(_ => new InteractionExecutionContext());
+        services.AddSingleton(provider => new RoleMenuInteractionService(
+            provider.GetRequiredService<RoleMenuRepository>(),
+            provider.GetRequiredService<RoleMenuDraftRegistry>(),
+            provider.GetRequiredService<RoleMenuMemberSynchronizer>(),
+            provider.GetRequiredService<RoleMenuMutationCoordinator>(),
+            provider.GetRequiredService<InteractionExecutionContext>()));
         services.AddSingleton<InteractionHandler>();
         services.AddSingleton<BeanBotInteractionHostedService>();
         services.AddSingleton<IHostedService>(provider =>

@@ -24,7 +24,9 @@ public sealed class BeanBotInteractionModule : InteractionModuleBase<SocketInter
     [SlashCommand("help", "Show Bean Bot's initial slash commands and legacy command syntax.")]
     public Task HelpAsync()
         => RespondAsync(
-            "Slash commands currently available: `/ping`, `/pun`, and `/help`. " +
+            "Slash commands currently available: `/ping`, `/pun`, `/help`, " +
+            "`/role-menu create`, and `/role-menu delete`. " +
+            "Role-menu setup commands require Manage Roles in a server. " +
             "Legacy message commands still work with `%`, `succ `, or by mentioning Bean Bot. " +
             "Use `%help` for the full legacy command list.",
             ephemeral: true);
