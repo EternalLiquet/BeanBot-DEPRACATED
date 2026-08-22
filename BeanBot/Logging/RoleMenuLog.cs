@@ -54,7 +54,7 @@ internal static partial class BeanBotLog
         string menuId,
         Exception exception);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Role menu panel was deleted, but persisted settings could not be deleted. MenuId={MenuId}")]
+    [LoggerMessage(Level = LogLevel.Error, Message = "Persisted role-menu settings deletion reported an error. MenuId={MenuId}")]
     internal static partial void RoleMenuPersistenceDeletionFailed(ILogger logger, string menuId, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Role menu deletion could not reconcile persisted settings after an uncertain delete outcome. MenuId={MenuId}")]

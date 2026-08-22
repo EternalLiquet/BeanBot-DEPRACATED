@@ -117,4 +117,28 @@ public class RoleMenuSelectionPlannerTests
 
         Assert.Equal(RoleMenuSelectionIssue.DuplicateConfiguredRole, result.Issue);
     }
+
+    [Fact]
+    public void Create_EmptyConfiguredRoleSet_IsRejected()
+    {
+        var result = RoleMenuSelectionPlanner.Create(
+            [],
+            [],
+            [],
+            RoleMenuSelectionMode.Multiple);
+
+        Assert.Equal(RoleMenuSelectionIssue.TooManyConfiguredRoles, result.Issue);
+    }
+
+    [Fact]
+    public void Create_ZeroConfiguredRole_IsRejected()
+    {
+        var result = RoleMenuSelectionPlanner.Create(
+            [0UL],
+            [],
+            [],
+            RoleMenuSelectionMode.Multiple);
+
+        Assert.Equal(RoleMenuSelectionIssue.InvalidConfiguredRole, result.Issue);
+    }
 }

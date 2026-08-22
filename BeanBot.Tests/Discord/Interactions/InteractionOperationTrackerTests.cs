@@ -52,6 +52,52 @@ public class InteractionOperationTrackerTests
     }
 
     [Fact]
+    public async Task DisposeAsync_ConcurrentCallsShareTheSameDrain()
+    {
+        var tracker = new InteractionOperationTracker(
+            TimeSpan.FromSeconds(1),
+            NullLogger.Instance);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var operation = tracker.TrackAsync(_ =>
+        {
+            started.SetResult();
+            return release.Task;
+        });
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        var firstDispose = tracker.DisposeAsync().AsTask();
+        var secondDispose = tracker.DisposeAsync().AsTask();
+
+        Assert.False(firstDispose.IsCompleted);
+        Assert.False(secondDispose.IsCompleted);
+        release.SetResult();
+        await Task.WhenAll(firstDispose, secondDispose)
+            .WaitAsync(TimeSpan.FromSeconds(1));
+        await operation.WaitAsync(TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task DisposeAsync_FaultedDrainCompletesAndPreservesTrackedFailure()
+    {
+        var tracker = new InteractionOperationTracker(
+            TimeSpan.FromSeconds(1),
+            NullLogger.Instance);
+        var operationSource = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var expected = new InvalidOperationException("operation failed during drain");
+        var operation = tracker.TrackAsync(_ => operationSource.Task);
+
+        var dispose = tracker.DisposeAsync().AsTask();
+        operationSource.SetException(expected);
+
+        await dispose.WaitAsync(TimeSpan.FromSeconds(1));
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => operation);
+        Assert.Same(expected, thrown);
+    }
+
+    [Fact]
     public async Task TrackAsync_AfterDispose_DoesNotStartOperation()
     {
         var tracker = new InteractionOperationTracker(
@@ -113,6 +159,20 @@ public class InteractionOperationTrackerTests
         Assert.Equal(InteractionOperationAdmission.Saturated, admission);
         Assert.False(secondInvoked);
         release.SetResult();
+        await tracker.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Start_ObservesDetachedSynchronousFailure()
+    {
+        var tracker = new InteractionOperationTracker(
+            TimeSpan.FromSeconds(1),
+            NullLogger.Instance);
+        var expected = new InvalidOperationException("detached operation failed");
+
+        var admission = tracker.Start(_ => Task.FromException(expected));
+
+        Assert.Equal(InteractionOperationAdmission.Started, admission);
         await tracker.DisposeAsync();
     }
 }

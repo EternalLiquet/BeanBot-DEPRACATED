@@ -28,6 +28,25 @@ public class RoleMenuRepositoryTests
     }
 
     [Fact]
+    public void GetAsync_RejectsEmptyMenuIdBeforeStoreCall()
+    {
+        var invoked = false;
+        var store = new FakeStore
+        {
+            GetById = (_, _, _) =>
+            {
+                invoked = true;
+                return Task.FromResult<RoleMenuSettings?>(null);
+            }
+        };
+
+        Assert.Throws<ArgumentException>(() =>
+            CreateRepository(store).GetAsync(ObjectId.Empty, "1"));
+
+        Assert.False(invoked);
+    }
+
+    [Fact]
     public async Task UpsertAsync_PreservesExistingCreationTimeAndUpdatesUtcTimestamp()
     {
         var settings = CreateSettings();
@@ -75,6 +94,25 @@ public class RoleMenuRepositoryTests
         var deleted = await CreateRepository(store).DeleteAsync(settings.Id, "1");
 
         Assert.True(deleted);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_RejectsEmptyMenuIdBeforeStoreCall()
+    {
+        var invoked = false;
+        var store = new FakeStore
+        {
+            Delete = (_, _, _) =>
+            {
+                invoked = true;
+                return Task.FromResult(false);
+            }
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            CreateRepository(store).DeleteAsync(ObjectId.Empty, "1"));
+
+        Assert.False(invoked);
     }
 
     private static RoleMenuRepository CreateRepository(IRoleMenuStore store)

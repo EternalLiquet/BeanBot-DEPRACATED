@@ -2,10 +2,12 @@ using BeanBot.Configuration;
 using BeanBot.Discord.Commands;
 using BeanBot.Discord.Events;
 using BeanBot.Discord.Interactions;
+using BeanBot.Discord.Lifecycle;
 using BeanBot.Discord.ReactionRoles;
 using BeanBot.Discord.RoleMenus;
 using BeanBot.Hosting;
 using BeanBot.Logging;
+using BeanBot.Persistence.Outages;
 using BeanBot.Persistence.Repositories;
 
 using Discord.WebSocket;
@@ -75,7 +77,7 @@ public class BeanBotServiceRegistrationTests
     }
 
     [Fact]
-    public void AddBeanBotInteractions_RegisteredGraphResolvesFromHostProvider()
+    public async Task AddBeanBotInteractions_RegisteredGraphResolvesFromHostProvider()
     {
         var builder = Host.CreateApplicationBuilder();
         builder.Configuration[BeanBotConfiguration.BotTokenVariable] = "test-token";
@@ -89,12 +91,50 @@ public class BeanBotServiceRegistrationTests
         builder.Configuration.AddBeanBotConfiguration([]);
         builder.Services.AddBeanBot(builder.Configuration);
         builder.Services.AddBeanBotInteractions();
-        using var host = builder.Build();
+        var host = builder.Build();
+        var discordClient = host.Services.GetRequiredService<DiscordSocketClient>();
+        try
+        {
+            Assert.NotNull(host.Services.GetRequiredService<RoleMenuInteractionService>());
+            Assert.NotNull(host.Services.GetRequiredService<InteractionHandler>());
 
-        Assert.NotNull(host.Services.GetRequiredService<RoleMenuInteractionService>());
-        Assert.NotNull(host.Services.GetRequiredService<InteractionHandler>());
+            var startupLifecycle = host.Services.GetRequiredService<DiscordStartupLifecycle>();
+            Assert.Same(
+                startupLifecycle,
+                host.Services.GetRequiredService<IDiscordStartupLifecycle>());
+            var outageStore = host.Services.GetRequiredService<DiscordOutageStore>();
+            Assert.Same(outageStore, host.Services.GetRequiredService<IDiscordOutageStore>());
+            var ownerAlertDelivery = host.Services.GetRequiredService<DiscordOwnerAlertDelivery>();
+            Assert.Same(
+                ownerAlertDelivery,
+                host.Services.GetRequiredService<IOwnerAlertDelivery>());
+            var ownerErrorNotifier = host.Services.GetRequiredService<DiscordOwnerErrorNotifier>();
+            Assert.Same(
+                ownerErrorNotifier,
+                host.Services.GetRequiredService<IOwnerErrorNotifier>());
+            Assert.NotNull(host.Services.GetRequiredService<DiscordGatewayRecoveryService>());
+            Assert.Same(
+                host.Services.GetRequiredService<PunProvider>(),
+                host.Services.GetRequiredService<IPunProvider>());
 
-        host.Services.GetRequiredService<DiscordSocketClient>().Dispose();
+            var hostedServices = host.Services.GetServices<IHostedService>().ToList();
+            Assert.Equal(2, hostedServices.Count);
+            Assert.Contains(hostedServices, service => service is BeanBotHostedService);
+            Assert.Same(
+                host.Services.GetRequiredService<BeanBotInteractionHostedService>(),
+                Assert.Single(hostedServices.OfType<BeanBotInteractionHostedService>()));
+        }
+        finally
+        {
+            try
+            {
+                await ((IAsyncDisposable)host).DisposeAsync();
+            }
+            finally
+            {
+                discordClient.Dispose();
+            }
+        }
     }
 
     private static void AssertSingleton<TService>(IEnumerable<ServiceDescriptor> services)

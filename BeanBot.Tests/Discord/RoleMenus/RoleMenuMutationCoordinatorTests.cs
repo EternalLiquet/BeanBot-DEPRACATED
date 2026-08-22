@@ -183,4 +183,57 @@ public class RoleMenuMutationCoordinatorTests
         await Task.WhenAll(member, delete);
         Assert.True(deleteEntered);
     }
+
+    [Fact]
+    public async Task RunMenuWriteAsync_CancellationWhileWaitingForReaderReleasesTurnstile()
+    {
+        var coordinator = new RoleMenuMutationCoordinator();
+        const string firstMember = "member:first";
+        var secondMember = Enumerable.Range(1, 1000)
+            .Select(value => $"member:{value}")
+            .First(candidate => RoleMenuMutationCoordinator.GetStripeIndex(candidate)
+                                != RoleMenuMutationCoordinator.GetStripeIndex(firstMember));
+        var firstEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = coordinator.RunMemberAsync(
+            "menu",
+            firstMember,
+            async _ =>
+            {
+                firstEntered.SetResult();
+                await releaseFirst.Task;
+                return 1;
+            },
+            CancellationToken.None);
+        await firstEntered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        using var cancellation = new CancellationTokenSource();
+        var writerInvoked = false;
+
+        // AcquireWriteAsync takes the available turnstile synchronously, then
+        // returns an incomplete task while the active reader owns the room.
+        var writer = coordinator.RunMenuWriteAsync(
+            "menu",
+            _ =>
+            {
+                writerInvoked = true;
+                return Task.FromResult(2);
+            },
+            cancellation.Token);
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => writer);
+        Assert.False(writerInvoked);
+
+        var second = coordinator.RunMemberAsync(
+            "menu",
+            secondMember,
+            _ => Task.FromResult(3),
+            CancellationToken.None);
+        Assert.Equal(3, await second.WaitAsync(TimeSpan.FromSeconds(1)));
+
+        releaseFirst.SetResult();
+        Assert.Equal(1, await first.WaitAsync(TimeSpan.FromSeconds(1)));
+    }
 }

@@ -66,19 +66,59 @@ public class RoleMenuSettingsParserTests
         Assert.Equal(RoleMenuSettingsIssue.InvalidSelectionMode, issue);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void TryParse_BlankTitle_IsRejected(string title)
+    {
+        var settings = CreateSettings(title: title);
+
+        var success = RoleMenuSettingsParser.TryParse(settings, out _, out var issue);
+
+        Assert.False(success);
+        Assert.Equal(RoleMenuSettingsIssue.InvalidTitle, issue);
+    }
+
+    [Fact]
+    public void TryParse_OversizedDescription_IsRejected()
+    {
+        var settings = CreateSettings(
+            description: new string(
+                'x',
+                RoleMenuConstants.MaximumDescriptionLength + 1));
+
+        var success = RoleMenuSettingsParser.TryParse(settings, out _, out var issue);
+
+        Assert.False(success);
+        Assert.Equal(RoleMenuSettingsIssue.InvalidDescription, issue);
+    }
+
+    [Fact]
+    public void TryParse_EmptyRoleList_IsRejected()
+    {
+        var settings = CreateSettings(roleIds: []);
+
+        var success = RoleMenuSettingsParser.TryParse(settings, out _, out var issue);
+
+        Assert.False(success);
+        Assert.Equal(RoleMenuSettingsIssue.InvalidRoleCount, issue);
+    }
+
     private static RoleMenuSettings CreateSettings(
         string guildId = "10",
         string channelId = "20",
         string messageId = "30",
         IReadOnlyCollection<string>? roleIds = null,
-        RoleMenuSelectionMode selectionMode = RoleMenuSelectionMode.Multiple)
+        RoleMenuSelectionMode selectionMode = RoleMenuSelectionMode.Multiple,
+        string title = "Game roles",
+        string description = "")
         => new(
             ObjectId.GenerateNewId(),
             guildId,
             channelId,
             messageId,
-            "Game roles",
-            string.Empty,
+            title,
+            description,
             roleIds ?? ["40", "50"],
             selectionMode);
 }

@@ -47,6 +47,29 @@ public class RoleMenuMemberWorkflowTests
         };
 
     [Fact]
+    public async Task ExecuteAsync_EmptyMenuId_IsRejectedBeforeReads()
+    {
+        var fake = new RecordingOperations(
+            CreateSettings([FirstRoleId]),
+            []);
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            RoleMenuMemberWorkflow.ExecuteAsync(
+                ObjectId.Empty,
+                GuildId,
+                ChannelId,
+                BotUserId,
+                MemberUserId,
+                MessageId,
+                [],
+                fake.CreateOperations(),
+                CancellationToken.None));
+
+        Assert.Empty(fake.PanelReadMenuIds);
+        Assert.Empty(fake.MemberReadTokens);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ValidMultipleSelection_MutatesEveryPlannedRoleAndReconciles()
     {
         var fake = new RecordingOperations(

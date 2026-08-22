@@ -11,6 +11,32 @@ namespace BeanBot.Tests.Discord.RoleMenus;
 public class RoleMenuInteractionServiceTests
 {
     [Fact]
+    public void ModuleConstructors_RequireFacadeAndLogger()
+    {
+        var fixture = CreateFixture();
+
+        Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
+            null!,
+            NullLogger<RoleMenuAdminModule>.Instance));
+        Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
+            fixture.Service,
+            null!));
+        _ = new RoleMenuAdminModule(
+            fixture.Service,
+            NullLogger<RoleMenuAdminModule>.Instance);
+
+        Assert.Throws<ArgumentNullException>(() => new RoleMenuMemberModule(
+            null!,
+            NullLogger<RoleMenuMemberModule>.Instance));
+        Assert.Throws<ArgumentNullException>(() => new RoleMenuMemberModule(
+            fixture.Service,
+            null!));
+        _ = new RoleMenuMemberModule(
+            fixture.Service,
+            NullLogger<RoleMenuMemberModule>.Instance);
+    }
+
+    [Fact]
     public void Constructor_RejectsEveryMissingDependency()
     {
         var fixture = CreateFixture();

@@ -15,6 +15,23 @@ public class RoleMenuDeletionWorkflowTests
     private static readonly ObjectId MenuId = ObjectId.Parse("64e7611aaac75f172f0f1234");
 
     [Fact]
+    public async Task ExecuteAsync_EmptyMenuId_IsRejectedBeforeOperationsRun()
+    {
+        var fake = new RecordingOperations(CreateSettings());
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            RoleMenuDeletionWorkflow.ExecuteAsync(
+                ObjectId.Empty,
+                GuildId,
+                BotUserId,
+                administratorCanManageRoles: true,
+                fake.Create(),
+                CancellationToken.None));
+
+        Assert.Empty(fake.Calls);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_DeniedFreshAuthorization_PerformsNoReadsOrWrites()
     {
         var fake = new RecordingOperations(CreateSettings());
@@ -440,6 +457,26 @@ public class RoleMenuDeletionWorkflowTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ExecuteAsync(fake));
 
         Assert.DoesNotContain(fake.Calls, call => call.Name == "delete-settings");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShutdownCancellationDuringPersistenceReconciliation_Propagates()
+    {
+        using var shutdown = new CancellationTokenSource();
+        shutdown.Cancel();
+        var fake = new RecordingOperations(CreateSettings())
+        {
+            ShuttingDown = true,
+            DeleteSettingsHandler = (_, _) => Task.FromException<bool>(
+                new InvalidOperationException("delete failed")),
+            ReadSettingsHandler = (call, _) => call == 1
+                ? Task.FromResult<RoleMenuSettings?>(CreateSettings())
+                : Task.FromCanceled<RoleMenuSettings?>(shutdown.Token)
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ExecuteAsync(fake));
+
+        Assert.Equal(2, fake.Calls.Count(call => call.Name == "read-settings"));
     }
 
     private static Task<RoleMenuDeletionResult> ExecuteAsync(

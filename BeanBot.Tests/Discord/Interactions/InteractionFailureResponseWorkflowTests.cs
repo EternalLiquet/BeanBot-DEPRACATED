@@ -258,6 +258,20 @@ public class InteractionFailureResponseWorkflowTests
         Assert.Equal(cancellation.Token, fake.InitialToken);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_UnknownTrackedState_IsRejectedWithoutSending()
+    {
+        var fake = new RecordingOperations();
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => ExecuteAsync(
+            (InteractionInitialResponseState)999,
+            supportsOriginalResponse: true,
+            discordHasResponded: false,
+            fake));
+
+        Assert.Empty(fake.Calls);
+    }
+
     private static Task<InteractionFailureResponseResult> ExecuteAsync(
         InteractionInitialResponseState state,
         bool supportsOriginalResponse,

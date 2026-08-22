@@ -301,4 +301,16 @@ public class InteractionInitialResponseWorkflowTests
             [initialFailure, reconciliationFailure],
             thrown.InnerExceptions);
     }
+
+    [Fact]
+    public void ThrowIfUnconfirmed_WithoutRecordedFailure_UsesSafeDiagnostic()
+    {
+        var result = new InteractionInitialResponseResult(
+            InteractionInitialResponseOutcome.Unknown);
+
+        var thrown = Assert.Throws<InvalidOperationException>(
+            result.ThrowIfUnconfirmed);
+
+        Assert.Contains("could not be confirmed", thrown.Message, StringComparison.Ordinal);
+    }
 }

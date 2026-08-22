@@ -128,6 +128,63 @@ public class RoleMenuMemberSynchronizerTests
         Assert.Equal(RoleMenuMutationInterruptionKind.OutcomeUnknown, interruption.Kind);
     }
 
+    [Fact]
+    public async Task SynchronizeAsync_CancellationBeforeRemoveReportsRemoveNotAttempted()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var mutator = new RecordingMutator
+        {
+            Add = _ =>
+            {
+                cancellation.Cancel();
+                return Task.CompletedTask;
+            }
+        };
+        var plan = new RoleMenuSelectionPlan([1UL], [1UL], [2UL]);
+
+        var result = await RoleMenuMemberSynchronizer.SynchronizeAsync(
+            plan,
+            RoleMenuSelectionMode.Multiple,
+            mutator,
+            cancellation.Token);
+
+        Assert.Equal(["add:1"], mutator.Calls);
+        Assert.Equal([1UL], result.AddedRoleIds);
+        Assert.Empty(result.RemovedRoleIds);
+        var interruption = Assert.IsType<RoleMenuMutationInterruption>(result.Interruption);
+        Assert.Equal(2UL, interruption.RoleId);
+        Assert.Equal("remove", interruption.Action);
+        Assert.Equal(RoleMenuMutationInterruptionKind.NotAttempted, interruption.Kind);
+    }
+
+    [Fact]
+    public async Task SynchronizeAsync_CancelledRemoveCallReportsUnknownOutcome()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var mutator = new RecordingMutator
+        {
+            Remove = _ =>
+            {
+                cancellation.Cancel();
+                return Task.FromCanceled(cancellation.Token);
+            }
+        };
+        var plan = new RoleMenuSelectionPlan([], [], [2UL]);
+
+        var result = await RoleMenuMemberSynchronizer.SynchronizeAsync(
+            plan,
+            RoleMenuSelectionMode.Multiple,
+            mutator,
+            cancellation.Token);
+
+        Assert.Equal(["remove:2"], mutator.Calls);
+        Assert.Empty(result.RemovedRoleIds);
+        var interruption = Assert.IsType<RoleMenuMutationInterruption>(result.Interruption);
+        Assert.Equal(2UL, interruption.RoleId);
+        Assert.Equal("remove", interruption.Action);
+        Assert.Equal(RoleMenuMutationInterruptionKind.OutcomeUnknown, interruption.Kind);
+    }
+
     private sealed class RecordingMutator : IRoleMenuMemberMutator
     {
         public List<string> Calls { get; } = [];
