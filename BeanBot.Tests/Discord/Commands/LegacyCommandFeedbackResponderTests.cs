@@ -163,7 +163,7 @@ public class LegacyCommandFeedbackResponderTests
     {
         [Command("sample")]
         public Task SampleAsync(string text, int count)
-            => Task.CompletedTask;
+            => Task.FromResult(HashCode.Combine(GetHashCode(), text, count));
     }
 
     private sealed class RecordingDelivery : ILegacyCommandFeedbackDelivery
