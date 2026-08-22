@@ -1312,42 +1312,55 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
             currentAdministrator?.GuildPermissions.ManageRoles == true,
             CreateDeletionOperations(guild, menuId),
             cancellationToken);
-        if (result.PanelStatus is RoleMenuPanelDeletionStatus.Failed
-            or RoleMenuPanelDeletionStatus.OutcomeUnknown)
+        LogDeletionFailures(menuId, result.Failures);
+        if ((result.PanelStatus is RoleMenuPanelDeletionStatus.Failed
+                or RoleMenuPanelDeletionStatus.OutcomeUnknown)
+            && result.Failures.Count == 0)
         {
             BeanBotLog.RoleMenuPanelDeletionFailed(
                 _logger,
                 menuId.ToString(),
-                result.Exception ?? new InvalidOperationException(
+                new InvalidOperationException(
                     $"Panel deletion stopped with issue {result.PanelIssue}."));
-        }
-        else if (result.Exception is not null)
-        {
-            BeanBotLog.RoleMenuPersistenceDeletionFailed(
-                _logger,
-                menuId.ToString(),
-                result.Exception);
-        }
-
-        if (result.ReconciliationException is not null)
-        {
-            if (result.PanelIssue == RoleMenuPanelDeletionIssue.ReconciliationFailed)
-            {
-                BeanBotLog.RoleMenuPanelDeletionReconciliationFailed(
-                    _logger,
-                    menuId.ToString(),
-                    result.ReconciliationException);
-            }
-            else
-            {
-                BeanBotLog.RoleMenuDeletionReconciliationFailed(
-                    _logger,
-                    menuId.ToString(),
-                    result.ReconciliationException);
-            }
         }
 
         return result;
+    }
+
+    private void LogDeletionFailures(
+        ObjectId menuId,
+        IReadOnlyCollection<RoleMenuDeletionFailure> failures)
+    {
+        foreach (var failure in failures)
+        {
+            switch (failure.Phase)
+            {
+                case RoleMenuDeletionFailurePhase.PanelReconciliation:
+                    BeanBotLog.RoleMenuPanelDeletionReconciliationFailed(
+                        _logger,
+                        menuId.ToString(),
+                        failure.Exception);
+                    break;
+                case RoleMenuDeletionFailurePhase.PersistenceDeletion:
+                    BeanBotLog.RoleMenuPersistenceDeletionFailed(
+                        _logger,
+                        menuId.ToString(),
+                        failure.Exception);
+                    break;
+                case RoleMenuDeletionFailurePhase.PersistenceReconciliation:
+                    BeanBotLog.RoleMenuDeletionReconciliationFailed(
+                        _logger,
+                        menuId.ToString(),
+                        failure.Exception);
+                    break;
+                default:
+                    BeanBotLog.RoleMenuPanelDeletionFailed(
+                        _logger,
+                        menuId.ToString(),
+                        failure.Exception);
+                    break;
+            }
+        }
     }
 
     private RoleMenuDeletionOperations CreateDeletionOperations(

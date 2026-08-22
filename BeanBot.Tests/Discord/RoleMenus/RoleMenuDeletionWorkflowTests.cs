@@ -159,6 +159,7 @@ public class RoleMenuDeletionWorkflowTests
         Assert.Equal(RoleMenuConfigurationDeletionStatus.Kept, result.ConfigurationStatus);
         Assert.Equal(RoleMenuPanelDeletionStatus.Failed, result.PanelStatus);
         Assert.Equal(RoleMenuPanelDeletionIssue.DeletionFailed, result.PanelIssue);
+        Assert.Empty(result.Failures);
         Assert.DoesNotContain(fake.Calls, call => call.Name == "delete-settings");
     }
 
@@ -176,7 +177,7 @@ public class RoleMenuDeletionWorkflowTests
         Assert.Equal(RoleMenuConfigurationDeletionStatus.Kept, result.ConfigurationStatus);
         Assert.Equal(RoleMenuPanelDeletionStatus.Failed, result.PanelStatus);
         Assert.Equal(RoleMenuPanelDeletionIssue.DeletionFailed, result.PanelIssue);
-        Assert.Same(expected, result.Exception);
+        AssertFailure(result, RoleMenuDeletionFailurePhase.PanelDeletion, expected);
         Assert.DoesNotContain(fake.Calls, call => call.Name == "delete-settings");
         AssertReconciliationToken(fake, "read-panel");
     }
@@ -199,7 +200,7 @@ public class RoleMenuDeletionWorkflowTests
         Assert.Equal(RoleMenuConfigurationDeletionStatus.Deleted, result.ConfigurationStatus);
         Assert.Equal(RoleMenuPanelDeletionStatus.DeletedOrMissing, result.PanelStatus);
         Assert.Equal(RoleMenuPanelDeletionIssue.MessageMissing, result.PanelIssue);
-        Assert.Null(result.Exception);
+        AssertFailure(result, RoleMenuDeletionFailurePhase.PanelDeletion, expected);
         Assert.Equal(
             [
                 "read-settings",
@@ -228,7 +229,7 @@ public class RoleMenuDeletionWorkflowTests
         Assert.Equal(RoleMenuConfigurationDeletionStatus.Deleted, result.ConfigurationStatus);
         Assert.Equal(RoleMenuPanelDeletionStatus.UnexpectedMessage, result.PanelStatus);
         Assert.Equal(RoleMenuPanelDeletionIssue.UnexpectedAuthor, result.PanelIssue);
-        Assert.Null(result.Exception);
+        AssertFailure(result, RoleMenuDeletionFailurePhase.PanelLookup, expected);
         Assert.Empty(fake.DeletedPanels);
         Assert.DoesNotContain(fake.Calls, call => call.Name == "delete-panel");
     }
@@ -252,8 +253,16 @@ public class RoleMenuDeletionWorkflowTests
         Assert.Equal(RoleMenuConfigurationDeletionStatus.Kept, result.ConfigurationStatus);
         Assert.Equal(RoleMenuPanelDeletionStatus.OutcomeUnknown, result.PanelStatus);
         Assert.Equal(RoleMenuPanelDeletionIssue.ReconciliationFailed, result.PanelIssue);
-        Assert.Same(deletionFailure, result.Exception);
-        Assert.Same(reconciliationFailure, result.ReconciliationException);
+        Assert.Collection(
+            result.Failures,
+            failure => AssertFailure(
+                failure,
+                RoleMenuDeletionFailurePhase.PanelDeletion,
+                deletionFailure),
+            failure => AssertFailure(
+                failure,
+                RoleMenuDeletionFailurePhase.PanelReconciliation,
+                reconciliationFailure));
         Assert.DoesNotContain(fake.Calls, call => call.Name == "delete-settings");
     }
 
@@ -276,7 +285,7 @@ public class RoleMenuDeletionWorkflowTests
             RoleMenuConfigurationDeletionStatus.AlreadyMissing,
             result.ConfigurationStatus);
         Assert.Equal(RoleMenuPanelDeletionStatus.DeletedOrMissing, result.PanelStatus);
-        Assert.Same(expected, result.Exception);
+        AssertFailure(result, RoleMenuDeletionFailurePhase.PersistenceDeletion, expected);
         Assert.Equal(2, fake.Calls.Count(call => call.Name == "read-settings"));
         AssertReconciliationToken(fake, "read-settings");
     }
@@ -293,7 +302,7 @@ public class RoleMenuDeletionWorkflowTests
         var result = await ExecuteAsync(fake);
 
         Assert.Equal(RoleMenuConfigurationDeletionStatus.Kept, result.ConfigurationStatus);
-        Assert.Same(expected, result.Exception);
+        AssertFailure(result, RoleMenuDeletionFailurePhase.PersistenceDeletion, expected);
         Assert.Equal(2, fake.Calls.Count(call => call.Name == "read-settings"));
     }
 
@@ -316,8 +325,16 @@ public class RoleMenuDeletionWorkflowTests
         Assert.Equal(
             RoleMenuConfigurationDeletionStatus.OutcomeUnknown,
             result.ConfigurationStatus);
-        Assert.Same(expected, result.Exception);
-        Assert.Same(reconciliationFailure, result.ReconciliationException);
+        Assert.Collection(
+            result.Failures,
+            failure => AssertFailure(
+                failure,
+                RoleMenuDeletionFailurePhase.PersistenceDeletion,
+                expected),
+            failure => AssertFailure(
+                failure,
+                RoleMenuDeletionFailurePhase.PersistenceReconciliation,
+                reconciliationFailure));
     }
 
     [Fact]
@@ -340,7 +357,9 @@ public class RoleMenuDeletionWorkflowTests
         };
         using var operationCancellation = new CancellationTokenSource();
 
-        await ExecuteAsync(fake, cancellationToken: operationCancellation.Token);
+        var result = await ExecuteAsync(
+            fake,
+            cancellationToken: operationCancellation.Token);
 
         var panelTokens = fake.Calls
             .Where(call => call.Name == "read-panel")
@@ -359,6 +378,14 @@ public class RoleMenuDeletionWorkflowTests
         Assert.NotEqual(operationCancellation.Token, panelTokens[1]);
         Assert.NotEqual(operationCancellation.Token, settingsTokens[1]);
         Assert.NotEqual(panelTokens[1], settingsTokens[1]);
+        Assert.Collection(
+            result.Failures,
+            failure => Assert.Equal(
+                RoleMenuDeletionFailurePhase.PanelDeletion,
+                failure.Phase),
+            failure => Assert.Equal(
+                RoleMenuDeletionFailurePhase.PersistenceDeletion,
+                failure.Phase));
     }
 
     [Fact]
@@ -473,6 +500,21 @@ public class RoleMenuDeletionWorkflowTests
             _ => throw new ArgumentOutOfRangeException(nameof(issue), issue, null)
         };
         return new RoleMenuPanelLookupResult(RoleMenuPanelLookupStatus.Found, panel);
+    }
+
+    private static void AssertFailure(
+        RoleMenuDeletionResult result,
+        RoleMenuDeletionFailurePhase phase,
+        Exception exception)
+        => AssertFailure(Assert.Single(result.Failures), phase, exception);
+
+    private static void AssertFailure(
+        RoleMenuDeletionFailure failure,
+        RoleMenuDeletionFailurePhase phase,
+        Exception exception)
+    {
+        Assert.Equal(phase, failure.Phase);
+        Assert.Same(exception, failure.Exception);
     }
 
     private static void AssertReconciliationToken(

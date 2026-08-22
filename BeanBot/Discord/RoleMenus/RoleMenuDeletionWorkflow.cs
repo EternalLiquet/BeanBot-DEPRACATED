@@ -44,6 +44,19 @@ internal enum RoleMenuPanelDeletionIssue
     ReconciliationFailed
 }
 
+internal enum RoleMenuDeletionFailurePhase
+{
+    PanelLookup,
+    PanelDeletion,
+    PanelReconciliation,
+    PersistenceDeletion,
+    PersistenceReconciliation
+}
+
+internal sealed record RoleMenuDeletionFailure(
+    RoleMenuDeletionFailurePhase Phase,
+    Exception Exception);
+
 internal sealed record RoleMenuPanelLookupResult(
     RoleMenuPanelLookupStatus Status,
     RoleMenuPanelSnapshot? Panel = null);
@@ -55,21 +68,53 @@ internal sealed record RoleMenuDeletionOperations(
     Func<ObjectId, ulong, CancellationToken, Task<bool>> DeleteSettings,
     Func<bool> IsShuttingDown);
 
-internal sealed record RoleMenuDeletionResult(
-    RoleMenuConfigurationDeletionStatus ConfigurationStatus,
-    RoleMenuPanelDeletionStatus PanelStatus,
-    RoleMenuPanelDeletionIssue PanelIssue = RoleMenuPanelDeletionIssue.None,
-    bool AuthorizationDenied = false,
-    Exception? Exception = null,
-    Exception? ReconciliationException = null);
+internal sealed record RoleMenuDeletionResult
+{
+    internal RoleMenuDeletionResult(
+        RoleMenuConfigurationDeletionStatus configurationStatus,
+        RoleMenuPanelDeletionStatus panelStatus,
+        RoleMenuPanelDeletionIssue panelIssue = RoleMenuPanelDeletionIssue.None,
+        bool authorizationDenied = false,
+        IReadOnlyList<RoleMenuDeletionFailure>? failures = null)
+    {
+        ConfigurationStatus = configurationStatus;
+        PanelStatus = panelStatus;
+        PanelIssue = panelIssue;
+        AuthorizationDenied = authorizationDenied;
+        Failures = failures ?? [];
+    }
+
+    internal RoleMenuConfigurationDeletionStatus ConfigurationStatus { get; }
+
+    internal RoleMenuPanelDeletionStatus PanelStatus { get; }
+
+    internal RoleMenuPanelDeletionIssue PanelIssue { get; }
+
+    internal bool AuthorizationDenied { get; }
+
+    internal IReadOnlyList<RoleMenuDeletionFailure> Failures { get; }
+}
 
 internal static class RoleMenuDeletionWorkflow
 {
-    private sealed record PanelDeletionResult(
-        RoleMenuPanelDeletionStatus Status,
-        RoleMenuPanelDeletionIssue Issue,
-        Exception? Exception = null,
-        Exception? ReconciliationException = null);
+    private sealed record PanelDeletionResult
+    {
+        internal PanelDeletionResult(
+            RoleMenuPanelDeletionStatus status,
+            RoleMenuPanelDeletionIssue issue,
+            IReadOnlyList<RoleMenuDeletionFailure>? failures = null)
+        {
+            Status = status;
+            Issue = issue;
+            Failures = failures ?? [];
+        }
+
+        internal RoleMenuPanelDeletionStatus Status { get; init; }
+
+        internal RoleMenuPanelDeletionIssue Issue { get; init; }
+
+        internal IReadOnlyList<RoleMenuDeletionFailure> Failures { get; init; }
+    }
 
     private sealed record ConfigurationDeletionReconciliationResult(
         RoleMenuConfigurationDeletionStatus Status,
@@ -96,7 +141,7 @@ internal static class RoleMenuDeletionWorkflow
             return new RoleMenuDeletionResult(
                 RoleMenuConfigurationDeletionStatus.Kept,
                 RoleMenuPanelDeletionStatus.DeletedOrMissing,
-                AuthorizationDenied: true);
+                authorizationDenied: true);
         }
 
         var settings = await operations.ReadSettings(menuId, guildId, cancellationToken);
@@ -120,8 +165,7 @@ internal static class RoleMenuDeletionWorkflow
                 RoleMenuConfigurationDeletionStatus.Kept,
                 panelResult.Status,
                 panelResult.Issue,
-                Exception: panelResult.Exception,
-                ReconciliationException: panelResult.ReconciliationException);
+                failures: panelResult.Failures);
         }
 
         try
@@ -135,7 +179,8 @@ internal static class RoleMenuDeletionWorkflow
                     ? RoleMenuConfigurationDeletionStatus.Deleted
                     : RoleMenuConfigurationDeletionStatus.AlreadyMissing,
                 panelResult.Status,
-                panelResult.Issue);
+                panelResult.Issue,
+                failures: panelResult.Failures);
         }
         catch (OperationCanceledException) when (operations.IsShuttingDown())
         {
@@ -147,12 +192,22 @@ internal static class RoleMenuDeletionWorkflow
                 menuId,
                 guildId,
                 operations);
+            var failures = new List<RoleMenuDeletionFailure>(panelResult.Failures)
+            {
+                new(RoleMenuDeletionFailurePhase.PersistenceDeletion, exception)
+            };
+            if (reconciliation.Exception is not null)
+            {
+                failures.Add(new RoleMenuDeletionFailure(
+                    RoleMenuDeletionFailurePhase.PersistenceReconciliation,
+                    reconciliation.Exception));
+            }
+
             return new RoleMenuDeletionResult(
                 reconciliation.Status,
                 panelResult.Status,
                 panelResult.Issue,
-                Exception: exception,
-                ReconciliationException: reconciliation.Exception);
+                failures: failures);
         }
     }
 
@@ -171,6 +226,7 @@ internal static class RoleMenuDeletionWorkflow
                 RoleMenuPanelDeletionIssue.InvalidLocation);
         }
 
+        var failurePhase = RoleMenuDeletionFailurePhase.PanelLookup;
         try
         {
             var lookup = await operations.ReadPanel(
@@ -191,6 +247,7 @@ internal static class RoleMenuDeletionWorkflow
                 return inspected;
             }
 
+            failurePhase = RoleMenuDeletionFailurePhase.PanelDeletion;
             var deleted = await operations.DeletePanel(lookup.Panel, cancellationToken);
             if (!deleted)
             {
@@ -216,7 +273,7 @@ internal static class RoleMenuDeletionWorkflow
                 botUserId,
                 settings.Id,
                 operations,
-                exception);
+                new RoleMenuDeletionFailure(failurePhase, exception));
         }
     }
 
@@ -301,7 +358,7 @@ internal static class RoleMenuDeletionWorkflow
         ulong botUserId,
         ObjectId menuId,
         RoleMenuDeletionOperations operations,
-        Exception deletionException)
+        RoleMenuDeletionFailure panelFailure)
     {
         using var cleanupCancellation = new CancellationTokenSource(
             RoleMenuConstants.CleanupTimeout);
@@ -324,11 +381,11 @@ internal static class RoleMenuDeletionWorkflow
                 return inspected with
                 {
                     Issue = RoleMenuPanelDeletionIssue.DeletionFailed,
-                    Exception = deletionException
+                    Failures = [panelFailure]
                 };
             }
 
-            return inspected with { Exception = deletionException };
+            return inspected with { Failures = [panelFailure] };
         }
         catch (OperationCanceledException) when (operations.IsShuttingDown())
         {
@@ -339,8 +396,12 @@ internal static class RoleMenuDeletionWorkflow
             return new PanelDeletionResult(
                 RoleMenuPanelDeletionStatus.OutcomeUnknown,
                 RoleMenuPanelDeletionIssue.ReconciliationFailed,
-                deletionException,
-                reconciliationException);
+                [
+                    panelFailure,
+                    new RoleMenuDeletionFailure(
+                        RoleMenuDeletionFailurePhase.PanelReconciliation,
+                        reconciliationException)
+                ]);
         }
     }
 

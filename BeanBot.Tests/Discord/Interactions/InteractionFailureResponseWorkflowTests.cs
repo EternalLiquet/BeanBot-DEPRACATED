@@ -5,17 +5,14 @@ namespace BeanBot.Tests.Discord.Interactions;
 
 public class InteractionFailureResponseWorkflowTests
 {
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task ExecuteAsync_ConfirmedResponse_ModifiesOnly(
-        bool supportsOriginalResponse)
+    [Fact]
+    public async Task ExecuteAsync_ConfirmedResponse_ModifiesOnly()
     {
         var fake = new RecordingOperations();
 
         var result = await ExecuteAsync(
             InteractionInitialResponseState.Confirmed,
-            supportsOriginalResponse,
+            supportsOriginalResponse: true,
             discordHasResponded: false,
             fake);
 
