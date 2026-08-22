@@ -27,11 +27,12 @@ public class BeanBotInteractionModuleTests
     [InlineData(nameof(BeanBotInteractionModule.HelpAsync))]
     public void Commands_RunInlineSoFailuresStayInsideTheTrackedExecution(string methodName)
     {
-        var method = typeof(BeanBotInteractionModule).GetMethod(
-            methodName,
-            BindingFlags.Instance | BindingFlags.Public);
+        var method = Assert.IsAssignableFrom<MethodInfo>(
+            typeof(BeanBotInteractionModule).GetMethod(
+                methodName,
+                BindingFlags.Instance | BindingFlags.Public));
         var attribute = Assert.IsType<SlashCommandAttribute>(
-            Assert.IsType<MethodInfo>(method).GetCustomAttribute<SlashCommandAttribute>());
+            method.GetCustomAttribute<SlashCommandAttribute>());
 
         Assert.Equal(RunMode.Sync, attribute.RunMode);
     }

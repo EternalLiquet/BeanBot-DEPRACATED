@@ -206,7 +206,7 @@ public class LogHandlerTests
     }
 
     private static object? CreateGeneratedLogArgument(
-        ParameterInfo parameter,
+        System.Reflection.ParameterInfo parameter,
         Microsoft.Extensions.Logging.ILogger logger)
     {
         var parameterType = parameter.ParameterType;
