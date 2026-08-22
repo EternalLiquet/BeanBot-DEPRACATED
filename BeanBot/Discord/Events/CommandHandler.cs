@@ -64,11 +64,11 @@ public sealed class CommandHandler : IDisposable
         }
 
         BeanBotLog.CommandsInstalling(_logger);
+        await _commandService.AddModulesAsync(assembly: Assembly.GetEntryAssembly() ?? typeof(CommandHandler).Assembly,
+                                              services: _services);
         _discordClient.MessageReceived += HandleCommandAsync;
         _commandService.CommandExecuted += _logHandler.LogCommands;
         _commandService.CommandExecuted += _feedbackResponder.RespondAsync;
-        await _commandService.AddModulesAsync(assembly: Assembly.GetEntryAssembly() ?? typeof(CommandHandler).Assembly,
-                                              services: _services);
         _initialized = true;
     }
 
