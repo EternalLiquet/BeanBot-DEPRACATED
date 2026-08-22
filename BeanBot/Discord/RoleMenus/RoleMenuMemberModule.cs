@@ -601,14 +601,13 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
 
     private static List<RoleMenuRoleSnapshot> CreateRoleSnapshots(
         IGuildUser user)
-        => user.Guild.Roles
+        => [.. user.Guild.Roles
             .Select(role => new RoleMenuRoleSnapshot(
                 role.Id,
                 role.Name,
                 role.Id == user.Guild.EveryoneRole.Id,
                 role.IsManaged,
-                role.Position))
-            .ToList();
+                role.Position))];
 
     private static RoleMenuActorSnapshot CreateActorSnapshot(IGuildUser user)
     {

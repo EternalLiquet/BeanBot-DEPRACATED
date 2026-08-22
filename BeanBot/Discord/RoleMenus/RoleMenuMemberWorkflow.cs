@@ -108,31 +108,11 @@ internal static class RoleMenuMemberWorkflow
             throw new ArgumentException("A role menu ID is required.", nameof(menuId));
         }
 
-        if (guildId == 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(guildId));
-        }
-
-        if (botUserId == 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(botUserId));
-        }
-
-        if (interactionChannelId == 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(interactionChannelId));
-        }
-
-        if (memberUserId == 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(memberUserId));
-        }
-
-        if (boundPanelMessageId == 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(boundPanelMessageId));
-        }
-
+        ArgumentOutOfRangeException.ThrowIfZero(guildId);
+        ArgumentOutOfRangeException.ThrowIfZero(botUserId);
+        ArgumentOutOfRangeException.ThrowIfZero(interactionChannelId);
+        ArgumentOutOfRangeException.ThrowIfZero(memberUserId);
+        ArgumentOutOfRangeException.ThrowIfZero(boundPanelMessageId);
         ArgumentNullException.ThrowIfNull(selectedRoleValues);
         ArgumentNullException.ThrowIfNull(operations);
         ValidateOperations(operations);

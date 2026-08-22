@@ -645,7 +645,7 @@ public class RoleMenuMemberWorkflowTests
                     CreateRole(ThirdRoleId)
                 ],
                 new RoleMenuActorSnapshot(true, 100, false));
-            MemberRoleIds = memberRoleIds.ToHashSet();
+            MemberRoleIds = [.. memberRoleIds];
         }
 
         internal RoleMenuSettings? Settings { get; set; }
@@ -658,7 +658,8 @@ public class RoleMenuMemberWorkflowTests
         internal List<ObjectId> PanelReadMenuIds { get; } = [];
         internal List<(ulong ChannelId, ulong MessageId)> PanelReadLocations { get; } = [];
         internal Func<int, CancellationToken, Task<RoleMenuMemberSnapshot?>>?
-            ReadMemberHandler { get; set; }
+            ReadMemberHandler
+        { get; set; }
         internal Func<ulong, CancellationToken, Task>? AddRoleHandler { get; set; }
         internal Func<ulong, CancellationToken, Task>? RemoveRoleHandler { get; set; }
 
