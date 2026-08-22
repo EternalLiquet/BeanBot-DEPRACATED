@@ -418,23 +418,21 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
             result.AddedRoleIds.Count,
             result.RemovedRoleIds.Count,
             result.Failures.Count);
-        if (result.Failures.Count > 0 || result.Interruption is not null)
+        var reconciled = await TryReconcileAsync(
+            menuId,
+            parsed.RoleIds,
+            planResult.Plan.SelectedRoleIds,
+            beforeRoleIds,
+            cancellationToken);
+        if (reconciled is not null)
         {
-            var reconciled = await TryReconcileAsync(
-                menuId,
-                parsed.RoleIds,
-                planResult.Plan.SelectedRoleIds,
-                beforeRoleIds,
-                cancellationToken);
-            if (reconciled is not null)
-            {
-                return new RoleMenuApplicationResult(
-                    FormatReconciliation(reconciled, roleNames));
-            }
+            return new RoleMenuApplicationResult(
+                FormatReconciliation(reconciled, roleNames));
         }
 
         return new RoleMenuApplicationResult(
-            FormatSynchronizationResult(result, roleNames));
+            "Bean Bot couldn't recheck Discord's final role state. Open the role menu again " +
+            "to verify your current roles before retrying; no roles outside this menu were targeted.");
 
         static RoleMenuApplicationResult Completed(string content)
             => new(content);

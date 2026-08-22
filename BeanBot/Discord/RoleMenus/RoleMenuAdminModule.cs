@@ -1011,12 +1011,12 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
                     botUserId);
                 if (panel is null)
                 {
-                    await RestorePreviewFreshAsync(
-                        draft,
-                        roles,
+                    _roleMenuService.CompletePublish(draft.Id, guildId, administratorId);
+                    await SendFreshFeedbackAsync(
                         "Discord reported an error while publishing, and Bean Bot could not " +
-                        "confirm whether a panel was created. Check the target channel; retrying " +
-                        "this preview safely reuses the same menu ID.");
+                        "confirm whether a panel was created. Automatic retry was disabled to " +
+                        "prevent a duplicate. Check the target channel and remove any orphaned " +
+                        "panel before running `/role-menu create` again.");
                     return null;
                 }
             }
@@ -1054,25 +1054,34 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
                 var rollbackSucceeded = await TryRollbackPanelBoundedAsync(
                     publishedPanel,
                     menuId);
-                await RestorePreviewFreshAsync(
-                    draft,
-                    roles,
-                    rollbackSucceeded
-                        ? "Bean Bot confirmed the settings were not saved and removed the panel. " +
-                          "You can retry this preview safely."
-                        : "Bean Bot confirmed the settings were not saved but could not remove " +
-                          "the panel. Delete that orphaned panel manually before retrying.");
+                if (rollbackSucceeded)
+                {
+                    await RestorePreviewFreshAsync(
+                        draft,
+                        roles,
+                        "Bean Bot confirmed the settings were not saved and removed the panel. " +
+                        "You can retry this preview safely.");
+                }
+                else
+                {
+                    _roleMenuService.CompletePublish(draft.Id, guildId, administratorId);
+                    await SendFreshFeedbackAsync(
+                        "Bean Bot confirmed the settings were not saved but could not remove the " +
+                        "panel. Automatic retry was disabled to prevent a duplicate. Delete that " +
+                        "orphaned panel manually before running `/role-menu create` again.");
+                }
+
                 return null;
             }
 
             if (!persistenceCommitted)
             {
-                await RestorePreviewFreshAsync(
-                    draft,
-                    roles,
+                _roleMenuService.CompletePublish(draft.Id, guildId, administratorId);
+                await SendFreshFeedbackAsync(
                     "Bean Bot could not confirm whether MongoDB saved this panel. The public " +
-                    "panel was left in place to avoid deleting a possibly committed menu. " +
-                    "Retrying this preview reuses and reconciles the same menu ID.");
+                    "panel was left in place to avoid deleting a possibly committed menu, and " +
+                    "automatic retry was disabled to prevent a duplicate. Inspect the target " +
+                    "channel before running `/role-menu create` again.");
                 return null;
             }
         }

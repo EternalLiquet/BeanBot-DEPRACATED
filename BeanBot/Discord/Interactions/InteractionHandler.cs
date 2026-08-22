@@ -13,7 +13,10 @@ internal sealed class InteractionHandler : IAsyncDisposable
     internal static readonly TimeSpan RegistrationTimeout = TimeSpan.FromSeconds(30);
     internal static readonly TimeSpan ShutdownDrainTimeout = TimeSpan.FromSeconds(5);
     internal static readonly TimeSpan FailureResponseTimeout = TimeSpan.FromSeconds(3);
+    internal const int MaximumConcurrentOperations = 64;
+    internal const int MaximumConcurrentBusyResponses = 4;
     private const string SafeFailureMessage = "Bean Bot couldn't complete that command. Try again in a moment.";
+    private const string BusyMessage = "Bean Bot is busy right now. Try again in a moment.";
 
     private readonly DiscordSocketClient _discordClient;
     private readonly InteractionService _interactionService;
@@ -21,6 +24,7 @@ internal sealed class InteractionHandler : IAsyncDisposable
     private readonly InteractionCommandRegistration _registration;
     private readonly InteractionExecutionContext _executionContext;
     private readonly InteractionOperationTracker _operationTracker;
+    private readonly InteractionOperationTracker _busyResponseTracker;
     private readonly ILogger<InteractionHandler> _logger;
     private bool _initialized;
 
@@ -41,7 +45,13 @@ internal sealed class InteractionHandler : IAsyncDisposable
         _operationTracker = new InteractionOperationTracker(
             ShutdownDrainTimeout,
             _logger,
-            applicationLifetime.ApplicationStopping);
+            applicationLifetime.ApplicationStopping,
+            MaximumConcurrentOperations);
+        _busyResponseTracker = new InteractionOperationTracker(
+            ShutdownDrainTimeout,
+            _logger,
+            applicationLifetime.ApplicationStopping,
+            MaximumConcurrentBusyResponses);
         _registration = new InteractionCommandRegistration(
             () => _interactionService.RegisterCommandsGloballyAsync(deleteMissing: true),
             RegistrationTimeout);
@@ -78,7 +88,9 @@ internal sealed class InteractionHandler : IAsyncDisposable
             _initialized = false;
         }
 
-        await _operationTracker.DisposeAsync();
+        await Task.WhenAll(
+            _operationTracker.DisposeAsync().AsTask(),
+            _busyResponseTracker.DisposeAsync().AsTask());
     }
 
     internal Task HandleReadyAsync()
@@ -87,8 +99,15 @@ internal sealed class InteractionHandler : IAsyncDisposable
     internal Task HandleInteractionAsync(SocketInteraction interaction)
     {
         ArgumentNullException.ThrowIfNull(interaction);
-        return _operationTracker.TrackAsync(cancellationToken =>
+        var admission = _operationTracker.Start(cancellationToken =>
             ExecuteInteractionAsync(interaction, cancellationToken));
+        if (admission == InteractionOperationAdmission.Saturated)
+        {
+            _busyResponseTracker.Start(cancellationToken =>
+                TryRespondWithBusyAsync(interaction, cancellationToken));
+        }
+
+        return Task.CompletedTask;
     }
 
     private async Task ExecuteInteractionAsync(
@@ -165,6 +184,34 @@ internal sealed class InteractionHandler : IAsyncDisposable
                     ephemeral: true,
                     options: requestOptions);
             }
+        }
+        catch (OperationCanceledException) when (responseCancellation.IsCancellationRequested)
+        {
+            BeanBotLog.InteractionFailureResponseCanceled(_logger, interaction.Type);
+        }
+        catch (Exception exception)
+        {
+            BeanBotLog.InteractionFailureResponseFailed(_logger, interaction.Type, exception);
+        }
+    }
+
+    private async Task TryRespondWithBusyAsync(
+        SocketInteraction interaction,
+        CancellationToken cancellationToken)
+    {
+        using var responseCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken);
+        responseCancellation.CancelAfter(FailureResponseTimeout);
+        try
+        {
+            await interaction.RespondAsync(
+                BusyMessage,
+                ephemeral: true,
+                allowedMentions: AllowedMentions.None,
+                options: new RequestOptions
+                {
+                    CancelToken = responseCancellation.Token
+                });
         }
         catch (OperationCanceledException) when (responseCancellation.IsCancellationRequested)
         {

@@ -68,4 +68,51 @@ public class InteractionOperationTrackerTests
 
         Assert.False(invoked);
     }
+
+    [Fact]
+    public async Task Start_RunsOperationWithoutMakingCallerAwaitItsCompletion()
+    {
+        var tracker = new InteractionOperationTracker(
+            TimeSpan.FromSeconds(1),
+            NullLogger.Instance);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var admission = tracker.Start(_ =>
+        {
+            started.SetResult();
+            return release.Task;
+        });
+
+        Assert.Equal(InteractionOperationAdmission.Started, admission);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.False(release.Task.IsCompleted);
+        release.SetResult();
+        await tracker.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Start_AtCapacityRejectsWithoutCreatingAnUnboundedWaiter()
+    {
+        var tracker = new InteractionOperationTracker(
+            TimeSpan.FromSeconds(1),
+            NullLogger.Instance,
+            maximumOperations: 1);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Assert.Equal(
+            InteractionOperationAdmission.Started,
+            tracker.Start(_ => release.Task));
+        var secondInvoked = false;
+
+        var admission = tracker.Start(_ =>
+        {
+            secondInvoked = true;
+            return Task.CompletedTask;
+        });
+
+        Assert.Equal(InteractionOperationAdmission.Saturated, admission);
+        Assert.False(secondInvoked);
+        release.SetResult();
+        await tracker.DisposeAsync();
+    }
 }

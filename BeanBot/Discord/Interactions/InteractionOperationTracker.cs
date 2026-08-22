@@ -3,11 +3,19 @@ using Microsoft.Extensions.Logging;
 
 namespace BeanBot.Discord.Interactions;
 
+internal enum InteractionOperationAdmission
+{
+    Started,
+    Saturated,
+    Stopping
+}
+
 internal sealed class InteractionOperationTracker : IAsyncDisposable
 {
     private readonly object _syncRoot = new();
     private readonly HashSet<Task> _operations = [];
     private readonly TimeSpan _drainTimeout;
+    private readonly int _maximumOperations;
     private readonly ILogger _logger;
     private readonly CancellationTokenSource _shutdownCancellation;
     private readonly TaskCompletionSource _disposeCompletion = new(
@@ -18,10 +26,13 @@ internal sealed class InteractionOperationTracker : IAsyncDisposable
     internal InteractionOperationTracker(
         TimeSpan drainTimeout,
         ILogger logger,
-        CancellationToken applicationStopping = default)
+        CancellationToken applicationStopping = default,
+        int maximumOperations = 64)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(drainTimeout, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maximumOperations, 1);
         _drainTimeout = drainTimeout;
+        _maximumOperations = maximumOperations;
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _shutdownCancellation = CancellationTokenSource.CreateLinkedTokenSource(applicationStopping);
     }
@@ -30,19 +41,48 @@ internal sealed class InteractionOperationTracker : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(beginOperation);
 
-        Task operation;
+        return TryBeginOperation(beginOperation, out var operation)
+            == InteractionOperationAdmission.Started
+            ? ObserveAsync(operation)
+            : Task.CompletedTask;
+    }
+
+    internal InteractionOperationAdmission Start(
+        Func<CancellationToken, Task> beginOperation)
+    {
+        ArgumentNullException.ThrowIfNull(beginOperation);
+
+        var admission = TryBeginOperation(beginOperation, out var operation);
+        if (admission == InteractionOperationAdmission.Started)
+        {
+            ObserveDetached(ObserveAsync(operation));
+        }
+
+        return admission;
+    }
+
+    private InteractionOperationAdmission TryBeginOperation(
+        Func<CancellationToken, Task> beginOperation,
+        out Task operation)
+    {
         lock (_syncRoot)
         {
             if (_stopping || _shutdownCancellation.IsCancellationRequested)
             {
-                return Task.CompletedTask;
+                operation = Task.CompletedTask;
+                return InteractionOperationAdmission.Stopping;
+            }
+
+            if (_operations.Count >= _maximumOperations)
+            {
+                operation = Task.CompletedTask;
+                return InteractionOperationAdmission.Saturated;
             }
 
             operation = beginOperation(_shutdownCancellation.Token);
             _operations.Add(operation);
+            return InteractionOperationAdmission.Started;
         }
-
-        return ObserveAsync(operation);
     }
 
     public async ValueTask DisposeAsync()
@@ -122,5 +162,13 @@ internal sealed class InteractionOperationTracker : IAsyncDisposable
             },
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+    private static void ObserveDetached(Task operation)
+        => _ = operation.ContinueWith(
+            completedTask => _ = completedTask.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously
+            | TaskContinuationOptions.OnlyOnFaulted,
             TaskScheduler.Default);
 }
