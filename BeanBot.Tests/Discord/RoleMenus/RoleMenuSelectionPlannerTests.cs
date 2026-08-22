@@ -44,7 +44,7 @@ public class RoleMenuSelectionPlannerTests
             [1UL, 2UL],
             ["2"],
             [1UL],
-            RoleMenuSelectionMode.Single);
+            RoleMenuSelectionMode.Exclusive);
 
         Assert.True(result.IsValid);
         var plan = Assert.IsType<RoleMenuSelectionPlan>(result.Plan);
@@ -89,7 +89,7 @@ public class RoleMenuSelectionPlannerTests
             [1UL, 2UL],
             ["1", "2"],
             [],
-            RoleMenuSelectionMode.Single);
+            RoleMenuSelectionMode.Exclusive);
 
         Assert.Equal(RoleMenuSelectionIssue.TooManySelections, result.Issue);
     }

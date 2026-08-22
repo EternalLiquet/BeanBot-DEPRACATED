@@ -1,9 +1,19 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace BeanBot.Discord.RoleMenus;
 
+[SuppressMessage(
+    "Design",
+    "CA1001:Types that own disposable fields should be disposable",
+    Justification = "Disposal would race timed-out leases that may complete after shutdown drain.")]
 internal sealed class RoleMenuMutationCoordinator
 {
     private const int StripeCount = 64;
 
+    [SuppressMessage(
+        "Design",
+        "CA1001:Types that own disposable fields should be disposable",
+        Justification = "The process-lifetime owner intentionally preserves timed-out leases.")]
     private sealed class AsyncReaderWriterStripe
     {
         private sealed class Lease(Action release) : IDisposable

@@ -30,7 +30,7 @@ public class RoleMenuComponentsTests
             menuId,
             "Games",
             string.Empty,
-            RoleMenuSelectionMode.Single);
+            RoleMenuSelectionMode.Exclusive);
 
         Assert.True(embed.Footer.HasValue);
         var footer = embed.Footer.GetValueOrDefault();
@@ -64,7 +64,7 @@ public class RoleMenuComponentsTests
     [Fact]
     public void BuildMemberSelector_SingleMode_BoundsSelectionAndRepairsConflictingDefaults()
     {
-        var settings = CreateSettings(RoleMenuSelectionMode.Single);
+        var settings = CreateSettings(RoleMenuSelectionMode.Exclusive);
         var parsed = CreateParsedSettings();
 
         var selector = RoleMenuComponents.BuildMemberSelector(
@@ -78,6 +78,31 @@ public class RoleMenuComponentsTests
         Assert.Equal(1, select.MaxValues);
         Assert.Single(select.Options, option => option.IsDefault == true);
         Assert.True(selector.HadConflictingSingleSelection);
+    }
+
+    [Fact]
+    public void BuildDeleteConfirmationEmbed_BoundsCorruptStoredTitleWithoutSplittingUnicode()
+    {
+        var settings = CreateSettings(
+            RoleMenuSelectionMode.Multiple,
+            new string('a', 98) + "😀" + "tail");
+
+        var embed = RoleMenuComponents.BuildDeleteConfirmationEmbed(settings);
+
+        Assert.NotNull(embed.Description);
+        Assert.True(embed.Description.Length <= EmbedBuilder.MaxDescriptionLength);
+        Assert.Contains(new string('a', 98) + "…", embed.Description, StringComparison.Ordinal);
+        Assert.DoesNotContain(embed.Description, char.IsSurrogate);
+    }
+
+    [Fact]
+    public void BuildDeleteConfirmationEmbed_UsesFallbackForBlankStoredTitle()
+    {
+        var settings = CreateSettings(RoleMenuSelectionMode.Multiple, " ");
+
+        var embed = RoleMenuComponents.BuildDeleteConfirmationEmbed(settings);
+
+        Assert.Contains("Untitled or stale role menu", embed.Description, StringComparison.Ordinal);
     }
 
     private static SelectMenuComponent GetSelect(MessageComponent components)
@@ -97,13 +122,15 @@ public class RoleMenuComponentsTests
         Assert.Equal(RoleMenuCustomIds.Clear(menuId, userId, messageId), button.CustomId);
     }
 
-    private static RoleMenuSettings CreateSettings(RoleMenuSelectionMode selectionMode)
+    private static RoleMenuSettings CreateSettings(
+        RoleMenuSelectionMode selectionMode,
+        string title = "Games")
         => new(
             ObjectId.GenerateNewId(),
             "1",
             "2",
             "3",
-            "Games",
+            title,
             string.Empty,
             ["10", "20"],
             selectionMode);

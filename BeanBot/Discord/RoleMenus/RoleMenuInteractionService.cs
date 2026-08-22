@@ -10,20 +10,17 @@ public sealed class RoleMenuInteractionService
 {
     private readonly RoleMenuRepository _repository;
     private readonly RoleMenuDraftRegistry _draftRegistry;
-    private readonly RoleMenuMemberSynchronizer _memberSynchronizer;
     private readonly RoleMenuMutationCoordinator _mutationCoordinator;
     private readonly InteractionExecutionContext _executionContext;
 
     internal RoleMenuInteractionService(
         RoleMenuRepository repository,
         RoleMenuDraftRegistry draftRegistry,
-        RoleMenuMemberSynchronizer memberSynchronizer,
         RoleMenuMutationCoordinator mutationCoordinator,
         InteractionExecutionContext executionContext)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _draftRegistry = draftRegistry ?? throw new ArgumentNullException(nameof(draftRegistry));
-        _memberSynchronizer = memberSynchronizer ?? throw new ArgumentNullException(nameof(memberSynchronizer));
         _mutationCoordinator = mutationCoordinator ?? throw new ArgumentNullException(nameof(mutationCoordinator));
         _executionContext = executionContext ?? throw new ArgumentNullException(nameof(executionContext));
     }
@@ -82,11 +79,6 @@ public sealed class RoleMenuInteractionService
     internal void CompletePublish(Guid draftId, ulong guildId, ulong userId)
         => _draftRegistry.CompletePublish(draftId, guildId, userId);
 
-    internal Task InsertAsync(
-        RoleMenuSettings settings,
-        CancellationToken cancellationToken)
-        => _repository.InsertAsync(settings, cancellationToken);
-
     internal Task UpsertAsync(
         RoleMenuSettings settings,
         CancellationToken cancellationToken)
@@ -124,7 +116,7 @@ public sealed class RoleMenuInteractionService
         RoleMenuSelectionMode selectionMode,
         IRoleMenuMemberMutator member,
         CancellationToken cancellationToken)
-        => _memberSynchronizer.SynchronizeAsync(
+        => RoleMenuMemberSynchronizer.SynchronizeAsync(
             plan,
             selectionMode,
             member,

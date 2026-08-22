@@ -8,7 +8,6 @@ namespace BeanBot.Persistence.Repositories;
 
 internal interface IRoleMenuStore
 {
-    Task InsertAsync(RoleMenuSettings settings, CancellationToken cancellationToken);
     Task UpsertAsync(RoleMenuSettings settings, CancellationToken cancellationToken);
     Task<RoleMenuSettings?> GetByIdAsync(
         ObjectId id,
@@ -34,9 +33,6 @@ internal sealed class MongoRoleMenuStore : IRoleMenuStore
             .GetCollection<RoleMenuSettings>("roleMenus");
     }
 
-    public Task InsertAsync(RoleMenuSettings settings, CancellationToken cancellationToken)
-        => _roleMenus.InsertOneAsync(settings, cancellationToken: cancellationToken);
-
     public Task UpsertAsync(RoleMenuSettings settings, CancellationToken cancellationToken)
     {
         var filter = Builders<RoleMenuSettings>.Filter.And(
@@ -51,7 +47,7 @@ internal sealed class MongoRoleMenuStore : IRoleMenuStore
             cancellationToken);
     }
 
-    public Task<RoleMenuSettings?> GetByIdAsync(
+    public async Task<RoleMenuSettings?> GetByIdAsync(
         ObjectId id,
         string guildId,
         CancellationToken cancellationToken)
@@ -59,7 +55,7 @@ internal sealed class MongoRoleMenuStore : IRoleMenuStore
         var filter = Builders<RoleMenuSettings>.Filter.And(
             Builders<RoleMenuSettings>.Filter.Eq(candidate => candidate.Id, id),
             Builders<RoleMenuSettings>.Filter.Eq(candidate => candidate.GuildId, guildId));
-        return _roleMenus.Find(filter).FirstOrDefaultAsync(cancellationToken);
+        return await _roleMenus.Find(filter).FirstOrDefaultAsync(cancellationToken);
     }
 
     public Task<List<RoleMenuSettings>> GetByGuildAsync(
@@ -109,20 +105,6 @@ internal sealed class RoleMenuRepository
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    public async Task InsertAsync(
-        RoleMenuSettings settings,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var now = DateTime.UtcNow;
-        settings.CreatedAtUtc = now;
-        settings.UpdatedAtUtc = now;
-        await _store.InsertAsync(settings, cancellationToken);
-        BeanBotLog.RoleMenuSettingsCreated(_logger, settings.Id.ToString());
-    }
-
     public async Task UpsertAsync(
         RoleMenuSettings settings,
         CancellationToken cancellationToken = default)
@@ -138,7 +120,7 @@ internal sealed class RoleMenuRepository
 
         settings.UpdatedAtUtc = now;
         await _store.UpsertAsync(settings, cancellationToken);
-        BeanBotLog.RoleMenuSettingsSaved(_logger, settings.Id.ToString());
+        BeanBotLog.RoleMenuSettingsSaved(_logger, settings.Id);
     }
 
     public Task<RoleMenuSettings?> GetAsync(
@@ -182,7 +164,7 @@ internal sealed class RoleMenuRepository
         var deleted = await _store.DeleteAsync(id, guildId, cancellationToken);
         if (deleted)
         {
-            BeanBotLog.RoleMenuSettingsDeleted(_logger, id.ToString());
+            BeanBotLog.RoleMenuSettingsDeleted(_logger, id);
         }
 
         return deleted;

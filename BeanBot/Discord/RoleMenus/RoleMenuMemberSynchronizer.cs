@@ -36,9 +36,9 @@ internal sealed record RoleMenuSynchronizationResult(
                                 && Interruption is null;
 }
 
-internal sealed class RoleMenuMemberSynchronizer
+internal static class RoleMenuMemberSynchronizer
 {
-    internal async Task<RoleMenuSynchronizationResult> SynchronizeAsync(
+    internal static async Task<RoleMenuSynchronizationResult> SynchronizeAsync(
         RoleMenuSelectionPlan plan,
         RoleMenuSelectionMode selectionMode,
         IRoleMenuMemberMutator member,
@@ -58,7 +58,7 @@ internal sealed class RoleMenuMemberSynchronizer
                     roleId,
                     "add",
                     RoleMenuMutationInterruptionKind.NotAttempted,
-                    selectionMode == RoleMenuSelectionMode.Single
+                    selectionMode == RoleMenuSelectionMode.Exclusive
                         ? plan.RolesToRemove
                         : []);
             }
@@ -74,7 +74,7 @@ internal sealed class RoleMenuMemberSynchronizer
                     roleId,
                     "add",
                     RoleMenuMutationInterruptionKind.OutcomeUnknown,
-                    selectionMode == RoleMenuSelectionMode.Single
+                    selectionMode == RoleMenuSelectionMode.Exclusive
                         ? plan.RolesToRemove
                         : []);
             }
@@ -84,7 +84,7 @@ internal sealed class RoleMenuMemberSynchronizer
             }
         }
 
-        if (selectionMode == RoleMenuSelectionMode.Single
+        if (selectionMode == RoleMenuSelectionMode.Exclusive
             && plan.RolesToAdd.Count > 0
             && added.Count == 0)
         {

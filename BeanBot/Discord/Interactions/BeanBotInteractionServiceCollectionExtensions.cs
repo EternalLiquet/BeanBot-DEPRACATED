@@ -25,7 +25,6 @@ internal static class BeanBotInteractionServiceCollectionExtensions
         services.AddSingleton(provider => new RoleMenuInteractionService(
             provider.GetRequiredService<RoleMenuRepository>(),
             provider.GetRequiredService<RoleMenuDraftRegistry>(),
-            provider.GetRequiredService<RoleMenuMemberSynchronizer>(),
             provider.GetRequiredService<RoleMenuMutationCoordinator>(),
             provider.GetRequiredService<InteractionExecutionContext>()));
         services.AddSingleton<InteractionHandler>();

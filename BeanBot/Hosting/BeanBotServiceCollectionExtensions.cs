@@ -125,7 +125,6 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<RoleReactService>();
         services.AddSingleton<RoleMenuRepository>();
         services.AddSingleton<RoleMenuDraftRegistry>();
-        services.AddSingleton(_ => new RoleMenuMemberSynchronizer());
         services.AddSingleton(_ => new RoleMenuMutationCoordinator());
         services.AddSingleton<DiscordMessageCleanupService>();
 

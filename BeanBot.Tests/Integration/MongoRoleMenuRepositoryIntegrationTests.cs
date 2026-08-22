@@ -91,7 +91,7 @@ public sealed class MongoRoleMenuRepositoryIntegrationTests
                 "Cross-guild replacement",
                 string.Empty,
                 ["40"],
-                RoleMenuSelectionMode.Single);
+                RoleMenuSelectionMode.Exclusive);
             await Assert.ThrowsAnyAsync<MongoWriteException>(() =>
                 restartedReader.UpsertAsync(crossGuildReplacement, cancellation.Token));
             var stillPersisted = Assert.IsType<RoleMenuSettings>(

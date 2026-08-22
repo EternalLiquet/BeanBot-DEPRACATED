@@ -18,7 +18,7 @@ public class RoleMenuSettingsTests
             "Games",
             "Choose games",
             ["4", "5"],
-            RoleMenuSelectionMode.Single)
+            RoleMenuSelectionMode.Exclusive)
         {
             CreatedAtUtc = new DateTime(2026, 8, 22, 12, 0, 0, DateTimeKind.Utc),
             UpdatedAtUtc = new DateTime(2026, 8, 22, 12, 1, 0, DateTimeKind.Utc)
@@ -27,7 +27,7 @@ public class RoleMenuSettingsTests
         var document = expected.ToBsonDocument();
         var actual = BsonSerializer.Deserialize<RoleMenuSettings>(document);
 
-        Assert.Equal("Single", document["selectionMode"].AsString);
+        Assert.Equal("Exclusive", document["selectionMode"].AsString);
         Assert.Equal(expected.Id, actual.Id);
         Assert.Equal(expected.GuildId, actual.GuildId);
         Assert.Equal(expected.ChannelId, actual.ChannelId);

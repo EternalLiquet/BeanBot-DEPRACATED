@@ -38,7 +38,6 @@ public class BeanBotServiceRegistrationTests
         AssertSingleton<RoleReactService>(services);
         AssertSingleton<RoleMenuRepository>(services);
         AssertSingleton<RoleMenuDraftRegistry>(services);
-        AssertSingleton<RoleMenuMemberSynchronizer>(services);
         AssertSingleton<RoleMenuMutationCoordinator>(services);
         AssertSingleton<PunProvider>(services);
         AssertSingleton<IPunProvider>(services);

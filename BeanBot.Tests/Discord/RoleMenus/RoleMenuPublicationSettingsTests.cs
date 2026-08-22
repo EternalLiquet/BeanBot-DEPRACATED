@@ -34,7 +34,7 @@ public class RoleMenuPublicationSettingsTests
             draft.Title,
             draft.Description,
             ["999"],
-            RoleMenuSelectionMode.Single);
+            RoleMenuSelectionMode.Exclusive);
 
         Assert.False(RoleMenuPublicationSettings.Matches(mismatched, draft, 30UL));
     }

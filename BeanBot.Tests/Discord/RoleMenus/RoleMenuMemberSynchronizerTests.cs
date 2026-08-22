@@ -12,9 +12,9 @@ public class RoleMenuMemberSynchronizerTests
         var mutator = new RecordingMutator();
         var plan = new RoleMenuSelectionPlan([2UL], [2UL], [1UL]);
 
-        var result = await new RoleMenuMemberSynchronizer().SynchronizeAsync(
+        var result = await RoleMenuMemberSynchronizer.SynchronizeAsync(
             plan,
-            RoleMenuSelectionMode.Single,
+            RoleMenuSelectionMode.Exclusive,
             mutator,
             CancellationToken.None);
 
@@ -34,9 +34,9 @@ public class RoleMenuMemberSynchronizerTests
         };
         var plan = new RoleMenuSelectionPlan([2UL], [2UL], [1UL]);
 
-        var result = await new RoleMenuMemberSynchronizer().SynchronizeAsync(
+        var result = await RoleMenuMemberSynchronizer.SynchronizeAsync(
             plan,
-            RoleMenuSelectionMode.Single,
+            RoleMenuSelectionMode.Exclusive,
             mutator,
             CancellationToken.None);
 
@@ -63,7 +63,7 @@ public class RoleMenuMemberSynchronizerTests
             [1UL, 2UL],
             [3UL, 4UL]);
 
-        var result = await new RoleMenuMemberSynchronizer().SynchronizeAsync(
+        var result = await RoleMenuMemberSynchronizer.SynchronizeAsync(
             plan,
             RoleMenuSelectionMode.Multiple,
             mutator,
@@ -89,7 +89,7 @@ public class RoleMenuMemberSynchronizerTests
         };
         var plan = new RoleMenuSelectionPlan([1UL, 2UL], [1UL, 2UL], []);
 
-        var result = await new RoleMenuMemberSynchronizer().SynchronizeAsync(
+        var result = await RoleMenuMemberSynchronizer.SynchronizeAsync(
             plan,
             RoleMenuSelectionMode.Multiple,
             mutator,
@@ -116,7 +116,7 @@ public class RoleMenuMemberSynchronizerTests
         };
         var plan = new RoleMenuSelectionPlan([1UL], [1UL], []);
 
-        var result = await new RoleMenuMemberSynchronizer().SynchronizeAsync(
+        var result = await RoleMenuMemberSynchronizer.SynchronizeAsync(
             plan,
             RoleMenuSelectionMode.Multiple,
             mutator,

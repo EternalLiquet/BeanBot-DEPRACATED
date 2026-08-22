@@ -767,7 +767,7 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
 
         if (string.Equals(value, "single", StringComparison.Ordinal))
         {
-            selectionMode = RoleMenuSelectionMode.Single;
+            selectionMode = RoleMenuSelectionMode.Exclusive;
             return true;
         }
 
@@ -790,7 +790,7 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
             .Select(role => new RoleMenuRoleSnapshot(
                 role.Id,
                 role.Name,
-                role.IsEveryone,
+                role.Id == bot.Guild.EveryoneRole.Id,
                 role.IsManaged,
                 role.Position))
             .ToList();
@@ -817,7 +817,7 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
     private static string FormatRoleValidationFailure(
         RoleMenuRoleValidationResult validation)
     {
-        var issue = validation.Issues.First();
+        var issue = validation.Issues[0];
         var roleName = string.IsNullOrWhiteSpace(issue.RoleName)
             ? "A selected role"
             : $"The role **{issue.RoleName}**";
@@ -1549,7 +1549,7 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         await ReplaceResponseAsync(content, feedbackCancellation.Token);
     }
 
-    private Task ReplaceResponseAsync(
+    private Task<IUserMessage> ReplaceResponseAsync(
         string content,
         CancellationToken cancellationToken,
         Embed? embed = null,

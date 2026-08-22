@@ -7,7 +7,7 @@ namespace BeanBot.Persistence.Models;
 public enum RoleMenuSelectionMode
 {
     Multiple,
-    Single
+    Exclusive
 }
 
 [BsonIgnoreExtraElements]

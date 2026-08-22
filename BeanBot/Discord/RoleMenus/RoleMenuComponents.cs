@@ -20,7 +20,7 @@ internal static class RoleMenuComponents
         string description,
         RoleMenuSelectionMode selectionMode)
     {
-        var modeText = selectionMode == RoleMenuSelectionMode.Single
+        var modeText = selectionMode == RoleMenuSelectionMode.Exclusive
             ? "Choose one role"
             : "Choose any combination";
         return new EmbedBuilder()
@@ -54,7 +54,7 @@ internal static class RoleMenuComponents
         {
             roleMentions = "No valid roles remain.";
         }
-        var selectionMode = draft.SelectionMode == RoleMenuSelectionMode.Single
+        var selectionMode = draft.SelectionMode == RoleMenuSelectionMode.Exclusive
             ? "Single selection"
             : "Multiple selection";
         return new EmbedBuilder()
@@ -103,7 +103,7 @@ internal static class RoleMenuComponents
         var currentConfiguredRoleIds = parsed.RoleIds
             .Where(currentRoleIds.Contains)
             .ToList();
-        var conflictingSingleSelection = settings.SelectionMode == RoleMenuSelectionMode.Single
+        var conflictingSingleSelection = settings.SelectionMode == RoleMenuSelectionMode.Exclusive
             && currentConfiguredRoleIds.Count > 1;
         HashSet<ulong> defaultRoleIds = conflictingSingleSelection
             ? [currentConfiguredRoleIds[0]]
@@ -113,7 +113,7 @@ internal static class RoleMenuComponents
             .WithCustomId(RoleMenuCustomIds.Save(settings.Id, userId, parsed.MessageId))
             .WithPlaceholder("Choose your roles")
             .WithMinValues(0)
-            .WithMaxValues(settings.SelectionMode == RoleMenuSelectionMode.Single
+            .WithMaxValues(settings.SelectionMode == RoleMenuSelectionMode.Exclusive
                 ? 1
                 : configuredRoles.Count);
         foreach (var role in configuredRoles)
@@ -148,7 +148,7 @@ internal static class RoleMenuComponents
             .WithMaxValues(1);
         foreach (var menu in settings)
         {
-            var mode = menu.SelectionMode == RoleMenuSelectionMode.Single
+            var mode = menu.SelectionMode == RoleMenuSelectionMode.Exclusive
                 ? "Single selection"
                 : "Multiple selection";
             var date = menu.CreatedAtUtc == default
@@ -170,12 +170,21 @@ internal static class RoleMenuComponents
     }
 
     internal static Embed BuildDeleteConfirmationEmbed(RoleMenuSettings settings)
-        => new EmbedBuilder()
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var title = RoleMenuText.TruncateWithEllipsis(
+            string.IsNullOrWhiteSpace(settings.Title)
+                ? "Untitled or stale role menu"
+                : settings.Title,
+            RoleMenuConstants.MaximumTitleLength);
+
+        return new EmbedBuilder()
             .WithTitle("Delete role menu?")
             .WithDescription(
-                $"**{settings.Title}**\n\nThis removes the published panel and its saved configuration.")
+                $"**{title}**\n\nThis removes the published panel and its saved configuration.")
             .WithColor(Color.Red)
             .Build();
+    }
 
     internal static MessageComponent BuildDeleteConfirmationComponents(
         ulong userId,

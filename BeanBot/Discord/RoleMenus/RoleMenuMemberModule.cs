@@ -114,7 +114,7 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
             {
                 LogInvalidConfiguration(
                     menuId,
-                    roleValidation.Issues.First().Kind.ToString());
+                    roleValidation.Issues[0].Kind.ToString());
                 await ReplaceResponseAsync(InvalidMenuMessage, cancellation.Token);
                 return;
             }
@@ -358,7 +358,7 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
         var roleValidation = ValidateRoles(parsed.RoleIds, currentBot);
         if (!roleValidation.IsValid)
         {
-            LogInvalidConfiguration(menuId, roleValidation.Issues.First().Kind.ToString());
+            LogInvalidConfiguration(menuId, roleValidation.Issues[0].Kind.ToString());
             return Completed(InvalidMenuMessage);
         }
 
@@ -414,7 +414,7 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
 
         BeanBotLog.RoleMenuSelectionCompleted(
             _logger,
-            menuId.ToString(),
+            menuId,
             result.AddedRoleIds.Count,
             result.RemovedRoleIds.Count,
             result.Failures.Count);
@@ -544,7 +544,7 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
             .Select(role => new RoleMenuRoleSnapshot(
                 role.Id,
                 role.Name,
-                role.IsEveryone,
+                role.Id == bot.Guild.EveryoneRole.Id,
                 role.IsManaged,
                 role.Position))
             .ToList();
@@ -635,7 +635,7 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
     }
 
     private static void AddRoleList(
-        ICollection<string> lines,
+        List<string> lines,
         string label,
         IReadOnlyCollection<ulong> roleIds,
         IReadOnlyDictionary<ulong, string> roleNames)
@@ -708,7 +708,7 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
             options: requestOptions);
     }
 
-    private Task ReplaceResponseAsync(
+    private Task<IUserMessage> ReplaceResponseAsync(
         string content,
         CancellationToken cancellationToken,
         MessageComponent? components = null)

@@ -93,7 +93,7 @@ internal static class RoleMenuSelectionPlanner
             selectedIds.Add(selectedRoleId);
         }
 
-        if (selectionMode == RoleMenuSelectionMode.Single && selectedIds.Count > 1)
+        if (selectionMode == RoleMenuSelectionMode.Exclusive && selectedIds.Count > 1)
         {
             return Invalid(RoleMenuSelectionIssue.TooManySelections);
         }

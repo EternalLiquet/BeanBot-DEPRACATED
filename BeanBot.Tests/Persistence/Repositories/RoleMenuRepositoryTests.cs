@@ -9,29 +9,6 @@ namespace BeanBot.Tests.Persistence.Repositories;
 public class RoleMenuRepositoryTests
 {
     [Fact]
-    public async Task InsertAsync_StampsUtcDatesAndPassesCancellationToken()
-    {
-        using var cancellation = new CancellationTokenSource();
-        var settings = CreateSettings();
-        var before = DateTime.UtcNow;
-        var store = new FakeStore
-        {
-            Insert = (actual, cancellationToken) =>
-            {
-                Assert.Same(settings, actual);
-                Assert.Equal(cancellation.Token, cancellationToken);
-                return Task.CompletedTask;
-            }
-        };
-
-        await CreateRepository(store).InsertAsync(settings, cancellation.Token);
-
-        Assert.Equal(DateTimeKind.Utc, settings.CreatedAtUtc.Kind);
-        Assert.Equal(settings.CreatedAtUtc, settings.UpdatedAtUtc);
-        Assert.InRange(settings.CreatedAtUtc, before, DateTime.UtcNow);
-    }
-
-    [Fact]
     public async Task GetAsync_ScopesLookupByMenuAndGuild()
     {
         var settings = CreateSettings();
@@ -116,8 +93,6 @@ public class RoleMenuRepositoryTests
 
     private sealed class FakeStore : IRoleMenuStore
     {
-        public Func<RoleMenuSettings, CancellationToken, Task> Insert { get; init; }
-            = (_, _) => Task.CompletedTask;
         public Func<RoleMenuSettings, CancellationToken, Task> Upsert { get; init; }
             = (_, _) => Task.CompletedTask;
         public Func<ObjectId, string, CancellationToken, Task<RoleMenuSettings?>> GetById
@@ -126,11 +101,6 @@ public class RoleMenuRepositoryTests
         { get; init; } = (_, _, _) => Task.FromResult(new List<RoleMenuSettings>());
         public Func<ObjectId, string, CancellationToken, Task<bool>> Delete { get; init; }
             = (_, _, _) => Task.FromResult(false);
-
-        public Task InsertAsync(
-            RoleMenuSettings settings,
-            CancellationToken cancellationToken)
-            => Insert(settings, cancellationToken);
 
         public Task UpsertAsync(
             RoleMenuSettings settings,

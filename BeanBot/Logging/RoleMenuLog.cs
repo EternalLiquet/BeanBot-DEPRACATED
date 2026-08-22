@@ -1,17 +1,15 @@
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 
 namespace BeanBot.Logging;
 
 internal static partial class BeanBotLog
 {
-    [LoggerMessage(Level = LogLevel.Information, Message = "Role menu settings created. MenuId={MenuId}")]
-    internal static partial void RoleMenuSettingsCreated(ILogger logger, string menuId);
-
     [LoggerMessage(Level = LogLevel.Information, Message = "Role menu settings saved idempotently. MenuId={MenuId}")]
-    internal static partial void RoleMenuSettingsSaved(ILogger logger, string menuId);
+    internal static partial void RoleMenuSettingsSaved(ILogger logger, ObjectId menuId);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Role menu settings deleted. MenuId={MenuId}")]
-    internal static partial void RoleMenuSettingsDeleted(ILogger logger, string menuId);
+    internal static partial void RoleMenuSettingsDeleted(ILogger logger, ObjectId menuId);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Role menu publication failed. MenuId={MenuId}")]
     internal static partial void RoleMenuPublicationFailed(ILogger logger, string menuId, Exception exception);
@@ -83,7 +81,7 @@ internal static partial class BeanBotLog
     [LoggerMessage(Level = LogLevel.Debug, Message = "Role menu selection completed. MenuId={MenuId}, Added={AddedCount}, Removed={RemovedCount}, Failed={FailureCount}")]
     internal static partial void RoleMenuSelectionCompleted(
         ILogger logger,
-        string menuId,
+        ObjectId menuId,
         int addedCount,
         int removedCount,
         int failureCount);
