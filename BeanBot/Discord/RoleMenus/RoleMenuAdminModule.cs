@@ -1148,6 +1148,49 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
             message.Author.Id,
             RoleMenuComponents.HasManageButton(message, menuId));
 
+    private async Task TrySendPublicationConfirmationAsync(
+        ulong guildId,
+        ulong channelId,
+        ulong messageId,
+        ObjectId menuId,
+        CancellationToken operationCancellationToken)
+    {
+        var content = $"Role menu published: {CreateMessageUrl(guildId, channelId, messageId)}";
+        if (!operationCancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await ReplaceResponseAsync(content, operationCancellationToken);
+                return;
+            }
+            catch (Exception exception)
+            {
+                BeanBotLog.RoleMenuPublicationConfirmationFailed(
+                    _logger,
+                    menuId.ToString(),
+                    exception);
+            }
+        }
+
+        if (_roleMenuService.IsShuttingDown)
+        {
+            return;
+        }
+
+        using var feedbackCancellation = _roleMenuService.CreateFeedbackCancellation();
+        try
+        {
+            await ReplaceResponseAsync(content, feedbackCancellation.Token);
+        }
+        catch (Exception exception)
+        {
+            BeanBotLog.RoleMenuPublicationConfirmationFailed(
+                _logger,
+                menuId.ToString(),
+                exception);
+        }
+    }
+
     private async Task ShowDeleteConfirmationAsync(
         RoleMenuSettings settings,
         CancellationToken cancellationToken)

@@ -17,15 +17,6 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
     private const string InvalidMenuMessage =
         "This role menu is invalid, stale, or no longer available. Ask a server administrator to recreate it.";
 
-    private sealed class DiscordMemberMutator(IGuildUser member) : IRoleMenuMemberMutator
-    {
-        public Task AddRoleAsync(ulong roleId, CancellationToken cancellationToken)
-            => member.AddRoleAsync(roleId, CreateRequestOptions(cancellationToken));
-
-        public Task RemoveRoleAsync(ulong roleId, CancellationToken cancellationToken)
-            => member.RemoveRoleAsync(roleId, CreateRequestOptions(cancellationToken));
-    }
-
     private sealed record RoleMenuApplicationResult(string Content);
 
     private readonly RoleMenuInteractionService _roleMenuService;
@@ -300,96 +291,118 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
         SocketGuild guild,
         CancellationToken cancellationToken)
     {
-        var requestOptions = CreateRequestOptions(cancellationToken);
-        var settings = await _roleMenuService.GetAsync(
+        IGuildUser? mutationMember = null;
+        var operations = new RoleMenuMemberOperations(
+            (requestedMenuId, requestedGuildId, operationToken) =>
+                _roleMenuService.GetAsync(
+                    requestedMenuId,
+                    requestedGuildId,
+                    operationToken),
+            (requestedMenuId, channelId, messageId, operationToken) =>
+                ReadPanelSnapshotAsync(
+                    guild,
+                    requestedMenuId,
+                    channelId,
+                    messageId,
+                    operationToken),
+            (requestedGuildId, requestedBotUserId, operationToken) =>
+                ReadBotSnapshotAsync(
+                    requestedGuildId,
+                    requestedBotUserId,
+                    operationToken),
+            async (requestedGuildId, requestedMemberUserId, operationToken) =>
+            {
+                var member = await GetGuildMemberAsync(
+                    requestedGuildId,
+                    requestedMemberUserId,
+                    CreateRequestOptions(operationToken));
+                mutationMember ??= member;
+                return member is null ? null : CreateMemberSnapshot(member);
+            },
+            (requestedGuildId, requestedMemberUserId, roleId, operationToken) =>
+                AddMemberRoleAsync(
+                    mutationMember,
+                    requestedGuildId,
+                    requestedMemberUserId,
+                    roleId,
+                    operationToken),
+            (requestedGuildId, requestedMemberUserId, roleId, operationToken) =>
+                RemoveMemberRoleAsync(
+                    mutationMember,
+                    requestedGuildId,
+                    requestedMemberUserId,
+                    roleId,
+                    operationToken));
+        var result = await RoleMenuMemberWorkflow.ExecuteAsync(
             menuId,
             guild.Id,
-            cancellationToken);
-        if (!TryValidateSettings(settings, guild, out var parsed)
-            || parsed.MessageId != boundPanelMessageId)
-        {
-            return Completed(InvalidMenuMessage);
-        }
-
-        var channel = await ((IGuild)guild).GetTextChannelAsync(
-            parsed.ChannelId,
-            CacheMode.AllowDownload,
-            requestOptions);
-        if (channel is null || channel.GuildId != guild.Id)
-        {
-            LogInvalidConfiguration(menuId, "published channel no longer exists");
-            return Completed(InvalidMenuMessage);
-        }
-
-        var panel = await channel.GetMessageAsync(
-            parsed.MessageId,
-            CacheMode.AllowDownload,
-            requestOptions);
-        if (panel is null)
-        {
-            LogInvalidConfiguration(menuId, "published message no longer exists");
-            return Completed(InvalidMenuMessage);
-        }
-
-        var panelIssue = RoleMenuPanelContextValidator.Validate(
-            parsed,
-            guild.Id,
             Context.Channel.Id,
-            panel.Id,
-            panel.Author.Id,
             guild.CurrentUser.Id,
-            RoleMenuComponents.HasManageButton(panel, menuId));
-        if (panelIssue != RoleMenuPanelContextIssue.None)
-        {
-            LogInvalidConfiguration(menuId, panelIssue.ToString());
-            return Completed(InvalidMenuMessage);
-        }
-
-        var currentBot = await GetGuildMemberAsync(
-            guild.Id,
-            guild.CurrentUser.Id,
-            requestOptions);
-        if (currentBot is null)
-        {
-            LogInvalidConfiguration(menuId, "bot guild membership was not available");
-            return Completed(InvalidMenuMessage);
-        }
-
-        var roleValidation = ValidateRoles(parsed.RoleIds, currentBot);
-        if (!roleValidation.IsValid)
-        {
-            LogInvalidConfiguration(menuId, roleValidation.Issues[0].Kind.ToString());
-            return Completed(InvalidMenuMessage);
-        }
-
-        var member = await GetGuildMemberAsync(
-            guild.Id,
             Context.User.Id,
-            requestOptions);
-        if (member is null)
+            boundPanelMessageId,
+            selectedRoleValues,
+            operations,
+            cancellationToken);
+        return FormatWorkflowResult(menuId, result);
+    }
+
+    private RoleMenuApplicationResult FormatWorkflowResult(
+        ObjectId menuId,
+        RoleMenuMemberWorkflowResult result)
+    {
+        if (result.Status == RoleMenuMemberWorkflowStatus.InvalidConfiguration)
         {
-            return Completed("You are no longer a member of this server.");
+            LogInvalidConfiguration(menuId, FormatConfigurationIssue(result));
+            return new RoleMenuApplicationResult(InvalidMenuMessage);
         }
 
-        var planResult = RoleMenuSelectionPlanner.Create(
-            parsed.RoleIds,
-            selectedRoleValues,
-            member.RoleIds,
-            settings.SelectionMode);
-        if (!planResult.IsValid)
+        if (result.Status == RoleMenuMemberWorkflowStatus.MemberUnavailable)
         {
-            LogInvalidConfiguration(menuId, $"invalid submitted selection: {planResult.Issue}");
-            return Completed(
+            return new RoleMenuApplicationResult(
+                "You are no longer a member of this server.");
+        }
+
+        if (result.Status == RoleMenuMemberWorkflowStatus.InvalidSelection)
+        {
+            LogInvalidConfiguration(
+                menuId,
+                $"invalid submitted selection: {result.SelectionIssue}");
+            return new RoleMenuApplicationResult(
                 "That role selection was invalid or had been tampered with. No roles were changed.");
         }
 
-        var beforeRoleIds = member.RoleIds.ToHashSet();
-        var result = await RoleMenuInteractionService.SynchronizeAsync(
-            planResult.Plan,
-            settings.SelectionMode,
-            new DiscordMemberMutator(member),
-            cancellationToken);
-        var roleNames = roleValidation.Roles.ToDictionary(role => role.Id, role => role.Name);
+        var roleNames = (result.Roles ?? [])
+            .ToDictionary(role => role.Id, role => role.Name);
+        LogSynchronizationResult(menuId, result.Synchronization, roleNames);
+        if (result.Reconciliation is not null)
+        {
+            return new RoleMenuApplicationResult(
+                FormatReconciliation(result.Reconciliation, roleNames));
+        }
+
+        if (result.FinalReadException is not null)
+        {
+            BeanBotLog.RoleMenuReconciliationFailed(
+                _logger,
+                menuId.ToString(),
+                result.FinalReadException);
+        }
+
+        return new RoleMenuApplicationResult(
+            "Bean Bot couldn't recheck Discord's final role state. Open the role menu again " +
+            "to verify your current roles before retrying; no roles outside this menu were targeted.");
+    }
+
+    private void LogSynchronizationResult(
+        ObjectId menuId,
+        RoleMenuSynchronizationResult? result,
+        IReadOnlyDictionary<ulong, string> roleNames)
+    {
+        if (result is null)
+        {
+            return;
+        }
+
         foreach (var failure in result.Failures)
         {
             BeanBotLog.RoleMenuMutationFailed(
@@ -418,73 +431,115 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
             result.AddedRoleIds.Count,
             result.RemovedRoleIds.Count,
             result.Failures.Count);
-        var reconciled = await TryReconcileAsync(
-            menuId,
-            parsed.RoleIds,
-            planResult.Plan.SelectedRoleIds,
-            beforeRoleIds,
-            cancellationToken);
-        if (reconciled is not null)
-        {
-            return new RoleMenuApplicationResult(
-                FormatReconciliation(reconciled, roleNames));
-        }
-
-        return new RoleMenuApplicationResult(
-            "Bean Bot couldn't recheck Discord's final role state. Open the role menu again " +
-            "to verify your current roles before retrying; no roles outside this menu were targeted.");
-
-        static RoleMenuApplicationResult Completed(string content)
-            => new(content);
     }
 
-    private async Task<RoleMenuSelectionReconciliation?> TryReconcileAsync(
+    private static string FormatConfigurationIssue(RoleMenuMemberWorkflowResult result)
+        => result.ConfigurationIssue switch
+        {
+            RoleMenuMemberConfigurationIssue.SettingsInvalid =>
+                $"{result.ConfigurationIssue}: {result.SettingsIssue}",
+            RoleMenuMemberConfigurationIssue.PanelInvalid =>
+                $"{result.ConfigurationIssue}: {result.PanelIssue}",
+            RoleMenuMemberConfigurationIssue.RolesInvalid when result.RoleIssues is { Count: > 0 } =>
+                $"{result.ConfigurationIssue}: {result.RoleIssues[0].Kind}",
+            _ => result.ConfigurationIssue.ToString()
+        };
+
+    private static async Task<RoleMenuPanelSnapshot?> ReadPanelSnapshotAsync(
+        SocketGuild guild,
         ObjectId menuId,
-        IReadOnlyCollection<ulong> configuredRoleIds,
-        IReadOnlyCollection<ulong> selectedRoleIds,
-        IReadOnlyCollection<ulong> beforeRoleIds,
-        CancellationToken operationCancellationToken)
+        ulong channelId,
+        ulong messageId,
+        CancellationToken cancellationToken)
     {
-        CancellationTokenSource? feedbackCancellation = null;
+        var requestOptions = CreateRequestOptions(cancellationToken);
+        var channel = await ((IGuild)guild).GetTextChannelAsync(
+            channelId,
+            CacheMode.AllowDownload,
+            requestOptions);
+        if (channel is null)
+        {
+            return null;
+        }
+
         try
         {
-            var reconciliationToken = operationCancellationToken;
-            if (operationCancellationToken.IsCancellationRequested)
-            {
-                if (_roleMenuService.IsShuttingDown)
-                {
-                    return null;
-                }
-
-                feedbackCancellation = _roleMenuService.CreateFeedbackCancellation();
-                reconciliationToken = feedbackCancellation.Token;
-            }
-
-            var member = await GetGuildMemberAsync(
-                Context.Guild!.Id,
-                Context.User.Id,
-                CreateRequestOptions(reconciliationToken));
-            return member is null
+            var message = await channel.GetMessageAsync(
+                messageId,
+                CacheMode.AllowDownload,
+                requestOptions);
+            return message is null
                 ? null
-                : RoleMenuSelectionReconciler.Create(
-                    configuredRoleIds,
-                    selectedRoleIds,
-                    beforeRoleIds,
-                    member.RoleIds);
+                : new RoleMenuPanelSnapshot(
+                    channel.GuildId,
+                    channel.Id,
+                    message.Id,
+                    message.Author.Id,
+                    RoleMenuComponents.HasManageButton(message, menuId));
         }
-        catch (OperationCanceledException) when (feedbackCancellation?.IsCancellationRequested == true
-                                                  || operationCancellationToken.IsCancellationRequested)
+        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
         {
             return null;
         }
-        catch (Exception exception)
+    }
+
+    private async Task<RoleMenuBotSnapshot?> ReadBotSnapshotAsync(
+        ulong guildId,
+        ulong botUserId,
+        CancellationToken cancellationToken)
+    {
+        var bot = await GetGuildMemberAsync(
+            guildId,
+            botUserId,
+            CreateRequestOptions(cancellationToken));
+        if (bot is null)
         {
-            BeanBotLog.RoleMenuReconciliationFailed(_logger, menuId.ToString(), exception);
             return null;
         }
-        finally
+
+        return new RoleMenuBotSnapshot(
+            bot.Guild.Id,
+            bot.Id,
+            CreateRoleSnapshots(bot),
+            CreateActorSnapshot(bot));
+    }
+
+    private static RoleMenuMemberSnapshot CreateMemberSnapshot(IGuildUser member)
+        => new(member.Guild.Id, member.Id, member.RoleIds.ToList());
+
+    private static Task AddMemberRoleAsync(
+        IGuildUser? member,
+        ulong guildId,
+        ulong memberUserId,
+        ulong roleId,
+        CancellationToken cancellationToken)
+    {
+        EnsureExpectedMember(member, guildId, memberUserId);
+        return member.AddRoleAsync(roleId, CreateRequestOptions(cancellationToken));
+    }
+
+    private static Task RemoveMemberRoleAsync(
+        IGuildUser? member,
+        ulong guildId,
+        ulong memberUserId,
+        ulong roleId,
+        CancellationToken cancellationToken)
+    {
+        EnsureExpectedMember(member, guildId, memberUserId);
+        return member.RemoveRoleAsync(roleId, CreateRequestOptions(cancellationToken));
+    }
+
+    private static void EnsureExpectedMember(
+        [NotNull] IGuildUser? member,
+        ulong guildId,
+        ulong memberUserId)
+    {
+        if (member is null
+            || member.Guild.Id != guildId
+            || member.Id != memberUserId)
         {
-            feedbackCancellation?.Dispose();
+            throw new InvalidOperationException(
+                "The role-menu member mutation was not bound to the expected guild member.");
         }
     }
 
@@ -538,26 +593,34 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
         IReadOnlyCollection<ulong> roleIds,
         IGuildUser bot)
     {
-        var availableRoles = bot.Guild.Roles
+        return RoleMenuRoleValidator.Validate(
+            roleIds,
+            CreateRoleSnapshots(bot),
+            CreateActorSnapshot(bot));
+    }
+
+    private static List<RoleMenuRoleSnapshot> CreateRoleSnapshots(
+        IGuildUser user)
+        => user.Guild.Roles
             .Select(role => new RoleMenuRoleSnapshot(
                 role.Id,
                 role.Name,
-                role.Id == bot.Guild.EveryoneRole.Id,
+                role.Id == user.Guild.EveryoneRole.Id,
                 role.IsManaged,
                 role.Position))
             .ToList();
-        var hierarchy = bot.Guild.Roles
-            .Where(role => bot.RoleIds.Contains(role.Id))
+
+    private static RoleMenuActorSnapshot CreateActorSnapshot(IGuildUser user)
+    {
+        var hierarchy = user.Guild.Roles
+            .Where(role => user.RoleIds.Contains(role.Id))
             .Select(role => role.Position)
             .DefaultIfEmpty(0)
             .Max();
-        return RoleMenuRoleValidator.Validate(
-            roleIds,
-            availableRoles,
-            new RoleMenuActorSnapshot(
-                bot.GuildPermissions.ManageRoles,
-                hierarchy,
-                bot.Guild.OwnerId == bot.Id));
+        return new RoleMenuActorSnapshot(
+            user.GuildPermissions.ManageRoles,
+            hierarchy,
+            user.Guild.OwnerId == user.Id);
     }
 
     internal static string FormatReconciliation(
