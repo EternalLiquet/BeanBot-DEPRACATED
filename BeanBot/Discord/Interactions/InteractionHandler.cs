@@ -154,10 +154,9 @@ internal sealed class InteractionHandler : IAsyncDisposable
         {
             if (interaction.HasResponded)
             {
-                await interaction.FollowupAsync(
-                    SafeFailureMessage,
-                    ephemeral: true,
-                    options: requestOptions);
+                await interaction.ModifyOriginalResponseAsync(
+                    SetFailureResponse,
+                    requestOptions);
             }
             else
             {
@@ -175,5 +174,15 @@ internal sealed class InteractionHandler : IAsyncDisposable
         {
             BeanBotLog.InteractionFailureResponseFailed(_logger, interaction.Type, exception);
         }
+    }
+
+    internal static void SetFailureResponse(MessageProperties properties)
+    {
+        ArgumentNullException.ThrowIfNull(properties);
+        properties.Content = SafeFailureMessage;
+        Embed[] embeds = [];
+        properties.Embeds = embeds;
+        properties.Components = MessageComponent.Empty;
+        properties.AllowedMentions = AllowedMentions.None;
     }
 }

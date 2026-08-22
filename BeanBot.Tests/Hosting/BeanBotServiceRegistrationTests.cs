@@ -75,7 +75,7 @@ public class BeanBotServiceRegistrationTests
     }
 
     [Fact]
-    public async Task AddBeanBotInteractions_RegisteredGraphResolvesFromHostProvider()
+    public void AddBeanBotInteractions_RegisteredGraphResolvesFromHostProvider()
     {
         var builder = Host.CreateApplicationBuilder();
         builder.Configuration[BeanBotConfiguration.BotTokenVariable] = "test-token";
@@ -88,7 +88,7 @@ public class BeanBotServiceRegistrationTests
             "https://example.test/yoshimaru.png";
         builder.Services.AddBeanBot(builder.Configuration);
         builder.Services.AddBeanBotInteractions();
-        await using var host = builder.Build();
+        using var host = builder.Build();
 
         Assert.NotNull(host.Services.GetRequiredService<RoleMenuInteractionService>());
         Assert.NotNull(host.Services.GetRequiredService<InteractionHandler>());

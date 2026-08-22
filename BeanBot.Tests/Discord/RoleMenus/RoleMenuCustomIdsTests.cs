@@ -1,3 +1,4 @@
+using System.Globalization;
 using BeanBot.Discord.RoleMenus;
 using MongoDB.Bson;
 using Xunit;
@@ -18,7 +19,10 @@ public class RoleMenuCustomIdsTests
         Assert.True(save.Length <= 100);
         Assert.True(clear.Length <= 100);
         Assert.Contains(menuId.ToString(), save, StringComparison.Ordinal);
-        Assert.Contains(maximumSnowflake.ToString(), save, StringComparison.Ordinal);
+        Assert.Contains(
+            maximumSnowflake.ToString(CultureInfo.InvariantCulture),
+            save,
+            StringComparison.Ordinal);
     }
 
     [Theory]
