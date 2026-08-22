@@ -45,13 +45,13 @@ internal sealed class InteractionHandler : IAsyncDisposable
         _operationTracker = new InteractionOperationTracker(
             ShutdownDrainTimeout,
             _logger,
-            applicationLifetime.ApplicationStopping,
-            MaximumConcurrentOperations);
+            MaximumConcurrentOperations,
+            applicationLifetime.ApplicationStopping);
         _busyResponseTracker = new InteractionOperationTracker(
             ShutdownDrainTimeout,
             _logger,
-            applicationLifetime.ApplicationStopping,
-            MaximumConcurrentBusyResponses);
+            MaximumConcurrentBusyResponses,
+            applicationLifetime.ApplicationStopping);
         _registration = new InteractionCommandRegistration(
             () => _interactionService.RegisterCommandsGloballyAsync(deleteMissing: true),
             RegistrationTimeout);

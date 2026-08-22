@@ -26,8 +26,8 @@ internal sealed class InteractionOperationTracker : IAsyncDisposable
     internal InteractionOperationTracker(
         TimeSpan drainTimeout,
         ILogger logger,
-        CancellationToken applicationStopping = default,
-        int maximumOperations = 64)
+        int maximumOperations = 64,
+        CancellationToken applicationStopping = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(drainTimeout, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThan(maximumOperations, 1);

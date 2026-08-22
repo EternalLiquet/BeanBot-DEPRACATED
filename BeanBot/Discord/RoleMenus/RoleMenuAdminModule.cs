@@ -1012,7 +1012,8 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
                 if (panel is null)
                 {
                     _roleMenuService.CompletePublish(draft.Id, guildId, administratorId);
-                    await SendFreshFeedbackAsync(
+                    await SendTerminalPublicationFeedbackAsync(
+                        menuId,
                         "Discord reported an error while publishing, and Bean Bot could not " +
                         "confirm whether a panel was created. Automatic retry was disabled to " +
                         "prevent a duplicate. Check the target channel and remove any orphaned " +
@@ -1065,7 +1066,8 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
                 else
                 {
                     _roleMenuService.CompletePublish(draft.Id, guildId, administratorId);
-                    await SendFreshFeedbackAsync(
+                    await SendTerminalPublicationFeedbackAsync(
+                        menuId,
                         "Bean Bot confirmed the settings were not saved but could not remove the " +
                         "panel. Automatic retry was disabled to prevent a duplicate. Delete that " +
                         "orphaned panel manually before running `/role-menu create` again.");
@@ -1077,7 +1079,8 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
             if (!persistenceCommitted)
             {
                 _roleMenuService.CompletePublish(draft.Id, guildId, administratorId);
-                await SendFreshFeedbackAsync(
+                await SendTerminalPublicationFeedbackAsync(
+                    menuId,
                     "Bean Bot could not confirm whether MongoDB saved this panel. The public " +
                     "panel was left in place to avoid deleting a possibly committed menu, and " +
                     "automatic retry was disabled to prevent a duplicate. Inspect the target " +
@@ -1556,6 +1559,24 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
 
         using var feedbackCancellation = _roleMenuService.CreateFeedbackCancellation();
         await ReplaceResponseAsync(content, feedbackCancellation.Token);
+    }
+
+    private async Task SendTerminalPublicationFeedbackAsync(
+        ObjectId menuId,
+        string content)
+    {
+        try
+        {
+            await SendFreshFeedbackAsync(content);
+        }
+        catch (OperationCanceledException) when (_roleMenuService.IsShuttingDown)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            BeanBotLog.RoleMenuPublicationFailed(_logger, menuId.ToString(), exception);
+        }
     }
 
     private Task<IUserMessage> ReplaceResponseAsync(
