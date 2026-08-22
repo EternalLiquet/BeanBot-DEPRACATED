@@ -97,7 +97,7 @@ public class InteractionCommandRegistrationTests
     }
 
     [Fact]
-    public async Task EnsureRegisteredAsync_LateSuccess_DoesNotRegisterAgain()
+    public async Task EnsureRegisteredAsync_LateSuccess_IsReportedOnceWithoutRegisteringAgain()
     {
         var calls = 0;
         var stalledAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -113,6 +113,12 @@ public class InteractionCommandRegistrationTests
         stalledAttempt.SetResult();
         await stalledAttempt.Task;
 
+        var reports = await Task.WhenAll(
+            registration.EnsureRegisteredAsync(),
+            registration.EnsureRegisteredAsync());
+
+        Assert.Single(reports, result => result);
+        Assert.Single(reports, result => !result);
         Assert.False(await registration.EnsureRegisteredAsync());
         Assert.Equal(1, calls);
     }

@@ -30,7 +30,7 @@ internal sealed class InteractionCommandRegistration
 
             if (_registered)
             {
-                return false;
+                return TryClaimSuccessReportUnsafe();
             }
 
             if (_registrationTask is null)
@@ -60,15 +60,24 @@ internal sealed class InteractionCommandRegistration
         CompleteRegistration(registrationTask);
         lock (_syncRoot)
         {
-            if (!ReferenceEquals(_successfulRegistrationTask, registrationTask)
-                || _successReported)
+            if (!ReferenceEquals(_successfulRegistrationTask, registrationTask))
             {
                 return false;
             }
 
-            _successReported = true;
-            return true;
+            return TryClaimSuccessReportUnsafe();
         }
+    }
+
+    private bool TryClaimSuccessReportUnsafe()
+    {
+        if (!_registered || _successReported)
+        {
+            return false;
+        }
+
+        _successReported = true;
+        return true;
     }
 
     private void ObserveCompletion(Task registrationTask)
