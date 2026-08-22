@@ -53,12 +53,12 @@ public class RoleMenuSelectionPlannerTests
     }
 
     [Theory]
-    [InlineData("not-a-role", RoleMenuSelectionIssue.InvalidSelectedRole)]
-    [InlineData("0", RoleMenuSelectionIssue.InvalidSelectedRole)]
-    [InlineData("999", RoleMenuSelectionIssue.RoleNotAllowed)]
+    [InlineData("not-a-role", (int)RoleMenuSelectionIssue.InvalidSelectedRole)]
+    [InlineData("0", (int)RoleMenuSelectionIssue.InvalidSelectedRole)]
+    [InlineData("999", (int)RoleMenuSelectionIssue.RoleNotAllowed)]
     public void Create_TamperedValue_IsRejected(
         string submittedValue,
-        RoleMenuSelectionIssue expectedIssue)
+        int expectedIssue)
     {
         var result = RoleMenuSelectionPlanner.Create(
             [1UL, 2UL],
@@ -67,7 +67,7 @@ public class RoleMenuSelectionPlannerTests
             RoleMenuSelectionMode.Multiple);
 
         Assert.False(result.IsValid);
-        Assert.Equal(expectedIssue, result.Issue);
+        Assert.Equal((RoleMenuSelectionIssue)expectedIssue, result.Issue);
     }
 
     [Fact]

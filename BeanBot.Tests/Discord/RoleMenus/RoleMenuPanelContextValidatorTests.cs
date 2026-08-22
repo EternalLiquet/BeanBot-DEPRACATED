@@ -27,11 +27,11 @@ public class RoleMenuPanelContextValidatorTests
     }
 
     [Theory]
-    [InlineData(99UL, 2UL, 3UL, 10UL, 10UL, true, RoleMenuPanelContextIssue.GuildMismatch)]
-    [InlineData(1UL, 99UL, 3UL, 10UL, 10UL, true, RoleMenuPanelContextIssue.ChannelMismatch)]
-    [InlineData(1UL, 2UL, 99UL, 10UL, 10UL, true, RoleMenuPanelContextIssue.MessageMismatch)]
-    [InlineData(1UL, 2UL, 3UL, 99UL, 10UL, true, RoleMenuPanelContextIssue.UnexpectedAuthor)]
-    [InlineData(1UL, 2UL, 3UL, 10UL, 10UL, false, RoleMenuPanelContextIssue.MissingManageButton)]
+    [InlineData(99UL, 2UL, 3UL, 10UL, 10UL, true, (int)RoleMenuPanelContextIssue.GuildMismatch)]
+    [InlineData(1UL, 99UL, 3UL, 10UL, 10UL, true, (int)RoleMenuPanelContextIssue.ChannelMismatch)]
+    [InlineData(1UL, 2UL, 99UL, 10UL, 10UL, true, (int)RoleMenuPanelContextIssue.MessageMismatch)]
+    [InlineData(1UL, 2UL, 3UL, 99UL, 10UL, true, (int)RoleMenuPanelContextIssue.UnexpectedAuthor)]
+    [InlineData(1UL, 2UL, 3UL, 10UL, 10UL, false, (int)RoleMenuPanelContextIssue.MissingManageButton)]
     public void Validate_StaleOrForgedPanel_IsRejected(
         ulong guildId,
         ulong channelId,
@@ -39,7 +39,7 @@ public class RoleMenuPanelContextValidatorTests
         ulong authorId,
         ulong botId,
         bool hasManageButton,
-        RoleMenuPanelContextIssue expectedIssue)
+        int expectedIssue)
     {
         var issue = RoleMenuPanelContextValidator.Validate(
             Settings,
@@ -50,6 +50,6 @@ public class RoleMenuPanelContextValidatorTests
             botId,
             hasManageButton);
 
-        Assert.Equal(expectedIssue, issue);
+        Assert.Equal((RoleMenuPanelContextIssue)expectedIssue, issue);
     }
 }

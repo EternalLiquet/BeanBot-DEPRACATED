@@ -56,12 +56,12 @@ public class RoleMenuRoleValidatorTests
     }
 
     [Theory]
-    [InlineData(true, false, RoleMenuRoleIssueKind.Everyone)]
-    [InlineData(false, true, RoleMenuRoleIssueKind.Managed)]
+    [InlineData(true, false, (int)RoleMenuRoleIssueKind.Everyone)]
+    [InlineData(false, true, (int)RoleMenuRoleIssueKind.Managed)]
     public void Validate_RejectsReservedRoles(
         bool isEveryone,
         bool isManaged,
-        RoleMenuRoleIssueKind expectedIssue)
+        int expectedIssue)
     {
         var role = new RoleMenuRoleSnapshot(1, "Reserved", isEveryone, isManaged, 1);
 
@@ -71,7 +71,9 @@ public class RoleMenuRoleValidatorTests
             ValidBot,
             ValidAdministrator);
 
-        Assert.Contains(result.Issues, issue => issue.Kind == expectedIssue);
+        Assert.Contains(
+            result.Issues,
+            issue => issue.Kind == (RoleMenuRoleIssueKind)expectedIssue);
     }
 
     [Fact]

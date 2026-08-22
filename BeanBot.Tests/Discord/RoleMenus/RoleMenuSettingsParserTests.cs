@@ -24,14 +24,14 @@ public class RoleMenuSettingsParserTests
     }
 
     [Theory]
-    [InlineData("", "20", "30", RoleMenuSettingsIssue.InvalidGuild)]
-    [InlineData("10", "invalid", "30", RoleMenuSettingsIssue.InvalidChannel)]
-    [InlineData("10", "20", "0", RoleMenuSettingsIssue.InvalidMessage)]
+    [InlineData("", "20", "30", (int)RoleMenuSettingsIssue.InvalidGuild)]
+    [InlineData("10", "invalid", "30", (int)RoleMenuSettingsIssue.InvalidChannel)]
+    [InlineData("10", "20", "0", (int)RoleMenuSettingsIssue.InvalidMessage)]
     public void TryParse_InvalidLocation_IsRejected(
         string guildId,
         string channelId,
         string messageId,
-        RoleMenuSettingsIssue expectedIssue)
+        int expectedIssue)
     {
         var settings = CreateSettings(
             guildId: guildId,
@@ -41,7 +41,7 @@ public class RoleMenuSettingsParserTests
         var success = RoleMenuSettingsParser.TryParse(settings, out _, out var issue);
 
         Assert.False(success);
-        Assert.Equal(expectedIssue, issue);
+        Assert.Equal((RoleMenuSettingsIssue)expectedIssue, issue);
     }
 
     [Fact]

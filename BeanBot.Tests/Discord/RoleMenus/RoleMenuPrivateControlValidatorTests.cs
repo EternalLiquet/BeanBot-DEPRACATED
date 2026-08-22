@@ -28,16 +28,16 @@ public class RoleMenuPrivateControlValidatorTests
     }
 
     [Theory]
-    [InlineData(false, ComponentType.SelectMenu, 30UL, true, RoleMenuPrivateControlIssue.NotEphemeral)]
-    [InlineData(true, ComponentType.Button, 30UL, true, RoleMenuPrivateControlIssue.WrongComponentType)]
-    [InlineData(true, ComponentType.SelectMenu, 99UL, true, RoleMenuPrivateControlIssue.UnexpectedAuthor)]
-    [InlineData(true, ComponentType.SelectMenu, 30UL, false, RoleMenuPrivateControlIssue.MissingSourceComponent)]
+    [InlineData(false, ComponentType.SelectMenu, 30UL, true, (int)RoleMenuPrivateControlIssue.NotEphemeral)]
+    [InlineData(true, ComponentType.Button, 30UL, true, (int)RoleMenuPrivateControlIssue.WrongComponentType)]
+    [InlineData(true, ComponentType.SelectMenu, 99UL, true, (int)RoleMenuPrivateControlIssue.UnexpectedAuthor)]
+    [InlineData(true, ComponentType.SelectMenu, 30UL, false, (int)RoleMenuPrivateControlIssue.MissingSourceComponent)]
     public void Validate_ForgedSourceContext_IsRejected(
         bool isEphemeral,
         ComponentType componentType,
         ulong messageAuthorId,
         bool hasSourceComponent,
-        RoleMenuPrivateControlIssue expectedIssue)
+        int expectedIssue)
     {
         var issue = Validate(
             out _,
@@ -46,18 +46,18 @@ public class RoleMenuPrivateControlValidatorTests
             messageAuthorId: messageAuthorId,
             hasSourceComponent: hasSourceComponent);
 
-        Assert.Equal(expectedIssue, issue);
+        Assert.Equal((RoleMenuPrivateControlIssue)expectedIssue, issue);
     }
 
     [Theory]
-    [InlineData("invalid", "10", "20", RoleMenuPrivateControlIssue.InvalidMenuId)]
-    [InlineData(null, "invalid", "20", RoleMenuPrivateControlIssue.InvalidUserId)]
-    [InlineData(null, "10", "invalid", RoleMenuPrivateControlIssue.InvalidPanelMessageId)]
+    [InlineData("invalid", "10", "20", (int)RoleMenuPrivateControlIssue.InvalidMenuId)]
+    [InlineData(null, "invalid", "20", (int)RoleMenuPrivateControlIssue.InvalidUserId)]
+    [InlineData(null, "10", "invalid", (int)RoleMenuPrivateControlIssue.InvalidPanelMessageId)]
     public void Validate_MalformedIdentifiers_AreRejected(
         string? menuIdValue,
         string userIdValue,
         string panelMessageIdValue,
-        RoleMenuPrivateControlIssue expectedIssue)
+        int expectedIssue)
     {
         var issue = Validate(
             out _,
@@ -65,7 +65,7 @@ public class RoleMenuPrivateControlValidatorTests
             userIdValue: userIdValue,
             panelMessageIdValue: panelMessageIdValue);
 
-        Assert.Equal(expectedIssue, issue);
+        Assert.Equal((RoleMenuPrivateControlIssue)expectedIssue, issue);
     }
 
     private static RoleMenuPrivateControlIssue Validate(
