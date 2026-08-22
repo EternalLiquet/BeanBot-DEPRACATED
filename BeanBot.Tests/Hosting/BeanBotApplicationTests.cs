@@ -7,6 +7,17 @@ namespace BeanBot.Tests.Hosting;
 
 public class BeanBotApplicationTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_RejectsNonPositiveShutdownTimeout(int milliseconds)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new BeanBotApplication(
+            new RecordingRuntime(),
+            NullLogger<BeanBotApplication>.Instance,
+            TimeSpan.FromMilliseconds(milliseconds)));
+    }
+
     [Fact]
     public async Task StartAsync_StartsHealthBeforeDiscordAndInitializesInOrderOnce()
     {
