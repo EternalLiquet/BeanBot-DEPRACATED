@@ -28,7 +28,7 @@ public class RoleMenuRepositoryTests
     }
 
     [Fact]
-    public void GetAsync_RejectsEmptyMenuIdBeforeStoreCall()
+    public async Task GetAsync_RejectsEmptyMenuIdBeforeStoreCall()
     {
         var invoked = false;
         var store = new FakeStore
@@ -40,7 +40,7 @@ public class RoleMenuRepositoryTests
             }
         };
 
-        Assert.Throws<ArgumentException>(() =>
+        await Assert.ThrowsAsync<ArgumentException>(() =>
             CreateRepository(store).GetAsync(ObjectId.Empty, "1"));
 
         Assert.False(invoked);
