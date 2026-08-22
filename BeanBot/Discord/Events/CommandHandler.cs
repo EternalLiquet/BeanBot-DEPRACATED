@@ -43,14 +43,13 @@ public sealed class CommandHandler : IDisposable
         CommandService commandService,
         IServiceProvider services,
         LogHandler logHandler,
-        LegacyCommandFeedbackResponder feedbackResponder,
         ILogger<CommandHandler> logger)
     {
         _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
         _commandService = commandService ?? throw new ArgumentNullException(nameof(commandService));
         _services = services ?? throw new ArgumentNullException(nameof(services));
         _logHandler = logHandler ?? throw new ArgumentNullException(nameof(logHandler));
-        _feedbackResponder = feedbackResponder ?? throw new ArgumentNullException(nameof(feedbackResponder));
+        _feedbackResponder = _services.GetRequiredService<LegacyCommandFeedbackResponder>();
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _fortuneAnswers = _services.GetRequiredService<FortuneAnswerStore>();
         _messageWaiter = _services.GetRequiredService<DiscordMessageWaiter>();
