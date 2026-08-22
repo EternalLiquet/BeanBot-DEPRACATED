@@ -237,13 +237,14 @@ public class RoleMenuDeletionWorkflowTests
     public async Task ExecuteAsync_PanelReconciliationFails_RetainsConfigurationAsOutcomeUnknown()
     {
         var deletionFailure = new InvalidOperationException("delete failed");
+        var reconciliationFailure = new InvalidOperationException("reconciliation failed");
         var fake = new RecordingOperations(CreateSettings())
         {
             DeletePanelHandler = (_, _) => Task.FromException<bool>(deletionFailure),
             ReadPanelHandler = (call, _) => call == 1
                 ? Task.FromResult(FoundPanel())
                 : Task.FromException<RoleMenuPanelLookupResult>(
-                    new InvalidOperationException("reconciliation failed"))
+                    reconciliationFailure)
         };
 
         var result = await ExecuteAsync(fake);
@@ -252,6 +253,7 @@ public class RoleMenuDeletionWorkflowTests
         Assert.Equal(RoleMenuPanelDeletionStatus.OutcomeUnknown, result.PanelStatus);
         Assert.Equal(RoleMenuPanelDeletionIssue.ReconciliationFailed, result.PanelIssue);
         Assert.Same(deletionFailure, result.Exception);
+        Assert.Same(reconciliationFailure, result.ReconciliationException);
         Assert.DoesNotContain(fake.Calls, call => call.Name == "delete-settings");
     }
 
@@ -299,13 +301,14 @@ public class RoleMenuDeletionWorkflowTests
     public async Task ExecuteAsync_ConfigurationReconciliationFails_ReportsOutcomeUnknown()
     {
         var expected = new InvalidOperationException("delete failed");
+        var reconciliationFailure = new InvalidOperationException("reconciliation failed");
         var fake = new RecordingOperations(CreateSettings())
         {
             DeleteSettingsHandler = (_, _) => Task.FromException<bool>(expected),
             ReadSettingsHandler = (call, _) => call == 1
                 ? Task.FromResult<RoleMenuSettings?>(CreateSettings())
                 : Task.FromException<RoleMenuSettings?>(
-                    new InvalidOperationException("reconciliation failed"))
+                    reconciliationFailure)
         };
 
         var result = await ExecuteAsync(fake);
@@ -314,6 +317,7 @@ public class RoleMenuDeletionWorkflowTests
             RoleMenuConfigurationDeletionStatus.OutcomeUnknown,
             result.ConfigurationStatus);
         Assert.Same(expected, result.Exception);
+        Assert.Same(reconciliationFailure, result.ReconciliationException);
     }
 
     [Fact]

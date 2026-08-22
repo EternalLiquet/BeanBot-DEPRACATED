@@ -37,9 +37,13 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
     public async Task CreateAsync()
     {
         using var cancellation = _roleMenuService.CreateOperationCancellation();
-        await RespondWithModalAsync<RoleMenuCreateModal>(
-            RoleMenuCustomIds.CreateModal,
-            CreateRequestOptions(cancellation.Token));
+        await _roleMenuService.ExecuteInitialResponseAsync(
+            supportsOriginalResponse: false,
+            operationToken => RespondWithModalAsync<RoleMenuCreateModal>(
+                RoleMenuCustomIds.CreateModal,
+                CreateRequestOptions(operationToken)),
+            _ => Task.CompletedTask,
+            cancellation.Token);
     }
 
     [ModalInteraction(
@@ -51,7 +55,15 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         ArgumentNullException.ThrowIfNull(modal);
         using var cancellation = _roleMenuService.CreateOperationCancellation();
         var requestOptions = CreateRequestOptions(cancellation.Token);
-        await DeferAsync(ephemeral: true, requestOptions);
+        await _roleMenuService.ExecuteInitialResponseAsync(
+            supportsOriginalResponse: true,
+            operationToken => DeferAsync(
+                ephemeral: true,
+                CreateRequestOptions(operationToken)),
+            operationToken => ReplaceResponseAsync(
+                "Loading the role-menu preview…",
+                operationToken),
+            cancellation.Token);
 
         if (!TryGetGuildActors(out var guild, out var administrator, out var bot))
         {
@@ -92,11 +104,11 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
             return;
         }
 
-        var targetChannel = await ((IGuild)guild).GetTextChannelAsync(
+        var targetChannel = await GetGuildTextChannelAsync(
+            guild.Id,
             targetChannelId,
-            CacheMode.AllowDownload,
             requestOptions);
-        if (targetChannel is null || targetChannel.GuildId != guild.Id)
+        if (targetChannel is null)
         {
             await ReplaceResponseAsync(
                 "That target channel no longer exists in this server.",
@@ -158,7 +170,6 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         {
             await RespondToInvalidComponentAsync(
                 "That role-menu preview is invalid or no longer available.",
-                requestOptions,
                 cancellation.Token);
             return;
         }
@@ -180,7 +191,6 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
             };
             await RespondToInvalidComponentAsync(
                 message,
-                requestOptions,
                 cancellation.Token);
             return;
         }
@@ -191,7 +201,6 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         {
             if (!await AcknowledgeEphemeralComponentAsync(
                     "Publishing the role menu…",
-                    requestOptions,
                     cancellation.Token))
             {
                 return;
@@ -227,11 +236,11 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
                 return;
             }
 
-            var targetChannel = await ((IGuild)guild).GetTextChannelAsync(
+            var targetChannel = await GetGuildTextChannelAsync(
+                guild.Id,
                 draft.TargetChannelId,
-                CacheMode.AllowDownload,
                 requestOptions);
-            if (targetChannel is null || targetChannel.GuildId != guild.Id)
+            if (targetChannel is null)
             {
                 await RestorePreviewAsync(
                     draft,
@@ -314,7 +323,6 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
     public async Task CancelPublishAsync(string draftIdValue)
     {
         using var cancellation = _roleMenuService.CreateOperationCancellation();
-        var requestOptions = CreateRequestOptions(cancellation.Token);
         if (!RoleMenuCustomIds.TryParseDraftId(draftIdValue, out var draftId)
             || Context.Guild is null
             || Context.Interaction is not SocketMessageComponent component
@@ -327,26 +335,30 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         {
             await RespondToInvalidComponentAsync(
                 "That preview expired, belongs to another administrator, or is already publishing.",
-                requestOptions,
                 cancellation.Token);
             return;
         }
 
         if (Context.Interaction is SocketMessageComponent validComponent)
         {
-            await validComponent.UpdateAsync(
-                properties => SetMessage(
-                    properties,
+            await _roleMenuService.ExecuteInitialResponseAsync(
+                supportsOriginalResponse: true,
+                operationToken => validComponent.UpdateAsync(
+                    properties => SetMessage(
+                        properties,
+                        "Role-menu creation cancelled.",
+                        null,
+                        MessageComponent.Empty),
+                    CreateRequestOptions(operationToken)),
+                operationToken => ReplaceResponseAsync(
                     "Role-menu creation cancelled.",
-                    null,
-                    MessageComponent.Empty),
-                requestOptions);
+                    operationToken),
+                cancellation.Token);
             return;
         }
 
         await RespondToInvalidComponentAsync(
             "Role-menu creation cancelled.",
-            requestOptions,
             cancellation.Token);
     }
 
@@ -359,8 +371,15 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         string? menuId = null)
     {
         using var cancellation = _roleMenuService.CreateOperationCancellation();
-        var requestOptions = CreateRequestOptions(cancellation.Token);
-        await DeferAsync(ephemeral: true, requestOptions);
+        await _roleMenuService.ExecuteInitialResponseAsync(
+            supportsOriginalResponse: true,
+            operationToken => DeferAsync(
+                ephemeral: true,
+                CreateRequestOptions(operationToken)),
+            operationToken => ReplaceResponseAsync(
+                "Loading role menus…",
+                operationToken),
+            cancellation.Token);
         if (Context.Guild is null)
         {
             await ReplaceResponseAsync(
@@ -425,7 +444,6 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
     public async Task SelectDeleteAsync(string userIdValue, string[] selectedMenuIds)
     {
         using var cancellation = _roleMenuService.CreateOperationCancellation();
-        var requestOptions = CreateRequestOptions(cancellation.Token);
         if (!RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var boundUserId)
             || boundUserId != Context.User.Id
             || selectedMenuIds is not { Length: 1 }
@@ -441,14 +459,12 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         {
             await RespondToInvalidComponentAsync(
                 "That deletion selection is invalid or belongs to another administrator.",
-                requestOptions,
                 cancellation.Token);
             return;
         }
 
         if (!await AcknowledgeEphemeralComponentAsync(
                 "Loading the selected role menu…",
-                requestOptions,
                 cancellation.Token))
         {
             return;
@@ -476,7 +492,6 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
     public async Task ConfirmDeleteAsync(string userIdValue, string menuIdValue)
     {
         using var cancellation = _roleMenuService.CreateOperationCancellation();
-        var requestOptions = CreateRequestOptions(cancellation.Token);
         if (!RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var boundUserId)
             || boundUserId != Context.User.Id
             || !RoleMenuCustomIds.TryParseMenuId(menuIdValue, out var menuId)
@@ -490,14 +505,12 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         {
             await RespondToInvalidComponentAsync(
                 "That deletion confirmation is invalid or belongs to another administrator.",
-                requestOptions,
                 cancellation.Token);
             return;
         }
 
         if (!await AcknowledgeEphemeralComponentAsync(
                 "Deleting the role menu…",
-                requestOptions,
                 cancellation.Token))
         {
             return;
@@ -590,7 +603,6 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
     public async Task CancelDeleteAsync(string userIdValue)
     {
         using var cancellation = _roleMenuService.CreateOperationCancellation();
-        var requestOptions = CreateRequestOptions(cancellation.Token);
         var isOwner = RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var boundUserId)
             && boundUserId == Context.User.Id
             && Context.Guild is not null
@@ -604,26 +616,30 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         {
             await RespondToInvalidComponentAsync(
                 "That deletion confirmation belongs to another administrator.",
-                requestOptions,
                 cancellation.Token);
             return;
         }
 
         if (Context.Interaction is SocketMessageComponent validComponent)
         {
-            await validComponent.UpdateAsync(
-                properties => SetMessage(
-                    properties,
+            await _roleMenuService.ExecuteInitialResponseAsync(
+                supportsOriginalResponse: true,
+                operationToken => validComponent.UpdateAsync(
+                    properties => SetMessage(
+                        properties,
+                        "Role-menu deletion cancelled.",
+                        null,
+                        MessageComponent.Empty),
+                    CreateRequestOptions(operationToken)),
+                operationToken => ReplaceResponseAsync(
                     "Role-menu deletion cancelled.",
-                    null,
-                    MessageComponent.Empty),
-                requestOptions);
+                    operationToken),
+                cancellation.Token);
             return;
         }
 
         await RespondToInvalidComponentAsync(
             "Role-menu deletion cancelled.",
-            requestOptions,
             cancellation.Token);
     }
 
@@ -641,6 +657,28 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
                 guildId,
                 userId,
                 requestOptions);
+        }
+        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
+    private async Task<ITextChannel?> GetGuildTextChannelAsync(
+        ulong guildId,
+        ulong channelId,
+        RequestOptions requestOptions)
+    {
+        try
+        {
+            var channel = await Context.Client.Rest.GetChannelAsync(
+                channelId,
+                requestOptions);
+            return channel is ITextChannel textChannel
+                   && textChannel.GuildId == guildId
+                   && textChannel.ChannelType == ChannelType.Text
+                ? textChannel
+                : null;
         }
         catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
         {
@@ -852,7 +890,6 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
 
     private async Task<bool> AcknowledgeEphemeralComponentAsync(
         string loadingMessage,
-        RequestOptions requestOptions,
         CancellationToken cancellationToken)
     {
         if (Context.Interaction is not SocketMessageComponent component
@@ -860,51 +897,69 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         {
             await RespondToInvalidComponentAsync(
                 "That private role-menu control is invalid or expired.",
-                requestOptions,
                 cancellationToken);
             return false;
         }
 
-        await component.UpdateAsync(
-            properties => SetMessage(
-                properties,
+        await _roleMenuService.ExecuteInitialResponseAsync(
+            supportsOriginalResponse: true,
+            operationToken => component.UpdateAsync(
+                properties => SetMessage(
+                    properties,
+                    loadingMessage,
+                    null,
+                    MessageComponent.Empty),
+                CreateRequestOptions(operationToken)),
+            operationToken => ReplaceResponseAsync(
                 loadingMessage,
-                null,
-                MessageComponent.Empty),
-            requestOptions);
+                operationToken),
+            cancellationToken);
         return true;
     }
 
     private async Task RespondToInvalidComponentAsync(
         string message,
-        RequestOptions requestOptions,
         CancellationToken cancellationToken)
     {
         if (Context.Interaction is SocketMessageComponent component
             && IsEphemeral(component))
         {
-            await component.UpdateAsync(
-                properties => SetMessage(
-                    properties,
-                    message,
-                    null,
-                    MessageComponent.Empty),
-                requestOptions);
+            await _roleMenuService.ExecuteInitialResponseAsync(
+                supportsOriginalResponse: true,
+                operationToken => component.UpdateAsync(
+                    properties => SetMessage(
+                        properties,
+                        message,
+                        null,
+                        MessageComponent.Empty),
+                    CreateRequestOptions(operationToken)),
+                operationToken => ReplaceResponseAsync(message, operationToken),
+                cancellationToken);
             return;
         }
 
         if (Context.Interaction is SocketMessageComponent publicComponent)
         {
-            await publicComponent.DeferLoadingAsync(ephemeral: true, requestOptions);
+            await _roleMenuService.ExecuteInitialResponseAsync(
+                supportsOriginalResponse: true,
+                operationToken => publicComponent.DeferLoadingAsync(
+                    ephemeral: true,
+                    CreateRequestOptions(operationToken)),
+                operationToken => ReplaceResponseAsync(message, operationToken),
+                cancellationToken);
             await ReplaceResponseAsync(message, cancellationToken);
             return;
         }
 
-        await RespondAsync(
-            message,
-            ephemeral: true,
-            allowedMentions: AllowedMentions.None,
-            options: requestOptions);
+        await _roleMenuService.ExecuteInitialResponseAsync(
+            supportsOriginalResponse: true,
+            operationToken => RespondAsync(
+                message,
+                ephemeral: true,
+                allowedMentions: AllowedMentions.None,
+                options: CreateRequestOptions(operationToken)),
+            operationToken => ReplaceResponseAsync(message, operationToken),
+            cancellationToken);
     }
 
     private Task<IUserMessage> RestorePreviewAsync(
@@ -950,6 +1005,7 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
             botUserId,
             CreatePublicationOperations(targetChannel, draft.MenuId),
             cancellationToken);
+        LogPublicationFailures(draft.MenuId, result.Failures);
         if (result.Status == RoleMenuPublicationStatus.Published)
         {
             _roleMenuService.CompletePublish(draft.Id, guildId, administratorId);
@@ -992,6 +1048,42 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         };
         await SendTerminalPublicationFeedbackAsync(draft.MenuId, message);
         return null;
+    }
+
+    private void LogPublicationFailures(
+        ObjectId menuId,
+        IReadOnlyCollection<RoleMenuPublicationFailure> failures)
+    {
+        foreach (var failure in failures)
+        {
+            switch (failure.Phase)
+            {
+                case RoleMenuPublicationFailurePhase.PanelReconciliation:
+                    BeanBotLog.RoleMenuPanelReconciliationFailed(
+                        _logger,
+                        menuId.ToString(),
+                        failure.Exception);
+                    break;
+                case RoleMenuPublicationFailurePhase.PersistenceReconciliation:
+                    BeanBotLog.RoleMenuPersistenceReconciliationFailed(
+                        _logger,
+                        menuId.ToString(),
+                        failure.Exception);
+                    break;
+                case RoleMenuPublicationFailurePhase.PanelRollback:
+                    BeanBotLog.RoleMenuPublicationRollbackFailed(
+                        _logger,
+                        menuId.ToString(),
+                        failure.Exception);
+                    break;
+                default:
+                    BeanBotLog.RoleMenuPublicationFailed(
+                        _logger,
+                        menuId.ToString(),
+                        failure.Exception);
+                    break;
+            }
+        }
     }
 
     private RoleMenuPublicationOperations CreatePublicationOperations(
@@ -1235,6 +1327,24 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
                 _logger,
                 menuId.ToString(),
                 result.Exception);
+        }
+
+        if (result.ReconciliationException is not null)
+        {
+            if (result.PanelIssue == RoleMenuPanelDeletionIssue.ReconciliationFailed)
+            {
+                BeanBotLog.RoleMenuPanelDeletionReconciliationFailed(
+                    _logger,
+                    menuId.ToString(),
+                    result.ReconciliationException);
+            }
+            else
+            {
+                BeanBotLog.RoleMenuDeletionReconciliationFailed(
+                    _logger,
+                    menuId.ToString(),
+                    result.ReconciliationException);
+            }
         }
 
         return result;

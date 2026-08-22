@@ -60,13 +60,19 @@ internal sealed record RoleMenuDeletionResult(
     RoleMenuPanelDeletionStatus PanelStatus,
     RoleMenuPanelDeletionIssue PanelIssue = RoleMenuPanelDeletionIssue.None,
     bool AuthorizationDenied = false,
-    Exception? Exception = null);
+    Exception? Exception = null,
+    Exception? ReconciliationException = null);
 
 internal static class RoleMenuDeletionWorkflow
 {
     private sealed record PanelDeletionResult(
         RoleMenuPanelDeletionStatus Status,
         RoleMenuPanelDeletionIssue Issue,
+        Exception? Exception = null,
+        Exception? ReconciliationException = null);
+
+    private sealed record ConfigurationDeletionReconciliationResult(
+        RoleMenuConfigurationDeletionStatus Status,
         Exception? Exception = null);
 
     internal static async Task<RoleMenuDeletionResult> ExecuteAsync(
@@ -114,7 +120,8 @@ internal static class RoleMenuDeletionWorkflow
                 RoleMenuConfigurationDeletionStatus.Kept,
                 panelResult.Status,
                 panelResult.Issue,
-                Exception: panelResult.Exception);
+                Exception: panelResult.Exception,
+                ReconciliationException: panelResult.ReconciliationException);
         }
 
         try
@@ -136,15 +143,16 @@ internal static class RoleMenuDeletionWorkflow
         }
         catch (Exception exception)
         {
-            var configurationStatus = await ReconcileConfigurationDeletionAsync(
+            var reconciliation = await ReconcileConfigurationDeletionAsync(
                 menuId,
                 guildId,
                 operations);
             return new RoleMenuDeletionResult(
-                configurationStatus,
+                reconciliation.Status,
                 panelResult.Status,
                 panelResult.Issue,
-                Exception: exception);
+                Exception: exception,
+                ReconciliationException: reconciliation.Exception);
         }
     }
 
@@ -326,16 +334,17 @@ internal static class RoleMenuDeletionWorkflow
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception reconciliationException)
         {
             return new PanelDeletionResult(
                 RoleMenuPanelDeletionStatus.OutcomeUnknown,
                 RoleMenuPanelDeletionIssue.ReconciliationFailed,
-                deletionException);
+                deletionException,
+                reconciliationException);
         }
     }
 
-    private static async Task<RoleMenuConfigurationDeletionStatus>
+    private static async Task<ConfigurationDeletionReconciliationResult>
         ReconcileConfigurationDeletionAsync(
             ObjectId menuId,
             ulong guildId,
@@ -349,17 +358,20 @@ internal static class RoleMenuDeletionWorkflow
                 menuId,
                 guildId,
                 cleanupCancellation.Token);
-            return settings is null
-                ? RoleMenuConfigurationDeletionStatus.AlreadyMissing
-                : RoleMenuConfigurationDeletionStatus.Kept;
+            return new ConfigurationDeletionReconciliationResult(
+                settings is null
+                    ? RoleMenuConfigurationDeletionStatus.AlreadyMissing
+                    : RoleMenuConfigurationDeletionStatus.Kept);
         }
         catch (OperationCanceledException) when (operations.IsShuttingDown())
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            return RoleMenuConfigurationDeletionStatus.OutcomeUnknown;
+            return new ConfigurationDeletionReconciliationResult(
+                RoleMenuConfigurationDeletionStatus.OutcomeUnknown,
+                exception);
         }
     }
 

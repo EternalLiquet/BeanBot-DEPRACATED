@@ -44,6 +44,29 @@ public sealed class RoleMenuInteractionService
         return cancellation;
     }
 
+    internal async Task ExecuteInitialResponseAsync(
+        bool supportsOriginalResponse,
+        Func<CancellationToken, Task> sendInitial,
+        Func<CancellationToken, Task> reconcileOriginal,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(sendInitial);
+        ArgumentNullException.ThrowIfNull(reconcileOriginal);
+        using var initialResponseCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken);
+        initialResponseCancellation.CancelAfter(RoleMenuConstants.InteractionFeedbackTimeout);
+        var result = await InteractionInitialResponseWorkflow.ExecuteAsync(
+            _executionContext,
+            supportsOriginalResponse,
+            RoleMenuConstants.InteractionFeedbackTimeout,
+            new InteractionInitialResponseOperations(
+                sendInitial,
+                reconcileOriginal,
+                InteractionResponseErrors.IsKnownMissingOriginal),
+            initialResponseCancellation.Token);
+        result.ThrowIfUnconfirmed();
+    }
+
     internal RoleMenuDraftCreateStatus CreateDraft(
         ulong guildId,
         ulong userId,
@@ -109,17 +132,6 @@ public sealed class RoleMenuInteractionService
         => _repository.DeleteAsync(
             id,
             guildId.ToString(CultureInfo.InvariantCulture),
-            cancellationToken);
-
-    internal static Task<RoleMenuSynchronizationResult> SynchronizeAsync(
-        RoleMenuSelectionPlan plan,
-        RoleMenuSelectionMode selectionMode,
-        IRoleMenuMemberMutator member,
-        CancellationToken cancellationToken)
-        => RoleMenuMemberSynchronizer.SynchronizeAsync(
-            plan,
-            selectionMode,
-            member,
             cancellationToken);
 
     internal Task<T> RunMenuMutationAsync<T>(

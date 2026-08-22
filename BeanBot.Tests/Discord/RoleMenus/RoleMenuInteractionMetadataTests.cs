@@ -51,6 +51,24 @@ public class RoleMenuInteractionMetadataTests
     }
 
     [Fact]
+    public void CreateModal_DefaultsAndTextValuesRoundTrip()
+    {
+        var modal = new RoleMenuCreateModal
+        {
+            PanelTitle = "Games",
+            Description = "Choose games",
+            SelectionMode = "single"
+        };
+
+        Assert.Equal("Create a role menu", modal.Title);
+        Assert.Equal("Games", modal.PanelTitle);
+        Assert.Equal("Choose games", modal.Description);
+        Assert.Empty(modal.Roles);
+        Assert.Equal("single", modal.SelectionMode);
+        Assert.Null(modal.TargetChannel);
+    }
+
+    [Fact]
     public void SelectionMode_IsNativeRadioGroupWithSingleAndMultipleChoices()
     {
         var property = Assert.IsAssignableFrom<PropertyInfo>(

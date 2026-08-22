@@ -114,9 +114,9 @@ internal sealed class InteractionHandler : IAsyncDisposable
         SocketInteraction interaction,
         CancellationToken cancellationToken)
     {
+        using var executionScope = _executionContext.Enter(cancellationToken);
         try
         {
-            using var executionScope = _executionContext.Enter(cancellationToken);
             var context = new SocketInteractionContext(_discordClient, interaction);
             var result = await _interactionService.ExecuteCommandAsync(context, _services);
             if (result.IsSuccess)
@@ -127,7 +127,9 @@ internal sealed class InteractionHandler : IAsyncDisposable
             BeanBotLog.InteractionCommandFailed(_logger, interaction.Type, result.ErrorReason);
             await TryRespondWithFailureAsync(interaction, cancellationToken);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception exception)
+            when (cancellationToken.IsCancellationRequested
+                  && IsCancellationException(exception))
         {
             BeanBotLog.InteractionCanceledForShutdown(_logger, interaction.Type);
         }
@@ -165,25 +167,39 @@ internal sealed class InteractionHandler : IAsyncDisposable
         using var responseCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken);
         responseCancellation.CancelAfter(FailureResponseTimeout);
-        var requestOptions = new RequestOptions
-        {
-            CancelToken = responseCancellation.Token
-        };
         try
         {
-            if (interaction.HasResponded)
+            var result = await InteractionFailureResponseWorkflow.ExecuteAsync(
+                _executionContext.InitialResponse,
+                interaction.HasResponded,
+                new InteractionFailureResponseOperations(
+                    operationToken => interaction.ModifyOriginalResponseAsync(
+                        SetFailureResponse,
+                        CreateRequestOptions(operationToken)),
+                    operationToken => interaction.RespondAsync(
+                        SafeFailureMessage,
+                        ephemeral: true,
+                        allowedMentions: AllowedMentions.None,
+                        options: CreateRequestOptions(operationToken)),
+                    InteractionResponseErrors.IsKnownMissingOriginal),
+                responseCancellation.Token);
+            var responseException = result.Exception;
+            if (responseException is null)
             {
-                await interaction.ModifyOriginalResponseAsync(
-                    SetFailureResponse,
-                    requestOptions);
+                return;
             }
-            else
+
+            if (responseException is OperationCanceledException
+                && responseCancellation.IsCancellationRequested)
             {
-                await interaction.RespondAsync(
-                    SafeFailureMessage,
-                    ephemeral: true,
-                    options: requestOptions);
+                BeanBotLog.InteractionFailureResponseCanceled(_logger, interaction.Type);
+                return;
             }
+
+            BeanBotLog.InteractionFailureResponseFailed(
+                _logger,
+                interaction.Type,
+                responseException);
         }
         catch (OperationCanceledException) when (responseCancellation.IsCancellationRequested)
         {
@@ -232,4 +248,16 @@ internal sealed class InteractionHandler : IAsyncDisposable
         properties.Components = MessageComponent.Empty;
         properties.AllowedMentions = AllowedMentions.None;
     }
+
+    private static RequestOptions CreateRequestOptions(CancellationToken cancellationToken)
+        => new()
+        {
+            CancelToken = cancellationToken
+        };
+
+    internal static bool IsCancellationException(Exception exception)
+        => exception is OperationCanceledException
+           || (exception is AggregateException aggregate
+               && aggregate.Flatten().InnerExceptions.Any(
+                   innerException => innerException is OperationCanceledException));
 }

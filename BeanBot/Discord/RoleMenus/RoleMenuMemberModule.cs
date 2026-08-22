@@ -40,15 +40,29 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
         var requestOptions = CreateRequestOptions(cancellation.Token);
         if (Context.Interaction is not SocketMessageComponent component)
         {
-            await RespondAsync(
-                InvalidMenuMessage,
-                ephemeral: true,
-                allowedMentions: AllowedMentions.None,
-                options: requestOptions);
+            await _roleMenuService.ExecuteInitialResponseAsync(
+                supportsOriginalResponse: true,
+                operationToken => RespondAsync(
+                    InvalidMenuMessage,
+                    ephemeral: true,
+                    allowedMentions: AllowedMentions.None,
+                    options: CreateRequestOptions(operationToken)),
+                operationToken => ReplaceResponseAsync(
+                    InvalidMenuMessage,
+                    operationToken),
+                cancellation.Token);
             return;
         }
 
-        await component.DeferLoadingAsync(ephemeral: true, requestOptions);
+        await _roleMenuService.ExecuteInitialResponseAsync(
+            supportsOriginalResponse: true,
+            operationToken => component.DeferLoadingAsync(
+                ephemeral: true,
+                CreateRequestOptions(operationToken)),
+            operationToken => ReplaceResponseAsync(
+                "Loading your role menu…",
+                operationToken),
+            cancellation.Token);
         if (!RoleMenuCustomIds.TryParseMenuId(menuIdValue, out var menuId)
             || Context.Guild is null
             || IsEphemeral(component)
@@ -190,13 +204,11 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
         ComponentType expectedComponentType)
     {
         using var cancellation = _roleMenuService.CreateOperationCancellation();
-        var requestOptions = CreateRequestOptions(cancellation.Token);
         if (Context.Guild is null
             || Context.Interaction is not SocketMessageComponent component)
         {
             await RespondToInvalidPrivateComponentAsync(
                 "That private role-menu control is invalid, expired, or belongs to another member.",
-                requestOptions,
                 cancellation.Token);
             return;
         }
@@ -220,17 +232,22 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
         {
             await RespondToInvalidPrivateComponentAsync(
                 "That private role-menu control is invalid, expired, or belongs to another member.",
-                requestOptions,
                 cancellation.Token);
             return;
         }
 
-        await component.UpdateAsync(
-            properties => SetMessage(
-                properties,
+        await _roleMenuService.ExecuteInitialResponseAsync(
+            supportsOriginalResponse: true,
+            operationToken => component.UpdateAsync(
+                properties => SetMessage(
+                    properties,
+                    "Applying your role choices…",
+                    MessageComponent.Empty),
+                CreateRequestOptions(operationToken)),
+            operationToken => ReplaceResponseAsync(
                 "Applying your role choices…",
-                MessageComponent.Empty),
-            requestOptions);
+                operationToken),
+            cancellation.Token);
 
         try
         {
@@ -445,7 +462,7 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
             _ => result.ConfigurationIssue.ToString()
         };
 
-    private static async Task<RoleMenuPanelSnapshot?> ReadPanelSnapshotAsync(
+    private async Task<RoleMenuPanelSnapshot?> ReadPanelSnapshotAsync(
         SocketGuild guild,
         ObjectId menuId,
         ulong channelId,
@@ -453,26 +470,32 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
         CancellationToken cancellationToken)
     {
         var requestOptions = CreateRequestOptions(cancellationToken);
-        var channel = await ((IGuild)guild).GetTextChannelAsync(
-            channelId,
-            CacheMode.AllowDownload,
-            requestOptions);
-        if (channel is null)
+        IChannel? channel;
+        try
+        {
+            channel = await Context.Client.Rest.GetChannelAsync(channelId, requestOptions);
+        }
+        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        if (channel is not ITextChannel textChannel || textChannel.GuildId != guild.Id)
         {
             return null;
         }
 
         try
         {
-            var message = await channel.GetMessageAsync(
+            var message = await textChannel.GetMessageAsync(
                 messageId,
                 CacheMode.AllowDownload,
                 requestOptions);
             return message is null
                 ? null
                 : new RoleMenuPanelSnapshot(
-                    channel.GuildId,
-                    channel.Id,
+                    textChannel.GuildId,
+                    textChannel.Id,
                     message.Id,
                     message.Author.Id,
                     RoleMenuComponents.HasManageButton(message, menuId));
@@ -651,49 +674,6 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
         return BoundResponseContent(string.Join('\n', lines));
     }
 
-    internal static string FormatSynchronizationResult(
-        RoleMenuSynchronizationResult result,
-        IReadOnlyDictionary<ulong, string> roleNames)
-    {
-        var lines = new List<string>();
-        AddRoleList(lines, "Added", result.AddedRoleIds, roleNames);
-        AddRoleList(lines, "Removed", result.RemovedRoleIds, roleNames);
-        foreach (var failureGroup in result.Failures.GroupBy(failure => failure.Action))
-        {
-            AddRoleList(
-                lines,
-                $"Discord reported an error while trying to {failureGroup.Key}",
-                failureGroup.Select(failure => failure.RoleId).ToList(),
-                roleNames);
-        }
-
-        AddRoleList(
-            lines,
-            "Kept assigned because the replacement could not be added",
-            result.SkippedRemovalRoleIds,
-            roleNames);
-        if (result.Interruption is not null)
-        {
-            var outcome = result.Interruption.Kind == RoleMenuMutationInterruptionKind.OutcomeUnknown
-                ? "Discord may or may not have completed this operation"
-                : "this operation was not attempted";
-            lines.Add(
-                $"**Interrupted while trying to {result.Interruption.Action}:** " +
-                $"{GetRoleName(roleNames, result.Interruption.RoleId)} ({outcome}).");
-        }
-
-        if (lines.Count == 0)
-        {
-            return "Your role choices were already up to date. No roles outside this menu were changed.";
-        }
-
-        lines.Add(result.IsComplete
-            ? "No roles outside this menu were changed."
-            : "Bean Bot could not fully recheck the final role state. Open the menu again to " +
-              "confirm it before retrying; no roles outside this menu were targeted.");
-        return BoundResponseContent(string.Join('\n', lines));
-    }
-
     private static void AddRoleList(
         List<string> lines,
         string label,
@@ -743,29 +723,45 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
 
     private async Task RespondToInvalidPrivateComponentAsync(
         string message,
-        RequestOptions requestOptions,
         CancellationToken cancellationToken)
     {
         if (Context.Interaction is SocketMessageComponent component && IsEphemeral(component))
         {
-            await component.UpdateAsync(
-                properties => SetMessage(properties, message, MessageComponent.Empty),
-                requestOptions);
+            await _roleMenuService.ExecuteInitialResponseAsync(
+                supportsOriginalResponse: true,
+                operationToken => component.UpdateAsync(
+                    properties => SetMessage(
+                        properties,
+                        message,
+                        MessageComponent.Empty),
+                    CreateRequestOptions(operationToken)),
+                operationToken => ReplaceResponseAsync(message, operationToken),
+                cancellationToken);
             return;
         }
 
         if (Context.Interaction is SocketMessageComponent publicComponent)
         {
-            await publicComponent.DeferLoadingAsync(ephemeral: true, requestOptions);
+            await _roleMenuService.ExecuteInitialResponseAsync(
+                supportsOriginalResponse: true,
+                operationToken => publicComponent.DeferLoadingAsync(
+                    ephemeral: true,
+                    CreateRequestOptions(operationToken)),
+                operationToken => ReplaceResponseAsync(message, operationToken),
+                cancellationToken);
             await ReplaceResponseAsync(message, cancellationToken);
             return;
         }
 
-        await RespondAsync(
-            message,
-            ephemeral: true,
-            allowedMentions: AllowedMentions.None,
-            options: requestOptions);
+        await _roleMenuService.ExecuteInitialResponseAsync(
+            supportsOriginalResponse: true,
+            operationToken => RespondAsync(
+                message,
+                ephemeral: true,
+                allowedMentions: AllowedMentions.None,
+                options: CreateRequestOptions(operationToken)),
+            operationToken => ReplaceResponseAsync(message, operationToken),
+            cancellationToken);
     }
 
     private Task<IUserMessage> ReplaceResponseAsync(

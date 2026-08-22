@@ -28,9 +28,23 @@ internal enum RoleMenuPublicationStatus
     PersistenceOutcomeUnknown
 }
 
+internal enum RoleMenuPublicationFailurePhase
+{
+    PanelPublication,
+    PanelReconciliation,
+    Persistence,
+    PersistenceReconciliation,
+    PanelRollback
+}
+
+internal sealed record RoleMenuPublicationFailure(
+    RoleMenuPublicationFailurePhase Phase,
+    Exception Exception);
+
 internal sealed record RoleMenuPublicationResult(
     RoleMenuPublicationStatus Status,
-    ulong? MessageId)
+    ulong? MessageId,
+    IReadOnlyList<RoleMenuPublicationFailure> Failures)
 {
     internal bool CanRetry
         => Status == RoleMenuPublicationStatus.PersistenceAbsentPanelRolledBack;
@@ -49,6 +63,7 @@ internal static class RoleMenuPublicationWorkflow
         ArgumentNullException.ThrowIfNull(draft);
         ArgumentNullException.ThrowIfNull(operations);
         ValidateOperations(operations);
+        var failures = new List<RoleMenuPublicationFailure>();
 
         var existingSettings = await operations.ReadSettings(
             draft.MenuId,
@@ -71,18 +86,30 @@ internal static class RoleMenuPublicationWorkflow
                         "The published role-menu panel did not match the attempted publication.");
                 }
             }
-            catch (Exception)
+            catch (Exception exception)
             {
-                panel = await TryReconcilePanelAsync(
+                failures.Add(new RoleMenuPublicationFailure(
+                    RoleMenuPublicationFailurePhase.PanelPublication,
+                    exception));
+                var reconciliation = await TryReconcilePanelAsync(
                     draft,
                     botUserId,
                     existingSettings,
                     operations);
+                panel = reconciliation.Panel;
+                if (reconciliation.Exception is not null)
+                {
+                    failures.Add(new RoleMenuPublicationFailure(
+                        RoleMenuPublicationFailurePhase.PanelReconciliation,
+                        reconciliation.Exception));
+                }
+
                 if (panel is null)
                 {
                     return new RoleMenuPublicationResult(
                         RoleMenuPublicationStatus.PanelOutcomeUnknown,
-                        null);
+                        null,
+                        failures);
                 }
             }
         }
@@ -95,23 +122,29 @@ internal static class RoleMenuPublicationWorkflow
         {
             await operations.UpsertSettings(settings, cancellationToken);
         }
-        catch (Exception)
+        catch (Exception exception)
         {
+            failures.Add(new RoleMenuPublicationFailure(
+                RoleMenuPublicationFailurePhase.Persistence,
+                exception));
             return await ReconcilePersistenceAsync(
                 draft,
                 panel,
-                operations);
+                operations,
+                failures);
         }
 
         return new RoleMenuPublicationResult(
             RoleMenuPublicationStatus.Published,
-            panel.MessageId);
+            panel.MessageId,
+            failures);
     }
 
     private static async Task<RoleMenuPublicationResult> ReconcilePersistenceAsync(
         RoleMenuDraft draft,
         RoleMenuPanelSnapshot panel,
-        RoleMenuPublicationOperations operations)
+        RoleMenuPublicationOperations operations,
+        List<RoleMenuPublicationFailure> failures)
     {
         RoleMenuSettings? persistedSettings;
         using (var reconciliationCancellation = CreateCleanupCancellation())
@@ -123,11 +156,15 @@ internal static class RoleMenuPublicationWorkflow
                     draft.GuildId,
                     reconciliationCancellation.Token);
             }
-            catch (Exception)
+            catch (Exception exception)
             {
+                failures.Add(new RoleMenuPublicationFailure(
+                    RoleMenuPublicationFailurePhase.PersistenceReconciliation,
+                    exception));
                 return new RoleMenuPublicationResult(
                     RoleMenuPublicationStatus.PersistenceOutcomeUnknown,
-                    panel.MessageId);
+                    panel.MessageId,
+                    failures);
             }
         }
 
@@ -138,14 +175,16 @@ internal static class RoleMenuPublicationWorkflow
         {
             return new RoleMenuPublicationResult(
                 RoleMenuPublicationStatus.Published,
-                panel.MessageId);
+                panel.MessageId,
+                failures);
         }
 
         if (persistedSettings is not null)
         {
             return new RoleMenuPublicationResult(
                 RoleMenuPublicationStatus.PersistenceOutcomeUnknown,
-                panel.MessageId);
+                panel.MessageId,
+                failures);
         }
 
         var rollbackSucceeded = false;
@@ -157,8 +196,11 @@ internal static class RoleMenuPublicationWorkflow
                     panel,
                     rollbackCancellation.Token);
             }
-            catch (Exception)
+            catch (Exception exception)
             {
+                failures.Add(new RoleMenuPublicationFailure(
+                    RoleMenuPublicationFailurePhase.PanelRollback,
+                    exception));
                 // A failed or timed-out rollback leaves the known orphan panel in place.
             }
         }
@@ -166,13 +208,19 @@ internal static class RoleMenuPublicationWorkflow
         return rollbackSucceeded
             ? new RoleMenuPublicationResult(
                 RoleMenuPublicationStatus.PersistenceAbsentPanelRolledBack,
-                null)
+                null,
+                failures)
             : new RoleMenuPublicationResult(
                 RoleMenuPublicationStatus.PersistenceAbsentRollbackFailed,
-                panel.MessageId);
+                panel.MessageId,
+                failures);
     }
 
-    private static async Task<RoleMenuPanelSnapshot?> TryReconcilePanelAsync(
+    private sealed record PanelReconciliationResult(
+        RoleMenuPanelSnapshot? Panel,
+        Exception? Exception = null);
+
+    private static async Task<PanelReconciliationResult> TryReconcilePanelAsync(
         RoleMenuDraft draft,
         ulong botUserId,
         RoleMenuSettings? existingSettings,
@@ -181,16 +229,17 @@ internal static class RoleMenuPublicationWorkflow
         using var reconciliationCancellation = CreateCleanupCancellation();
         try
         {
-            return await FindExistingPanelAsync(
+            var panel = await FindExistingPanelAsync(
                 draft,
                 botUserId,
                 existingSettings,
                 operations,
                 reconciliationCancellation.Token);
+            return new PanelReconciliationResult(panel);
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            return null;
+            return new PanelReconciliationResult(null, exception);
         }
     }
 

@@ -21,6 +21,7 @@ public class RoleMenuPublicationWorkflowTests
 
         Assert.Equal(RoleMenuPublicationStatus.Published, result.Status);
         Assert.Equal(PanelMessageId, result.MessageId);
+        Assert.Empty(result.Failures);
         Assert.False(result.CanRetry);
         Assert.True(result.IsTerminal);
         Assert.Equal(1, store.SendCount);
@@ -75,6 +76,9 @@ public class RoleMenuPublicationWorkflowTests
         Assert.False(store.RecentPanelReadTokens[0].CanBeCanceled);
         Assert.True(store.RecentPanelReadTokens[1].CanBeCanceled);
         Assert.Equal(1, store.UpsertCount);
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal(RoleMenuPublicationFailurePhase.PanelPublication, failure.Phase);
+        Assert.Same(store.PanelSendFailure, failure.Exception);
     }
 
     [Fact]
@@ -94,6 +98,9 @@ public class RoleMenuPublicationWorkflowTests
         Assert.False(store.SettingsReadTokens[0].CanBeCanceled);
         Assert.True(store.SettingsReadTokens[1].CanBeCanceled);
         Assert.Equal(0, store.DeleteCount);
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal(RoleMenuPublicationFailurePhase.Persistence, failure.Phase);
+        Assert.Same(store.PersistenceWriteFailure, failure.Exception);
     }
 
     [Theory]
@@ -122,6 +129,9 @@ public class RoleMenuPublicationWorkflowTests
         Assert.Equal(rollbackSucceeds, result.CanRetry);
         Assert.Equal(!rollbackSucceeds, result.IsTerminal);
         Assert.Equal(1, store.DeleteCount);
+        var persistenceFailure = Assert.Single(result.Failures);
+        Assert.Equal(RoleMenuPublicationFailurePhase.Persistence, persistenceFailure.Phase);
+        Assert.Same(store.PersistenceWriteFailure, persistenceFailure.Exception);
         Assert.True(store.DeleteTokens[0].CanBeCanceled);
         Assert.NotEqual(store.SettingsReadTokens[1], store.DeleteTokens[0]);
         if (rollbackSucceeds)
@@ -151,6 +161,9 @@ public class RoleMenuPublicationWorkflowTests
         Assert.True(result.IsTerminal);
         Assert.Equal(0, store.UpsertCount);
         Assert.Equal(0, store.DeleteCount);
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal(RoleMenuPublicationFailurePhase.PanelPublication, failure.Phase);
+        Assert.Same(store.PanelSendFailure, failure.Exception);
     }
 
     [Fact]
@@ -170,6 +183,9 @@ public class RoleMenuPublicationWorkflowTests
         Assert.True(result.IsTerminal);
         Assert.Equal(0, store.UpsertCount);
         Assert.Single(store.Panels);
+        Assert.Equal(
+            RoleMenuPublicationFailurePhase.PanelPublication,
+            Assert.Single(result.Failures).Phase);
     }
 
     [Fact]
@@ -190,6 +206,20 @@ public class RoleMenuPublicationWorkflowTests
         Assert.True(result.IsTerminal);
         Assert.Single(store.Panels);
         Assert.Equal(0, store.DeleteCount);
+        Assert.Collection(
+            result.Failures,
+            failure =>
+            {
+                Assert.Equal(RoleMenuPublicationFailurePhase.Persistence, failure.Phase);
+                Assert.Same(store.PersistenceWriteFailure, failure.Exception);
+            },
+            failure =>
+            {
+                Assert.Equal(
+                    RoleMenuPublicationFailurePhase.PersistenceReconciliation,
+                    failure.Phase);
+                Assert.Same(store.PersistenceReadFailure, failure.Exception);
+            });
     }
 
     [Fact]
@@ -240,6 +270,18 @@ public class RoleMenuPublicationWorkflowTests
         Assert.True(result.IsTerminal);
         Assert.Single(store.Panels);
         Assert.Equal(1, store.DeleteCount);
+        Assert.Collection(
+            result.Failures,
+            failure =>
+            {
+                Assert.Equal(RoleMenuPublicationFailurePhase.Persistence, failure.Phase);
+                Assert.Same(store.PersistenceWriteFailure, failure.Exception);
+            },
+            failure =>
+            {
+                Assert.Equal(RoleMenuPublicationFailurePhase.PanelRollback, failure.Phase);
+                Assert.Same(store.PanelRollbackFailure, failure.Exception);
+            });
     }
 
     [Fact]
@@ -258,6 +300,20 @@ public class RoleMenuPublicationWorkflowTests
         var retry = await ExecuteAsync(draft, store);
 
         Assert.Equal(RoleMenuPublicationStatus.PanelOutcomeUnknown, first.Status);
+        Assert.Collection(
+            first.Failures,
+            failure =>
+            {
+                Assert.Equal(RoleMenuPublicationFailurePhase.PanelPublication, failure.Phase);
+                Assert.Same(store.PanelSendFailure, failure.Exception);
+            },
+            failure =>
+            {
+                Assert.Equal(
+                    RoleMenuPublicationFailurePhase.PanelReconciliation,
+                    failure.Phase);
+                Assert.Same(store.PanelReconciliationFailure, failure.Exception);
+            });
         Assert.False(first.CanRetry);
         Assert.True(first.IsTerminal);
         Assert.Equal(RoleMenuPublicationStatus.Published, retry.Status);
@@ -345,6 +401,16 @@ public class RoleMenuPublicationWorkflowTests
         internal bool ThrowOnDelete { get; init; }
         internal ulong? SentPanelAuthorId { get; init; }
         internal bool DeleteSucceeds { get; init; } = true;
+        internal InvalidOperationException PanelSendFailure { get; } =
+            new("Panel publication failed.");
+        internal InvalidOperationException PanelReconciliationFailure { get; } =
+            new("Panel reconciliation failed.");
+        internal InvalidOperationException PersistenceWriteFailure { get; } =
+            new("Persistence publication failed.");
+        internal InvalidOperationException PersistenceReadFailure { get; } =
+            new("Persistence reconciliation failed.");
+        internal InvalidOperationException PanelRollbackFailure { get; } =
+            new("Panel rollback failed.");
         internal int SettingsReadCount => _settingsReadCount;
         internal int ExactPanelReadCount { get; private set; }
         internal int RecentPanelReadCount => _recentPanelReadCount;
@@ -371,7 +437,7 @@ public class RoleMenuPublicationWorkflowTests
             if (_settingsReadCount > 1 && ThrowOnReconciliationSettingsRead)
             {
                 return Task.FromException<RoleMenuSettings?>(
-                    new InvalidOperationException("Persistence read failed."));
+                    PersistenceReadFailure);
             }
 
             if (_settingsReadCount > 1 && ReconciledSettings is not null)
@@ -411,7 +477,7 @@ public class RoleMenuPublicationWorkflowTests
             if (_recentPanelReadCount > 1 && ThrowOnFirstPanelReconciliation)
             {
                 return Task.FromException<IReadOnlyList<RoleMenuPanelSnapshot>>(
-                    new InvalidOperationException("Panel reconciliation failed."));
+                    PanelReconciliationFailure);
             }
 
             IReadOnlyList<RoleMenuPanelSnapshot> result =
@@ -430,7 +496,7 @@ public class RoleMenuPublicationWorkflowTests
             if (ThrowBeforeSendCommit)
             {
                 return Task.FromException<RoleMenuPanelSnapshot>(
-                    new InvalidOperationException("Panel send failed."));
+                    PanelSendFailure);
             }
 
             var panel = CreatePanel(draft) with
@@ -440,7 +506,7 @@ public class RoleMenuPublicationWorkflowTests
             Panels.Add(panel);
             return ThrowAfterSendCommit
                 ? Task.FromException<RoleMenuPanelSnapshot>(
-                    new InvalidOperationException("Panel response was lost."))
+                    PanelSendFailure)
                 : Task.FromResult(panel);
         }
 
@@ -453,13 +519,13 @@ public class RoleMenuPublicationWorkflowTests
             if (ThrowBeforeUpsertCommit)
             {
                 return Task.FromException(
-                    new InvalidOperationException("Persistence write failed."));
+                    PersistenceWriteFailure);
             }
 
             Settings = settings;
             return ThrowAfterUpsertCommit
                 ? Task.FromException(
-                    new InvalidOperationException("Persistence response was lost."))
+                    PersistenceWriteFailure)
                 : Task.CompletedTask;
         }
 
@@ -472,7 +538,7 @@ public class RoleMenuPublicationWorkflowTests
             if (ThrowOnDelete)
             {
                 return Task.FromException<bool>(
-                    new InvalidOperationException("Panel rollback failed."));
+                    PanelRollbackFailure);
             }
 
             if (DeleteSucceeds)
