@@ -161,9 +161,14 @@ public class LegacyCommandFeedbackResponderTests
 
     private sealed class UsageModule : ModuleBase<SocketCommandContext>
     {
+        private int _invocationCount;
+
         [Command("sample")]
         public Task SampleAsync(string text, int count)
-            => Task.FromResult(HashCode.Combine(GetHashCode(), text, count));
+        {
+            _invocationCount += text.Length + count;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class RecordingDelivery : ILegacyCommandFeedbackDelivery
