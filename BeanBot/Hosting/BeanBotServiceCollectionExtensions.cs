@@ -99,6 +99,10 @@ internal static class BeanBotServiceCollectionExtensions
             provider.GetRequiredService<DiscordOwnerErrorNotifier>());
         services.AddSingleton<DiscordOutageRecoveryNotifier>();
         services.AddSingleton<LogHandler>();
+        services.AddSingleton<DiscordLegacyCommandFeedbackDelivery>();
+        services.AddSingleton<ILegacyCommandFeedbackDelivery>(provider =>
+            provider.GetRequiredService<DiscordLegacyCommandFeedbackDelivery>());
+        services.AddSingleton<LegacyCommandFeedbackResponder>();
 
         services.AddSingleton<DiscordGatewayRecoveryService>(provider =>
         {
