@@ -384,7 +384,7 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
         }
 
         var beforeRoleIds = member.RoleIds.ToHashSet();
-        var result = await _roleMenuService.SynchronizeAsync(
+        var result = await RoleMenuInteractionService.SynchronizeAsync(
             planResult.Plan,
             settings.SelectionMode,
             new DiscordMemberMutator(member),

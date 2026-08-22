@@ -111,7 +111,7 @@ public sealed class RoleMenuInteractionService
             guildId.ToString(CultureInfo.InvariantCulture),
             cancellationToken);
 
-    internal Task<RoleMenuSynchronizationResult> SynchronizeAsync(
+    internal static Task<RoleMenuSynchronizationResult> SynchronizeAsync(
         RoleMenuSelectionPlan plan,
         RoleMenuSelectionMode selectionMode,
         IRoleMenuMemberMutator member,

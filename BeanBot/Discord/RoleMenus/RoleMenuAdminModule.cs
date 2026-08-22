@@ -937,7 +937,7 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
             options: requestOptions);
     }
 
-    private Task RestorePreviewAsync(
+    private Task<IUserMessage> RestorePreviewAsync(
         RoleMenuDraft draft,
         IReadOnlyCollection<RoleMenuRoleSnapshot> roles,
         string errorMessage,
