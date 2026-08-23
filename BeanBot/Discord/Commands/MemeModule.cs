@@ -65,7 +65,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     public async Task UserSucc([Summary("The (optional) user to succ")] params string[] input)
     {
         var userToSucc = NormalizeSuccTarget(input, Context.Message.Author.Mention);
-        await ReplyAsync($"*succ succ succ* lol you're gay {userToSucc}");
+        await ReplyWithReflectedContentAsync($"*succ succ succ* lol you're gay {userToSucc}");
     }
 
     [Command("2am")]
@@ -131,7 +131,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         {
             BeanBotLog.EchoSourceDeleteFailed(_logger, Context.Message.Id, exception);
         }
-        await ReplyAsync(text);
+        await ReplyWithReflectedContentAsync(text);
     }
 
     [Command("8ball")]
@@ -239,7 +239,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         if (responseOverride != null)
         {
             var hasQueuedAnswer = _fortuneAnswers.TryReserve(Context.Message.Author.Id, out var reservation);
-            await ReplyAsync($"> {question} \n{responseOverride}");
+            await ReplyWithReflectedContentAsync($"> {question} \n{responseOverride}");
             if (hasQueuedAnswer)
             {
                 _fortuneAnswers.Consume(reservation);
@@ -258,19 +258,19 @@ public class MemeModule : ModuleBase<SocketCommandContext>
                     if (reservation.Answer == "positive")
                     {
                         var answer = EightBallResponses[Random.Shared.Next(0, 3)];
-                        await ReplyAsync($"> {question} \n{answer}");
+                        await ReplyWithReflectedContentAsync($"> {question} \n{answer}");
                     }
                     else
                     {
                         var answer = EightBallResponses[Random.Shared.Next(3, 5)];
-                        await ReplyAsync($"> {question} \n{answer}");
+                        await ReplyWithReflectedContentAsync($"> {question} \n{answer}");
                     }
                     _fortuneAnswers.Consume(reservation);
                 }
                 else
                 {
                     var answer = EightBallResponses[Random.Shared.Next(EightBallResponses.Length)];
-                    await ReplyAsync($"> {question} \n{answer}");
+                    await ReplyWithReflectedContentAsync($"> {question} \n{answer}");
                 }
             }
         }
@@ -278,14 +278,18 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         {
             var gordonGif = Random.Shared.Next(1, 9);
             var rejection = $"> {question} \nThat is not a question";
+            var safeRejection = CreateMentionSafeReply(rejection);
             try
             {
-                await Context.Channel.SendFileAsync($"Resources/gordon{gordonGif}.gif", rejection);
+                await Context.Channel.SendFileAsync(
+                    $"Resources/gordon{gordonGif}.gif",
+                    safeRejection.Content,
+                    allowedMentions: safeRejection.AllowedMentions);
             }
             catch (Exception exception)
             {
                 BeanBotLog.GordonAttachmentFailed(_logger, exception);
-                await ReplyAsync(rejection);
+                await ReplyWithReflectedContentAsync(rejection);
             }
         }
     }
@@ -296,7 +300,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
             question.Contains("rigged", StringComparison.OrdinalIgnoreCase) && !question.Contains("not", StringComparison.OrdinalIgnoreCase) ||
             question.Contains("ban", StringComparison.OrdinalIgnoreCase) && question.Contains("padoru", StringComparison.OrdinalIgnoreCase) && !question.Contains("not", StringComparison.OrdinalIgnoreCase))
         {
-            await ReplyAsync($"> {question} \nThe spirit of Texas tells me No");
+            await ReplyWithReflectedContentAsync($"> {question} \nThe spirit of Texas tells me No");
         }
         else
         {
@@ -304,17 +308,17 @@ public class MemeModule : ModuleBase<SocketCommandContext>
             if (chance >= 1 && chance <= 10)
             {
                 var positiveAns = EightBallResponses[Random.Shared.Next(0, 3)];
-                await ReplyAsync($"> {question} \n{positiveAns}");
+                await ReplyWithReflectedContentAsync($"> {question} \n{positiveAns}");
             }
             else if (chance > 10 && chance <= 40)
             {
                 var negativeAns = EightBallResponses[Random.Shared.Next(3, 5)];
-                await ReplyAsync($"> {question} \n{negativeAns}");
+                await ReplyWithReflectedContentAsync($"> {question} \n{negativeAns}");
             }
             else
             {
                 var succAns = EightBallResponses[Random.Shared.Next(5, 8)];
-                await ReplyAsync($"> {question} \n{succAns}");
+                await ReplyWithReflectedContentAsync($"> {question} \n{succAns}");
             }
         }
     }
@@ -357,6 +361,18 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         }
 
         return target;
+    }
+
+    internal static (string Content, AllowedMentions AllowedMentions) CreateMentionSafeReply(string content)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        return (content, AllowedMentions.None);
+    }
+
+    private Task<IUserMessage> ReplyWithReflectedContentAsync(string content)
+    {
+        var reply = CreateMentionSafeReply(content);
+        return ReplyAsync(reply.Content, allowedMentions: reply.AllowedMentions);
     }
 
     private async Task ReplyWithOchoOcho()
