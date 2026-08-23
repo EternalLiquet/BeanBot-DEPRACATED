@@ -47,7 +47,7 @@ public class MemeModuleTests
         var reply = MemeModule.CreateMentionSafeReply(content);
 
         Assert.Equal(content, reply.Content);
-        Assert.Same(AllowedMentions.None, reply.AllowedMentions);
+        AssertMentionsDisabled(reply.AllowedMentions);
     }
 
     [Fact]
@@ -59,7 +59,7 @@ public class MemeModuleTests
         var reply = MemeModule.CreateMentionSafeReply(content);
 
         Assert.Equal("*succ succ succ* lol you're gay <@&123456789>", reply.Content);
-        Assert.Same(AllowedMentions.None, reply.AllowedMentions);
+        AssertMentionsDisabled(reply.AllowedMentions);
     }
 
     [Fact]
@@ -71,6 +71,16 @@ public class MemeModuleTests
         var reply = MemeModule.CreateMentionSafeReply(content);
 
         Assert.Equal("> will @everyone and <@987654321> have a good day? \nYeehaw", reply.Content);
-        Assert.Same(AllowedMentions.None, reply.AllowedMentions);
+        AssertMentionsDisabled(reply.AllowedMentions);
+    }
+
+    private static void AssertMentionsDisabled(AllowedMentions allowedMentions)
+    {
+        var parsedTypes = allowedMentions.AllowedTypes ?? AllowedMentionTypes.None;
+        var notificationTypes = AllowedMentionTypes.Users | AllowedMentionTypes.Roles | AllowedMentionTypes.Everyone;
+
+        Assert.Equal(AllowedMentionTypes.None, parsedTypes & notificationTypes);
+        Assert.True(allowedMentions.UserIds is null || allowedMentions.UserIds.Count == 0);
+        Assert.True(allowedMentions.RoleIds is null || allowedMentions.RoleIds.Count == 0);
     }
 }
