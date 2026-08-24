@@ -115,8 +115,7 @@ public sealed class PunHandler : IAsyncDisposable
                 await channel.SendMessageAsync(message, options: options),
             pun,
             requestOptions,
-            _logger,
-            token);
+            _logger);
     }
 
     internal static async Task SendPunMessagesAsync(
@@ -124,7 +123,6 @@ public sealed class PunHandler : IAsyncDisposable
         string pun,
         RequestOptions requestOptions,
         ILogger logger,
-        CancellationToken token,
         TimeSpan? sendTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(sendMessage);
@@ -137,6 +135,7 @@ public sealed class PunHandler : IAsyncDisposable
             throw new ArgumentOutOfRangeException(nameof(sendTimeout), "Send timeout must be greater than zero.");
         }
 
+        var token = requestOptions.CancelToken;
         await SendWithTimeoutAsync(
             sendMessage,
             "The time has come and so have I, Bean Bot here to deliver you your daily pun(?)",
