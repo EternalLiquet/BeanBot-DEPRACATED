@@ -34,6 +34,7 @@ public sealed class CommandHandler : IDisposable
     private readonly FortuneAnswerStore _fortuneAnswers;
     private readonly DiscordMessageWaiter _messageWaiter;
     private readonly LogHandler _logHandler;
+    private readonly LegacyCommandFeedbackResponder _feedbackResponder;
     private readonly ILogger<CommandHandler> _logger;
     private bool _initialized;
 
@@ -48,6 +49,7 @@ public sealed class CommandHandler : IDisposable
         _commandService = commandService ?? throw new ArgumentNullException(nameof(commandService));
         _services = services ?? throw new ArgumentNullException(nameof(services));
         _logHandler = logHandler ?? throw new ArgumentNullException(nameof(logHandler));
+        _feedbackResponder = _services.GetRequiredService<LegacyCommandFeedbackResponder>();
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _fortuneAnswers = _services.GetRequiredService<FortuneAnswerStore>();
         _messageWaiter = _services.GetRequiredService<DiscordMessageWaiter>();
@@ -62,10 +64,11 @@ public sealed class CommandHandler : IDisposable
         }
 
         BeanBotLog.CommandsInstalling(_logger);
-        _discordClient.MessageReceived += HandleCommandAsync;
-        _commandService.CommandExecuted += _logHandler.LogCommands;
         await _commandService.AddModulesAsync(assembly: Assembly.GetEntryAssembly() ?? typeof(CommandHandler).Assembly,
                                               services: _services);
+        _discordClient.MessageReceived += HandleCommandAsync;
+        _commandService.CommandExecuted += _logHandler.LogCommands;
+        _commandService.CommandExecuted += _feedbackResponder.RespondAsync;
         _initialized = true;
     }
 
@@ -74,6 +77,7 @@ public sealed class CommandHandler : IDisposable
         if (_initialized)
         {
             _discordClient.MessageReceived -= HandleCommandAsync;
+            _commandService.CommandExecuted -= _feedbackResponder.RespondAsync;
             _commandService.CommandExecuted -= _logHandler.LogCommands;
             _initialized = false;
         }
