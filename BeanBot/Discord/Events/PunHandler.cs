@@ -19,6 +19,7 @@ public sealed class PunHandler : IAsyncDisposable
     private int _disposed;
 
     private static readonly TimeSpan PostTimeLocal = new(16, 20, 0);
+    internal static readonly TimeSpan MessageSendTimeout = TimeSpan.FromSeconds(10);
 
     public PunHandler(
         DiscordSocketClient discordSocketClient,
@@ -123,15 +124,39 @@ public sealed class PunHandler : IAsyncDisposable
         string pun,
         RequestOptions requestOptions,
         ILogger logger,
-        CancellationToken token)
+        CancellationToken token,
+        TimeSpan? sendTimeout = null)
     {
-        await sendMessage(
+        ArgumentNullException.ThrowIfNull(sendMessage);
+        ArgumentNullException.ThrowIfNull(requestOptions);
+        ArgumentNullException.ThrowIfNull(logger);
+
+        var timeout = sendTimeout ?? MessageSendTimeout;
+        if (timeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sendTimeout), "Send timeout must be greater than zero.");
+        }
+
+        await SendWithTimeoutAsync(
+            sendMessage,
             "The time has come and so have I, Bean Bot here to deliver you your daily pun(?)",
-            requestOptions);
-        await sendMessage("<:420stolfoit:675553715759087618>", requestOptions);
+            requestOptions,
+            timeout,
+            token);
+        await SendWithTimeoutAsync(
+            sendMessage,
+            "<:420stolfoit:675553715759087618>",
+            requestOptions,
+            timeout,
+            token);
         try
         {
-            await sendMessage(pun, requestOptions);
+            await SendWithTimeoutAsync(
+                sendMessage,
+                pun,
+                requestOptions,
+                timeout,
+                token);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
@@ -141,6 +166,45 @@ public sealed class PunHandler : IAsyncDisposable
         {
             BeanBotLog.PunPostingFailed(logger, exception);
         }
+    }
+
+    private static async Task SendWithTimeoutAsync(
+        Func<string, RequestOptions, Task> sendMessage,
+        string message,
+        RequestOptions requestOptions,
+        TimeSpan timeout,
+        CancellationToken token)
+    {
+        var sendTask = sendMessage(message, requestOptions);
+        try
+        {
+            await sendTask.WaitAsync(timeout, token);
+        }
+        catch (TimeoutException)
+        {
+            ObserveLateFault(sendTask);
+            throw;
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            ObserveLateFault(sendTask);
+            throw;
+        }
+    }
+
+    private static void ObserveLateFault(Task sendTask)
+    {
+        if (sendTask.IsCompleted)
+        {
+            _ = sendTask.Exception;
+            return;
+        }
+
+        _ = sendTask.ContinueWith(
+            completedTask => _ = completedTask.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private static TimeZoneInfo GetChicagoTimeZone()
