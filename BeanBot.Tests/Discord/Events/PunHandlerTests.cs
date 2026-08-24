@@ -51,7 +51,6 @@ public class PunHandlerTests
             "test pun",
             new RequestOptions(),
             NullLogger.Instance,
-            CancellationToken.None,
             TimeSpan.FromSeconds(1));
 
         Assert.Equal(
@@ -78,7 +77,6 @@ public class PunHandlerTests
             "test pun",
             new RequestOptions(),
             NullLogger.Instance,
-            CancellationToken.None,
             TimeSpan.FromMilliseconds(25)));
 
         Assert.Equal(1, sends);
@@ -105,7 +103,6 @@ public class PunHandlerTests
             "test pun",
             new RequestOptions(),
             logger,
-            CancellationToken.None,
             TimeSpan.FromMilliseconds(25));
 
         Assert.Equal(3, sends);
@@ -139,7 +136,6 @@ public class PunHandlerTests
             "test pun",
             new RequestOptions { CancelToken = cancellation.Token },
             logger,
-            cancellation.Token,
             TimeSpan.FromSeconds(1));
 
         await thirdSendStarted.Task;
@@ -174,8 +170,7 @@ public class PunHandlerTests
             },
             "test pun",
             new RequestOptions { CancelToken = cancellation.Token },
-            logger,
-            cancellation.Token);
+            logger);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => posting);
         Assert.Equal(3, sends);
