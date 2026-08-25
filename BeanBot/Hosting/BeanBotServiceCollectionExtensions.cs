@@ -121,6 +121,13 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<PunProvider>();
         services.AddSingleton<IPunProvider>(provider =>
             provider.GetRequiredService<PunProvider>());
+        services.AddSingleton(ExternalMediaCommandOptions.Default);
+        services.AddSingleton<ExternalImageClient>();
+        services.AddSingleton<IExternalImageClient>(provider =>
+            provider.GetRequiredService<ExternalImageClient>());
+        services.AddSingleton<MemeProvider>();
+        services.AddSingleton<IMemeProvider>(provider =>
+            provider.GetRequiredService<MemeProvider>());
         services.AddSingleton<DiscordMessageWaiter>();
         services.AddSingleton<DiscordPaginatorService>();
         services.AddSingleton<EditMessageEventServices>();
