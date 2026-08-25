@@ -65,14 +65,15 @@ internal sealed class ExternalImageClient : IExternalImageClient, IDisposable
 
         await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var destination = new MemoryStream(GetInitialCapacity(declaredLength));
-        var buffer = ArrayPool<byte>.Shared.Rent(Math.Min(ReadBufferSize, _options.MaxImageBytes + 1));
+        var bufferSize = (int)Math.Min(ReadBufferSize, (long)_options.MaxImageBytes + 1);
+        var buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
         try
         {
             var totalBytes = 0;
             while (true)
             {
-                var remainingWithSentinel = _options.MaxImageBytes - totalBytes + 1;
-                var bytesToRead = Math.Min(buffer.Length, remainingWithSentinel);
+                var remainingWithSentinel = (long)_options.MaxImageBytes - totalBytes + 1;
+                var bytesToRead = (int)Math.Min(buffer.Length, remainingWithSentinel);
                 var bytesRead = await source.ReadAsync(
                     buffer.AsMemory(0, bytesToRead),
                     cancellationToken);
