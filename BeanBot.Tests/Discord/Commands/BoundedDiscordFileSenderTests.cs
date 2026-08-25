@@ -21,12 +21,12 @@ public class BoundedDiscordFileSenderTests
                 await stream.CopyToAsync(copy);
                 sentContent = copy.ToArray();
             },
-            new byte[] { 1, 2, 3 },
+            [1, 2, 3],
             TimeSpan.FromSeconds(1),
             CancellationToken.None);
 
         Assert.Equal(1, calls);
-        Assert.Equal(new byte[] { 1, 2, 3 }, sentContent);
+        Assert.Equal([1, 2, 3], sentContent);
     }
 
     [Fact]
@@ -43,7 +43,7 @@ public class BoundedDiscordFileSenderTests
                 requestToken = requestOptions.CancelToken;
                 return completion.Task;
             },
-            new byte[] { 1 },
+            [1],
             TimeSpan.FromMilliseconds(50),
             CancellationToken.None));
 
@@ -67,7 +67,7 @@ public class BoundedDiscordFileSenderTests
                 calls++;
                 return completion.Task;
             },
-            new byte[] { 1 },
+            [1],
             TimeSpan.FromSeconds(5),
             cancellation.Token);
 
