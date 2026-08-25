@@ -2,7 +2,7 @@ using MemeApiDotNetWrapper;
 
 namespace BeanBot.Discord.Commands;
 
-internal interface IMemeProvider
+public interface IMemeProvider
 {
     Task<Meme?> GetMemeAsync(string subreddit, CancellationToken cancellationToken);
 }
