@@ -10,7 +10,7 @@ public class ExternalImageClientTests
     [Fact]
     public async Task DownloadImageAsync_NormalImage_ReturnsContent()
     {
-        var expected = new byte[] { 1, 2, 3, 4 };
+        byte[] expected = [1, 2, 3, 4];
         using var httpClient = CreateHttpClient(_ => CreateResponse(expected, "image/png"));
         using var client = new ExternalImageClient(httpClient, CreateOptions(maxImageBytes: 16));
 
@@ -24,7 +24,7 @@ public class ExternalImageClientTests
     [Fact]
     public async Task DownloadImageAsync_DeclaredLengthExceedsLimit_RejectsPayload()
     {
-        using var httpClient = CreateHttpClient(_ => CreateResponse(new byte[5], "image/png"));
+        using var httpClient = CreateHttpClient(_ => CreateResponse([0, 0, 0, 0, 0], "image/png"));
         using var client = new ExternalImageClient(httpClient, CreateOptions(maxImageBytes: 4));
 
         await Assert.ThrowsAsync<ExternalMediaPayloadTooLargeException>(() =>
@@ -36,7 +36,7 @@ public class ExternalImageClientTests
     [Fact]
     public async Task DownloadImageAsync_UnknownLengthExceedsLimit_RejectsPayload()
     {
-        var stream = new NonSeekableReadStream(new byte[] { 1, 2, 3, 4, 5 });
+        var stream = new NonSeekableReadStream([1, 2, 3, 4, 5]);
         var response = new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StreamContent(stream)
@@ -55,7 +55,7 @@ public class ExternalImageClientTests
     [Fact]
     public async Task DownloadImageAsync_NonImageResponse_RejectsPayload()
     {
-        using var httpClient = CreateHttpClient(_ => CreateResponse(new byte[] { 1 }, "text/plain"));
+        using var httpClient = CreateHttpClient(_ => CreateResponse([1], "text/plain"));
         using var client = new ExternalImageClient(httpClient, CreateOptions());
 
         await Assert.ThrowsAsync<InvalidDataException>(() =>
