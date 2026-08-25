@@ -5,8 +5,8 @@ internal static class ExternalMediaOperationGuard
     internal static async Task<T> RunAsync<T>(
         Func<CancellationToken, Task<T>> operation,
         TimeSpan timeout,
-        CancellationToken cancellationToken,
-        string timeoutMessage)
+        string timeoutMessage,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentException.ThrowIfNullOrWhiteSpace(timeoutMessage);
@@ -36,8 +36,8 @@ internal static class ExternalMediaOperationGuard
     internal static async Task RunAsync(
         Func<CancellationToken, Task> operation,
         TimeSpan timeout,
-        CancellationToken cancellationToken,
-        string timeoutMessage)
+        string timeoutMessage,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(operation);
 
@@ -48,8 +48,8 @@ internal static class ExternalMediaOperationGuard
                 return true;
             },
             timeout,
-            cancellationToken,
-            timeoutMessage);
+            timeoutMessage,
+            cancellationToken);
     }
 
     internal static void ObserveLateFault(Task operationTask)
