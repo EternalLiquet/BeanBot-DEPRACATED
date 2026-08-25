@@ -42,8 +42,8 @@ internal sealed class ExternalImageClient : IExternalImageClient, IDisposable
         return ExternalMediaOperationGuard.RunAsync(
             token => DownloadImageCoreAsync(imageUrl, token),
             _options.ImageDownloadTimeout,
-            cancellationToken,
-            "External image download timed out.");
+            "External image download timed out.",
+            cancellationToken);
     }
 
     private async Task<byte[]> DownloadImageCoreAsync(Uri imageUrl, CancellationToken cancellationToken)
