@@ -23,7 +23,7 @@ internal static class BoundedDiscordFileSender
                     CancelToken = token
                 }),
             timeout,
-            cancellationToken,
-            "Discord media upload timed out.");
+            "Discord media upload timed out.",
+            cancellationToken);
     }
 }
