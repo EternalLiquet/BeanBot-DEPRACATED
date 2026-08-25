@@ -33,6 +33,6 @@ internal sealed class MemeProvider : IMemeProvider
         => ExternalMediaOperationGuard.RunAsync(
             _ => _getMeme(subreddit ?? string.Empty),
             _timeout,
-            cancellationToken,
-            "Meme API request timed out.");
+            "Meme API request timed out.",
+            cancellationToken);
 }
