@@ -382,7 +382,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
             _logger,
             stage,
             GetSafeMediaSource(url),
-            exception);
+            exception.GetType().Name);
         await ReplyAsync("I couldn't download that image right now.");
     }
 
