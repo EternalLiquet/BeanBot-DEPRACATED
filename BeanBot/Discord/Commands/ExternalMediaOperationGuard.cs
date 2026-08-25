@@ -11,6 +11,7 @@ internal static class ExternalMediaOperationGuard
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentException.ThrowIfNullOrWhiteSpace(timeoutMessage);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        cancellationToken.ThrowIfCancellationRequested();
 
         using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         operationCancellation.CancelAfter(timeout);
