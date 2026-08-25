@@ -3,7 +3,7 @@ using System.Net.Http.Headers;
 
 namespace BeanBot.Discord.Commands;
 
-internal interface IExternalImageClient
+public interface IExternalImageClient
 {
     Task<byte[]> DownloadImageAsync(Uri imageUrl, CancellationToken cancellationToken);
 }
@@ -130,7 +130,7 @@ internal sealed class ExternalImageClient : IExternalImageClient, IDisposable
     }
 }
 
-internal sealed class ExternalMediaPayloadTooLargeException : InvalidDataException
+internal sealed class ExternalMediaPayloadTooLargeException : IOException
 {
     internal ExternalMediaPayloadTooLargeException(int maximumBytes)
         : base($"External image exceeded the {maximumBytes}-byte download limit.")
