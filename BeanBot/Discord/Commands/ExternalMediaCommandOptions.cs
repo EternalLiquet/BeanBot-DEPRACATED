@@ -1,6 +1,6 @@
 namespace BeanBot.Discord.Commands;
 
-internal sealed class ExternalMediaCommandOptions
+public sealed class ExternalMediaCommandOptions
 {
     internal static ExternalMediaCommandOptions Default { get; } = new(
         imageDownloadTimeout: TimeSpan.FromSeconds(10),
