@@ -1,9 +1,10 @@
-﻿using BeanBot.Configuration;
+using BeanBot.Configuration;
 using BeanBot.Discord.Messaging;
 using BeanBot.Logging;
 using Discord;
 using Discord.Commands;
 using MemeApiDotNetWrapper;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace BeanBot.Discord.Commands;
@@ -11,12 +12,14 @@ namespace BeanBot.Discord.Commands;
 [Name("Meme Commands")]
 public class MemeModule : ModuleBase<SocketCommandContext>
 {
-    private static readonly HttpClient HttpClient = new();
-    private readonly MemeMachine _memeMachine = new();
     private readonly BeanBotOptions _options;
     private readonly FortuneAnswerStore _fortuneAnswers;
     private readonly DiscordPaginatorService _paginator;
     private readonly IPunProvider _punProvider;
+    private readonly IExternalImageClient _externalImageClient;
+    private readonly IMemeProvider _memeProvider;
+    private readonly ExternalMediaCommandOptions _mediaOptions;
+    private readonly IHostApplicationLifetime _applicationLifetime;
     private readonly ILogger<MemeModule> _logger;
 
     public MemeModule(
@@ -24,12 +27,20 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         FortuneAnswerStore fortuneAnswers,
         DiscordPaginatorService paginator,
         IPunProvider punProvider,
+        IExternalImageClient externalImageClient,
+        IMemeProvider memeProvider,
+        ExternalMediaCommandOptions mediaOptions,
+        IHostApplicationLifetime applicationLifetime,
         ILogger<MemeModule> logger)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _fortuneAnswers = fortuneAnswers ?? throw new ArgumentNullException(nameof(fortuneAnswers));
         _paginator = paginator ?? throw new ArgumentNullException(nameof(paginator));
         _punProvider = punProvider ?? throw new ArgumentNullException(nameof(punProvider));
+        _externalImageClient = externalImageClient ?? throw new ArgumentNullException(nameof(externalImageClient));
+        _memeProvider = memeProvider ?? throw new ArgumentNullException(nameof(memeProvider));
+        _mediaOptions = mediaOptions ?? throw new ArgumentNullException(nameof(mediaOptions));
+        _applicationLifetime = applicationLifetime ?? throw new ArgumentNullException(nameof(applicationLifetime));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -86,7 +97,6 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     {
         await ReplyWithOchoOcho();
     }
-
 
     [Command("420")]
     [Summary("Astolfour-twenty blaze it")]
@@ -159,23 +169,22 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     {
         await InvokeMemeApi(subreddit);
     }
+
     private async Task InvokeMemeApi(string subreddit)
     {
         Meme? meme;
+        var cancellationToken = _applicationLifetime.ApplicationStopping;
         try
         {
-            if (string.IsNullOrEmpty(subreddit))
-            {
-                meme = await _memeMachine.GetMemeAsync();
-            }
-            else
-            {
-                meme = await _memeMachine.GetMemeAsync(subreddit);
-            }
+            meme = await _memeProvider.GetMemeAsync(subreddit, cancellationToken);
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            BeanBotLog.MemeApiFailed(_logger, ex);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            BeanBotLog.MemeApiFailed(_logger, exception);
             meme = null;
         }
 
@@ -220,7 +229,6 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         var fact = TexasFactResponses[Random.Shared.Next(TexasFactResponses.Length)];
         await ReplyAsync($"Did you know: {fact}");
     }
-
 
     private async Task ChooseRandomPun()
     {
@@ -330,18 +338,60 @@ public class MemeModule : ModuleBase<SocketCommandContext>
 
     private async Task SendImageFromUrl(Uri url)
     {
+        var cancellationToken = _applicationLifetime.ApplicationStopping;
+        byte[] imageContent;
         try
         {
-            using var response = await HttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
-            using Stream image = await response.Content.ReadAsStreamAsync();
-            await Context.Channel.SendFileAsync(image, "image.png");
+            imageContent = await _externalImageClient.DownloadImageAsync(url, cancellationToken);
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            BeanBotLog.ImageDownloadFailed(_logger, url, ex);
-            await ReplyAsync("I couldn't download that image right now.");
+            throw;
         }
+        catch (Exception exception)
+        {
+            await HandleExternalMediaFailureAsync("download", url, exception);
+            return;
+        }
+
+        try
+        {
+            await BoundedDiscordFileSender.SendAsync(
+                async (stream, requestOptions) =>
+                    await Context.Channel.SendFileAsync(
+                        stream,
+                        "image.png",
+                        options: requestOptions),
+                imageContent,
+                _mediaOptions.DiscordUploadTimeout,
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            await HandleExternalMediaFailureAsync("upload", url, exception);
+        }
+    }
+
+    private async Task HandleExternalMediaFailureAsync(string stage, Uri url, Exception exception)
+    {
+        BeanBotLog.ExternalMediaCommandFailed(
+            _logger,
+            stage,
+            GetSafeMediaSource(url),
+            exception.GetType().Name);
+        await ReplyAsync("I couldn't download that image right now.");
+    }
+
+    internal static string GetSafeMediaSource(Uri url)
+    {
+        ArgumentNullException.ThrowIfNull(url);
+        return url.GetComponents(
+            UriComponents.SchemeAndServer | UriComponents.Path,
+            UriFormat.SafeUnescaped);
     }
 
     internal static string NormalizeSuccTarget(IEnumerable<string> input, string authorMention)

@@ -74,6 +74,15 @@ public class MemeModuleTests
         AssertMentionsDisabled(reply.AllowedMentions);
     }
 
+    [Fact]
+    public void GetSafeMediaSource_RemovesQueryAndUserInfo()
+    {
+        var source = MemeModule.GetSafeMediaSource(
+            new Uri("https://user:secret@example.test/images/toes.png?signature=top-secret#fragment"));
+
+        Assert.Equal("https://example.test/images/toes.png", source);
+    }
+
     private static void AssertMentionsDisabled(AllowedMentions allowedMentions)
     {
         var parsedTypes = allowedMentions.AllowedTypes ?? AllowedMentionTypes.None;
