@@ -119,11 +119,12 @@ jobs:
 
       - name: Generate build provenance
         if: steps.selected-image.outputs.provenance-action == 'generate'
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-name: ${{ steps.selected-image.outputs.image-name }}
           subject-digest: ${{ steps.selected-image.outputs.image-digest }}
           push-to-registry: true
+          create-storage-record: false
 
       - name: Verify existing build provenance
         if: steps.selected-image.outputs.provenance-action == 'verify'
@@ -145,12 +146,13 @@ jobs:
           upload-release-assets: false
 
       - name: Attest image SBOM
-        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-name: ${{ steps.selected-image.outputs.image-name }}
           subject-digest: ${{ steps.selected-image.outputs.image-digest }}
           sbom-path: .artifacts/release/beanbot.spdx.json
           push-to-registry: true
+          create-storage-record: false
 
       - name: Create release metadata and checksums
         run: |
