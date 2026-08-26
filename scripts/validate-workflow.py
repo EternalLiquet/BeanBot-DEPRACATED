@@ -178,7 +178,10 @@ def validate_workflows() -> None:
     }
     if producer.get("permissions") != expected_producer_permissions:
         fail("release image job permissions must remain least-privilege for GHCR and attestations")
-    if consumer.get("needs") != "verify-and-publish-image":
+    consumer_needs = consumer.get("needs", [])
+    if isinstance(consumer_needs, str):
+        consumer_needs = [consumer_needs]
+    if not isinstance(consumer_needs, list) or "verify-and-publish-image" not in consumer_needs:
         fail("GitHub Release publication must depend on the verified image job succeeding")
 
     upload_step = producer_steps.get("Upload release evidence", {})
@@ -229,8 +232,14 @@ def validate_workflows() -> None:
     if verify_step.get("if") != "steps.selected-image.outputs.provenance-action == 'verify'":
         fail("reused image digests must take the existing-provenance verification path")
 
+    release_action_uses = [
+        str(step.get("uses", ""))
+        for job in release_jobs.values()
+        for step in job.get("steps", [])
+        if step.get("uses")
+    ]
     for deprecated_action in ("actions/attest-build-provenance@", "actions/attest-sbom@"):
-        if deprecated_action in release:
+        if any(action.startswith(deprecated_action) for action in release_action_uses):
             fail(f"release workflow must not reference deprecated attestation wrapper: {deprecated_action}")
 
     generate_action = str(generate_step.get("uses", ""))
@@ -239,7 +248,7 @@ def validate_workflows() -> None:
         fail("newly staged images must use the consolidated actions/attest action")
     if sbom_action != generate_action:
         fail("build provenance and SBOM attestation must use the same pinned actions/attest action")
-    if release.count("uses: actions/attest@") != 2:
+    if sum(action.startswith("actions/attest@") for action in release_action_uses) != 2:
         fail("release workflow must use actions/attest exactly once for provenance and once for SBOM")
 
     expected_subject_inputs = {
