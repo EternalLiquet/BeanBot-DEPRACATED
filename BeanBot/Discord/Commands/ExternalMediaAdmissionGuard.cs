@@ -8,7 +8,7 @@ internal enum ExternalMediaAdmissionResult
     CapacityReached
 }
 
-internal sealed class ExternalMediaAdmissionGuard
+public sealed class ExternalMediaAdmissionGuard
 {
     private readonly object _syncRoot = new();
     private readonly Dictionary<AdmissionKey, AdmissionEntry> _entries = [];
