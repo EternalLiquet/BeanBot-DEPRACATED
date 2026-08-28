@@ -28,12 +28,20 @@ internal sealed class DiscordNewMemberWelcomeDelivery : INewMemberWelcomeDeliver
         NewMemberWelcomeRuntimeOptions runtimeOptions,
         ILogger<DiscordNewMemberWelcomeDelivery> logger)
         : this(
-            (userId, requestOptions) =>
+            async (userId, requestOptions) =>
             {
                 var user = discordClient.GetUser(userId) ??
+                    await ((IDiscordClient)discordClient).GetUserAsync(
+                        userId,
+                        CacheMode.AllowDownload,
+                        requestOptions);
+                if (user is null)
+                {
                     throw new InvalidOperationException(
                         $"Discord user {userId} is no longer available for welcome delivery.");
-                return user.CreateDMChannelAsync(requestOptions);
+                }
+
+                return await user.CreateDMChannelAsync(requestOptions);
             },
             async (channel, message, requestOptions) =>
                 await channel.SendMessageAsync(message, options: requestOptions),
