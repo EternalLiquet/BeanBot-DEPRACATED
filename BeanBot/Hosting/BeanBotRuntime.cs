@@ -71,10 +71,8 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     }
 
     public bool HasActiveDiscordLifecycleOperation
-        => _discordLifecycleCoordinator.HasActiveSequence;
-
-    public bool HasActiveNewMemberWelcomeOperation
-        => _newMemberWelcomeService.HasActiveDiscordOperation;
+        => _discordLifecycleCoordinator.HasActiveSequence ||
+           _newMemberWelcomeService.HasActiveDiscordOperation;
 
     public bool CanDisposeDiscordClient => _canDisposeDiscordClient;
 
@@ -116,10 +114,8 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     {
         _newMemberHandler.Dispose();
         _newMemberWelcomeService.StopAccepting();
+        _newMemberWelcomeService.StopAsync().GetAwaiter().GetResult();
     }
-
-    public Task StopNewMemberWelcomeServiceAsync()
-        => _newMemberWelcomeService.StopAsync();
 
     public void StopEditedMessageEvents() => _editMessageHandler.Dispose();
 
