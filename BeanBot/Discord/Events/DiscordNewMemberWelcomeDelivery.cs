@@ -19,7 +19,7 @@ internal sealed class DiscordNewMemberWelcomeDelivery : INewMemberWelcomeDeliver
     private readonly NewMemberWelcomeOptions _welcomeOptions;
     private readonly NewMemberWelcomeRuntimeOptions _runtimeOptions;
     private readonly ILogger<DiscordNewMemberWelcomeDelivery> _logger;
-    private readonly SemaphoreSlim _operationSlots;
+    private int _availableOperationSlots;
     private int _activeOperationCount;
 
     public DiscordNewMemberWelcomeDelivery(
@@ -57,9 +57,7 @@ internal sealed class DiscordNewMemberWelcomeDelivery : INewMemberWelcomeDeliver
         _runtimeOptions = runtimeOptions ?? throw new ArgumentNullException(nameof(runtimeOptions));
         _runtimeOptions.Validate();
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _operationSlots = new SemaphoreSlim(
-            _runtimeOptions.MaximumDiscordOperations,
-            _runtimeOptions.MaximumDiscordOperations);
+        _availableOperationSlots = _runtimeOptions.MaximumDiscordOperations;
     }
 
     public bool HasActiveOperation => Volatile.Read(ref _activeOperationCount) > 0;
@@ -88,13 +86,12 @@ internal sealed class DiscordNewMemberWelcomeDelivery : INewMemberWelcomeDeliver
         ulong userId,
         CancellationToken cancellationToken)
     {
-        if (!_operationSlots.Wait(0))
+        if (!TryAcquireOperationSlot())
         {
             throw new InvalidOperationException(
                 "The bounded new-member Discord operation capacity is exhausted.");
         }
 
-        Interlocked.Increment(ref _activeOperationCount);
         Task<T> operation;
         try
         {
@@ -140,13 +137,12 @@ internal sealed class DiscordNewMemberWelcomeDelivery : INewMemberWelcomeDeliver
         ulong userId,
         CancellationToken cancellationToken)
     {
-        if (!_operationSlots.Wait(0))
+        if (!TryAcquireOperationSlot())
         {
             throw new InvalidOperationException(
                 "The bounded new-member Discord operation capacity is exhausted.");
         }
 
-        Interlocked.Increment(ref _activeOperationCount);
         Task operation;
         try
         {
@@ -186,6 +182,27 @@ internal sealed class DiscordNewMemberWelcomeDelivery : INewMemberWelcomeDeliver
         }
     }
 
+    private bool TryAcquireOperationSlot()
+    {
+        while (true)
+        {
+            var available = Volatile.Read(ref _availableOperationSlots);
+            if (available <= 0)
+            {
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(
+                    ref _availableOperationSlots,
+                    available - 1,
+                    available) == available)
+            {
+                Interlocked.Increment(ref _activeOperationCount);
+                return true;
+            }
+        }
+    }
+
     private void ObserveLateCompletionAndRelease(Task operation, string operationName, ulong userId)
     {
         _ = operation.ContinueWith(
@@ -215,6 +232,6 @@ internal sealed class DiscordNewMemberWelcomeDelivery : INewMemberWelcomeDeliver
     private void ReleaseOperationSlot()
     {
         Interlocked.Decrement(ref _activeOperationCount);
-        _operationSlots.Release();
+        Interlocked.Increment(ref _availableOperationSlots);
     }
 }
