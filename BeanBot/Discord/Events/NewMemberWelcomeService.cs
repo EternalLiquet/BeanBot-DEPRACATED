@@ -64,9 +64,8 @@ internal sealed class NewMemberWelcomeService : IAsyncDisposable
         }
 
         Volatile.Write(ref _accepting, 1);
-        _workers = Enumerable.Range(0, _runtimeOptions.WorkerCount)
-            .Select(_ => Task.Run(() => ProcessQueueAsync(_shutdownCancellation.Token)))
-            .ToArray();
+        _workers = [.. Enumerable.Range(0, _runtimeOptions.WorkerCount)
+            .Select(_ => Task.Run(() => ProcessQueueAsync(_shutdownCancellation.Token)))];
     }
 
     internal bool TryEnqueue(ulong userId, bool isBot)
