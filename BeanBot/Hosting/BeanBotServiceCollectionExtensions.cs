@@ -42,6 +42,8 @@ internal static class BeanBotServiceCollectionExtensions
             .ValidateOnStart();
         services.AddSingleton(provider => BeanBotOptionsFactory.Create(
             provider.GetRequiredService<IOptions<BeanBotSettings>>().Value));
+        services.AddSingleton(provider => NewMemberWelcomeOptions.Create(
+            provider.GetRequiredService<IOptions<BeanBotSettings>>().Value.NewMemberWelcome));
         services.AddSingleton(_ => new CommandService(new CommandServiceConfig
         {
             LogLevel = LogSeverity.Verbose,
@@ -128,6 +130,11 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<MemeProvider>();
         services.AddSingleton<IMemeProvider>(provider =>
             provider.GetRequiredService<MemeProvider>());
+        services.AddSingleton(NewMemberWelcomeRuntimeOptions.Default);
+        services.AddSingleton<DiscordNewMemberWelcomeDelivery>();
+        services.AddSingleton<INewMemberWelcomeDelivery>(provider =>
+            provider.GetRequiredService<DiscordNewMemberWelcomeDelivery>());
+        services.AddSingleton<NewMemberWelcomeService>();
         services.AddSingleton<DiscordMessageWaiter>();
         services.AddSingleton<DiscordPaginatorService>();
         services.AddSingleton<EditMessageEventServices>();
