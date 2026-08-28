@@ -7,6 +7,7 @@ namespace BeanBot.Hosting;
 internal interface IBeanBotRuntime
 {
     bool HasActiveDiscordLifecycleOperation { get; }
+    bool HasActiveNewMemberWelcomeOperation { get; }
     bool CanDisposeDiscordClient { get; }
     void SubscribeApplicationEvents();
     Task StartHealthServerAsync(CancellationToken cancellationToken);
@@ -16,6 +17,7 @@ internal interface IBeanBotRuntime
     void StartEventAndBackgroundServices();
     void StopReactionServices();
     void StopNewMemberEvents();
+    Task StopNewMemberWelcomeServiceAsync();
     void StopEditedMessageEvents();
     void StopCommandServices();
     void StopMessageWaiter();
@@ -133,6 +135,7 @@ internal sealed class BeanBotApplication : IBeanBotApplication
 
         await RunSynchronousStageAsync("reaction-services", _runtime.StopReactionServices);
         await RunSynchronousStageAsync("new-member-events", _runtime.StopNewMemberEvents);
+        await RunStageAsync("new-member-welcome", _runtime.StopNewMemberWelcomeServiceAsync);
         await RunSynchronousStageAsync("edited-message-events", _runtime.StopEditedMessageEvents);
         await RunSynchronousStageAsync("command-services", _runtime.StopCommandServices);
         await RunSynchronousStageAsync("message-waiter", _runtime.StopMessageWaiter);
@@ -147,7 +150,9 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         var canStopDiscord = false;
         await RunSynchronousStageAsync(
             "discord-startup-state",
-            () => canStopDiscord = !_runtime.HasActiveDiscordLifecycleOperation);
+            () => canStopDiscord =
+                !_runtime.HasActiveDiscordLifecycleOperation &&
+                !_runtime.HasActiveNewMemberWelcomeOperation);
         if (!canStopDiscord)
         {
             BeanBotLog.DiscordStopSkipped(_logger);
