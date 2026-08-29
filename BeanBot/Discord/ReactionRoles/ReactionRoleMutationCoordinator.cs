@@ -35,6 +35,7 @@ internal sealed class ReactionRoleMutationCoordinator
 
     internal Task? Submit(
         ReactionRoleMutationKey key,
+        ulong messageId,
         bool desiredState,
         Func<bool, CancellationToken, Task> mutate,
         CancellationToken cancellationToken)
@@ -55,6 +56,7 @@ internal sealed class ReactionRoleMutationCoordinator
 
             if (_entries.TryGetValue(key, out var existing))
             {
+                existing.MessageId = messageId;
                 existing.DesiredState = desiredState;
                 existing.Mutate = mutate;
                 return null;
@@ -66,7 +68,7 @@ internal sealed class ReactionRoleMutationCoordinator
                 return null;
             }
 
-            entry = new Entry(desiredState, mutate);
+            entry = new Entry(messageId, desiredState, mutate);
             _entries.Add(key, entry);
         }
 
@@ -84,15 +86,33 @@ internal sealed class ReactionRoleMutationCoordinator
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                ulong messageId;
                 bool desiredState;
                 Func<bool, CancellationToken, Task> mutate;
                 lock (_syncRoot)
                 {
+                    messageId = entry.MessageId;
                     desiredState = entry.DesiredState;
                     mutate = entry.Mutate;
                 }
 
-                await mutate(desiredState, cancellationToken);
+                try
+                {
+                    await mutate(desiredState, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    BeanBotLog.ReactionRoleActionFailed(
+                        _logger,
+                        desiredState ? "add" : "remove",
+                        messageId,
+                        exception);
+                    return;
+                }
 
                 lock (_syncRoot)
                 {
@@ -168,9 +188,11 @@ internal sealed class ReactionRoleMutationCoordinator
     }
 
     private sealed class Entry(
+        ulong messageId,
         bool desiredState,
         Func<bool, CancellationToken, Task> mutate)
     {
+        internal ulong MessageId { get; set; } = messageId;
         internal bool DesiredState { get; set; } = desiredState;
         internal Func<bool, CancellationToken, Task> Mutate { get; set; } = mutate;
     }
