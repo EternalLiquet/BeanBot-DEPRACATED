@@ -11,17 +11,28 @@ public class ReactionRoleMutationCoordinatorTests
     {
         var coordinator = CreateCoordinator();
         var key = new ReactionRoleMutationKey(1, 2, 3);
-        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstStarted = NewCompletion();
+        var releaseFirst = NewCompletion();
         var desiredStates = new List<bool>();
+        var concurrentMutations = 0;
+        var maximumConcurrentMutations = 0;
 
         async Task Mutate(bool desiredState, CancellationToken _)
         {
+            var current = Interlocked.Increment(ref concurrentMutations);
+            maximumConcurrentMutations = Math.Max(maximumConcurrentMutations, current);
             desiredStates.Add(desiredState);
-            if (desiredStates.Count == 1)
+            try
             {
-                firstStarted.SetResult();
-                await releaseFirst.Task;
+                if (desiredStates.Count == 1)
+                {
+                    firstStarted.SetResult();
+                    await releaseFirst.Task;
+                }
+            }
+            finally
+            {
+                Interlocked.Decrement(ref concurrentMutations);
             }
         }
 
@@ -29,12 +40,12 @@ public class ReactionRoleMutationCoordinatorTests
         Assert.NotNull(owner);
         await firstStarted.Task;
 
-        var coalesced = coordinator.Submit(key, 42, desiredState: false, Mutate, CancellationToken.None);
-        Assert.Null(coalesced);
+        Assert.Null(coordinator.Submit(key, 42, desiredState: false, Mutate, CancellationToken.None));
         releaseFirst.SetResult();
         await owner!;
 
         Assert.Equal(new[] { true, false }, desiredStates);
+        Assert.Equal(1, maximumConcurrentMutations);
         Assert.Equal(0, coordinator.ActiveKeyCount);
     }
 
@@ -43,8 +54,8 @@ public class ReactionRoleMutationCoordinatorTests
     {
         var coordinator = CreateCoordinator();
         var key = new ReactionRoleMutationKey(1, 2, 3);
-        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstStarted = NewCompletion();
+        var releaseFirst = NewCompletion();
         var desiredStates = new List<bool>();
 
         async Task Mutate(bool desiredState, CancellationToken _)
@@ -74,16 +85,18 @@ public class ReactionRoleMutationCoordinatorTests
     {
         var coordinator = CreateCoordinator();
         var key = new ReactionRoleMutationKey(1, 2, 3);
-        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var calls = 0;
+        var firstStarted = NewCompletion();
+        var releaseFirst = NewCompletion();
+        var desiredStates = new List<bool>();
 
         async Task Mutate(bool desiredState, CancellationToken _)
         {
-            Assert.True(desiredState);
-            calls++;
-            firstStarted.SetResult();
-            await releaseFirst.Task;
+            desiredStates.Add(desiredState);
+            if (desiredStates.Count == 1)
+            {
+                firstStarted.SetResult();
+                await releaseFirst.Task;
+            }
         }
 
         var owner = coordinator.Submit(key, 42, desiredState: true, Mutate, CancellationToken.None);
@@ -95,7 +108,8 @@ public class ReactionRoleMutationCoordinatorTests
         releaseFirst.SetResult();
         await owner!;
 
-        Assert.Equal(1, calls);
+        Assert.Equal(new[] { true }, desiredStates);
+        Assert.Equal(0, coordinator.ActiveKeyCount);
     }
 
     [Fact]
@@ -103,14 +117,14 @@ public class ReactionRoleMutationCoordinatorTests
     {
         var coordinator = CreateCoordinator();
         var key = new ReactionRoleMutationKey(1, 2, 3);
-        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstStarted = NewCompletion();
+        var releaseFirst = NewCompletion();
         var calls = 0;
 
         async Task Mutate(bool _, CancellationToken __)
         {
             calls++;
-            firstStarted.SetResult();
+            firstStarted.TrySetResult();
             await releaseFirst.Task;
         }
 
@@ -126,16 +140,18 @@ public class ReactionRoleMutationCoordinatorTests
         Assert.Equal(1, coordinator.ActiveKeyCount);
         releaseFirst.SetResult();
         await owner!;
+
         Assert.Equal(1, calls);
+        Assert.Equal(0, coordinator.ActiveKeyCount);
     }
 
     [Fact]
     public async Task Submit_DifferentUsersCanMutateSameRoleConcurrently()
     {
         var coordinator = CreateCoordinator();
-        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstStarted = NewCompletion();
+        var secondStarted = NewCompletion();
+        var release = NewCompletion();
 
         async Task First(bool _, CancellationToken __)
         {
@@ -164,9 +180,9 @@ public class ReactionRoleMutationCoordinatorTests
     public async Task Submit_SameUserCanMutateDifferentRolesConcurrently()
     {
         var coordinator = CreateCoordinator();
-        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstStarted = NewCompletion();
+        var secondStarted = NewCompletion();
+        var release = NewCompletion();
 
         async Task First(bool _, CancellationToken __)
         {
@@ -195,8 +211,8 @@ public class ReactionRoleMutationCoordinatorTests
     public async Task Submit_CapacityExhaustionDoesNotGrowStateOrStartExtraMutation()
     {
         var coordinator = CreateCoordinator(capacity: 1);
-        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstStarted = NewCompletion();
+        var releaseFirst = NewCompletion();
         var secondStarted = false;
 
         async Task First(bool _, CancellationToken __)
@@ -263,12 +279,51 @@ public class ReactionRoleMutationCoordinatorTests
     }
 
     [Fact]
+    public async Task Submit_TimedOutMutationReleasesKeyForLaterRealEvent()
+    {
+        var coordinator = CreateCoordinator();
+        var key = new ReactionRoleMutationKey(1, 2, 3);
+        var lateOperation = NewCompletion();
+
+        var timedOut = coordinator.Submit(
+            key,
+            42,
+            true,
+            (_, cancellationToken) => ReactionRoleMutationCoordinator.RunBoundedAsync(
+                _ => lateOperation.Task,
+                TimeSpan.FromMilliseconds(20),
+                cancellationToken),
+            CancellationToken.None);
+        Assert.NotNull(timedOut);
+        await timedOut!;
+        Assert.Equal(0, coordinator.ActiveKeyCount);
+
+        var freshMutationRan = false;
+        var fresh = coordinator.Submit(
+            key,
+            43,
+            false,
+            (_, _) =>
+            {
+                freshMutationRan = true;
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+        Assert.NotNull(fresh);
+        await fresh!;
+
+        Assert.True(freshMutationRan);
+        lateOperation.SetException(new InvalidOperationException("late timeout failure"));
+        await Task.Yield();
+    }
+
+    [Fact]
     public async Task Submit_ShutdownCancellationReleasesKeyAndRejectsNewWork()
     {
         var coordinator = CreateCoordinator();
         var key = new ReactionRoleMutationKey(1, 2, 3);
         using var stopping = new CancellationTokenSource();
-        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = NewCompletion();
 
         var owner = coordinator.Submit(
             key,
@@ -304,7 +359,7 @@ public class ReactionRoleMutationCoordinatorTests
     [Fact]
     public async Task RunBoundedAsync_TimeoutDoesNotWaitForUnderlyingTaskToFinish()
     {
-        var operation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var operation = NewCompletion();
 
         await Assert.ThrowsAsync<TimeoutException>(() =>
             ReactionRoleMutationCoordinator.RunBoundedAsync(
@@ -320,7 +375,7 @@ public class ReactionRoleMutationCoordinatorTests
     public async Task RunBoundedAsync_ShutdownCancellationIsNotReportedAsTimeout()
     {
         using var stopping = new CancellationTokenSource();
-        var operationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var operationStarted = NewCompletion();
 
         var operation = ReactionRoleMutationCoordinator.RunBoundedAsync(
             async operationCancellation =>
@@ -339,4 +394,7 @@ public class ReactionRoleMutationCoordinatorTests
 
     private static ReactionRoleMutationCoordinator CreateCoordinator(int capacity = 16)
         => new(capacity, NullLogger.Instance);
+
+    private static TaskCompletionSource NewCompletion()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
 }
