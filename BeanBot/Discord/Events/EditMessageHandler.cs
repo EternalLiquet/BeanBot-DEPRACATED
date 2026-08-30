@@ -45,10 +45,7 @@ public sealed class EditMessageHandler : IDisposable
     {
         lock (_sync)
         {
-            if (_stopping)
-            {
-                throw new ObjectDisposedException(nameof(EditMessageHandler));
-            }
+            ObjectDisposedException.ThrowIf(_stopping, this);
 
             if (_initialized)
             {
