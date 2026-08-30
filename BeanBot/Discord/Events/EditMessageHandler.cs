@@ -68,7 +68,11 @@ public sealed class EditMessageHandler : IDisposable
                 return false;
             }
 
-            if (_inFlightOperations.Count >= MaximumInFlightOperations)
+            var trackedOperationCount = _inFlightOperations
+                .Concat(_ownedDiscordOperations)
+                .Distinct()
+                .Count();
+            if (trackedOperationCount >= MaximumInFlightOperations)
             {
                 EditMessageLog.AdmissionCapacityExceeded(_logger, MaximumInFlightOperations);
                 return false;
