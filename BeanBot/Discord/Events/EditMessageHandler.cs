@@ -110,10 +110,7 @@ public sealed class EditMessageHandler : IDisposable
             Task[] snapshot;
             lock (_sync)
             {
-                snapshot = _inFlightOperations
-                    .Concat(_ownedDiscordOperations)
-                    .Distinct()
-                    .ToArray();
+                snapshot = [.. _inFlightOperations, .. _ownedDiscordOperations];
             }
 
             if (snapshot.Length == 0)
