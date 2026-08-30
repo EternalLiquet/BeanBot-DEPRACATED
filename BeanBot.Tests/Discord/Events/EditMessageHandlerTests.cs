@@ -34,6 +34,36 @@ public class EditMessageHandlerTests
     }
 
     [Fact]
+    public async Task TryTrackOperation_LateDiscordOperationsRemainInsideCapacityBound()
+    {
+        using var client = new DiscordSocketClient();
+        using var handler = CreateHandler(client);
+        var inFlightCompletions = Enumerable.Range(0, EditMessageHandler.MaximumInFlightOperations - 1)
+            .Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+            .ToArray();
+        var lateDiscordCompletion = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        foreach (var completion in inFlightCompletions)
+        {
+            Assert.True(handler.TryTrackOperation(_ => completion.Task));
+        }
+
+        handler.TrackOwnedDiscordOperation(lateDiscordCompletion.Task);
+
+        Assert.False(handler.TryTrackOperation(_ => Task.CompletedTask));
+
+        foreach (var completion in inFlightCompletions)
+        {
+            completion.SetResult();
+        }
+
+        lateDiscordCompletion.SetResult();
+        await handler.StopAsync(TimeSpan.FromSeconds(1));
+        Assert.False(handler.HasInFlightOperations);
+    }
+
+    [Fact]
     public async Task StopAsync_CancelsAndDrainsAdmittedOperationAndStopsAdmission()
     {
         using var client = new DiscordSocketClient();
