@@ -8,7 +8,7 @@ namespace BeanBot.Tests.Discord.Events;
 public class EditMessageHandlerTests
 {
     [Fact]
-    public void TryTrackOperation_CapacityIsBounded()
+    public async Task TryTrackOperation_CapacityIsBounded()
     {
         using var client = new DiscordSocketClient();
         using var handler = CreateHandler(client);
@@ -29,6 +29,7 @@ public class EditMessageHandlerTests
             completion.SetResult();
         }
 
+        await handler.StopAsync(TimeSpan.FromSeconds(1));
         Assert.False(handler.HasInFlightOperations);
     }
 
@@ -66,6 +67,7 @@ public class EditMessageHandlerTests
 
         Assert.True(handler.HasInFlightOperations);
         completion.SetResult();
+        await handler.StopAsync(TimeSpan.FromSeconds(1));
         Assert.False(handler.HasInFlightOperations);
     }
 
@@ -83,6 +85,7 @@ public class EditMessageHandlerTests
 
         Assert.True(handler.HasInFlightOperations);
         completion.SetException(new InvalidOperationException("late Discord failure"));
+        await handler.StopAsync(TimeSpan.FromSeconds(1));
         Assert.False(handler.HasInFlightOperations);
     }
 
