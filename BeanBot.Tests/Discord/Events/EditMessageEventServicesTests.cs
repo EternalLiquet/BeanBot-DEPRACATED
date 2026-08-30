@@ -118,11 +118,12 @@ public class EditMessageEventServicesTests
             trackLateDiscordOperation: task => trackedTask = task);
 
         Assert.Equal(1, calls);
-        Assert.Same(completion.Task, trackedTask);
+        var lateTask = Assert.IsAssignableFrom<Task>(trackedTask);
+        Assert.False(lateTask.IsCompleted);
         Assert.True(requestToken.IsCancellationRequested);
 
         completion.SetException(new InvalidOperationException("late modify failure"));
-        await Task.Yield();
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await lateTask);
     }
 
     [Fact]
