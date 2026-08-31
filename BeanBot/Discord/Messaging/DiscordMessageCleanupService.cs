@@ -7,6 +7,7 @@ namespace BeanBot.Discord.Messaging;
 public sealed class DiscordMessageCleanupService
 {
     internal const int MaximumBulkDeleteCount = 100;
+    internal static readonly TimeSpan DeleteOperationTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan MaximumBulkDeleteAge = TimeSpan.FromDays(14) - TimeSpan.FromMinutes(5);
     private readonly Func<DateTimeOffset> _getUtcNow;
     private readonly ILogger<DiscordMessageCleanupService> _logger;
@@ -24,20 +25,25 @@ public sealed class DiscordMessageCleanupService
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    public Task DeleteAsync(ITextChannel channel, IReadOnlyCollection<IMessage> messages)
+    public Task DeleteAsync(
+        ITextChannel channel,
+        IReadOnlyCollection<IMessage> messages,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(channel);
 
         var plan = CreatePlan(messages, message => message.Timestamp, _getUtcNow());
         return ExecutePlanAsync(
             plan,
-            batch => channel.DeleteMessagesAsync(batch),
-            message => message.DeleteAsync(),
+            (batch, options) => channel.DeleteMessagesAsync(batch, options),
+            (message, options) => message.DeleteAsync(options),
             (exception, itemCount, isBatch) => BeanBotLog.MessageCleanupFailed(
                 _logger,
                 itemCount,
                 isBatch ? "bulk deletion" : "individual deletion",
-                exception));
+                exception),
+            DeleteOperationTimeout,
+            cancellationToken);
     }
 
     internal static MessageCleanupPlan<T> CreatePlan<T>(
@@ -71,15 +77,33 @@ public sealed class DiscordMessageCleanupService
 
     internal static async Task ExecutePlanAsync<T>(
         MessageCleanupPlan<T> plan,
-        Func<IReadOnlyCollection<T>, Task> deleteBatch,
-        Func<T, Task> deleteIndividual,
-        Action<Exception, int, bool> onFailure)
+        Func<IReadOnlyCollection<T>, RequestOptions, Task> deleteBatch,
+        Func<T, RequestOptions, Task> deleteIndividual,
+        Action<Exception, int, bool> onFailure,
+        TimeSpan? operationTimeout = null,
+        CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(deleteBatch);
+        ArgumentNullException.ThrowIfNull(deleteIndividual);
+        ArgumentNullException.ThrowIfNull(onFailure);
+
+        var timeout = operationTimeout ?? DeleteOperationTimeout;
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+
         foreach (var batch in plan.Batches)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                await deleteBatch(batch);
+                await ExecuteDeleteAsync(
+                    options => deleteBatch(batch, options),
+                    timeout,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception exception)
             {
@@ -89,15 +113,74 @@ public sealed class DiscordMessageCleanupService
 
         foreach (var item in plan.IndividualItems)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                await deleteIndividual(item);
+                await ExecuteDeleteAsync(
+                    options => deleteIndividual(item, options),
+                    timeout,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception exception)
             {
                 onFailure(exception, 1, false);
             }
         }
+    }
+
+    internal static async Task ExecuteDeleteAsync(
+        Func<RequestOptions, Task> delete,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(delete);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        operationCancellation.CancelAfter(timeout);
+
+        var requestOptions = new RequestOptions
+        {
+            CancelToken = operationCancellation.Token
+        };
+        var deleteTask = delete(requestOptions);
+
+        try
+        {
+            await deleteTask.WaitAsync(operationCancellation.Token);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _ = ObserveLateFault(deleteTask);
+            throw;
+        }
+        catch (OperationCanceledException exception) when (operationCancellation.IsCancellationRequested)
+        {
+            _ = ObserveLateFault(deleteTask);
+            throw new TimeoutException("Discord message cleanup operation timed out.", exception);
+        }
+    }
+
+    internal static Task ObserveLateFault(Task operationTask)
+    {
+        ArgumentNullException.ThrowIfNull(operationTask);
+
+        if (operationTask.IsCompleted)
+        {
+            _ = operationTask.Exception;
+            return Task.CompletedTask;
+        }
+
+        return operationTask.ContinueWith(
+            completedTask => _ = completedTask.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 }
 
