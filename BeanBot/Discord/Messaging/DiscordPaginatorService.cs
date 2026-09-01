@@ -12,6 +12,7 @@ public sealed class DiscordPaginatorService : IDisposable
 {
     internal const int MaximumActivePaginators = 64;
     internal static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(5);
+    internal static readonly TimeSpan DiscordOperationTimeout = TimeSpan.FromSeconds(10);
     internal static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(5);
     private static readonly Emoji FirstPage = new("⏮");
     private static readonly Emoji PreviousPage = new("◀");
@@ -31,16 +32,36 @@ public sealed class DiscordPaginatorService : IDisposable
     private readonly ConcurrentDictionary<ulong, PaginationSession> _sessions = new();
     private readonly SemaphoreSlim _availableSlots = new(MaximumActivePaginators, MaximumActivePaginators);
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly CancellationToken _shutdownToken;
     private readonly object _syncRoot = new();
     private readonly ILogger<DiscordPaginatorService> _logger;
+    private readonly PaginatorDiscordOperationTracker _discordOperations;
     private int _disposed;
 
     public DiscordPaginatorService(
         DiscordSocketClient discordClient,
         ILogger<DiscordPaginatorService> logger)
+        : this(discordClient, logger, DiscordOperationTimeout)
     {
+    }
+
+    internal DiscordPaginatorService(
+        DiscordSocketClient discordClient,
+        ILogger<DiscordPaginatorService> logger,
+        TimeSpan discordOperationTimeout)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(
+            discordOperationTimeout,
+            TimeSpan.Zero);
+
         _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _shutdownToken = _shutdown.Token;
+        _discordOperations = new PaginatorDiscordOperationTracker(
+            MaximumActivePaginators,
+            discordOperationTimeout,
+            _shutdownToken,
+            _logger);
         _discordClient.ReactionAdded += HandleReactionAsync;
     }
 
@@ -81,10 +102,12 @@ public sealed class DiscordPaginatorService : IDisposable
         try
         {
             var cursor = new PaginationCursor(pageList.Count);
-            message = await context.Channel.SendMessageAsync(
-                embed: BuildEmbed(pageList, cursor),
-                options: CreateRequestOptions(_shutdown.Token));
-            session = new PaginationSession(message, context.User.Id, pageList, cursor, _shutdown.Token);
+            message = await _discordOperations.RunAsync(
+                "send message",
+                options => context.Channel.SendMessageAsync(
+                    embed: BuildEmbed(pageList, cursor),
+                    options: options));
+            session = new PaginationSession(message, context.User.Id, pageList, cursor, _shutdownToken);
             await session.Access.WaitAsync();
             sessionAccessHeld = true;
             lock (_syncRoot)
@@ -100,7 +123,9 @@ public sealed class DiscordPaginatorService : IDisposable
 
             foreach (var control in Controls)
             {
-                await message.AddReactionAsync(control, CreateRequestOptions(_shutdown.Token));
+                await _discordOperations.RunAsync(
+                    "add control reaction",
+                    options => message.AddReactionAsync(control, options));
             }
 
             ObjectDisposedException.ThrowIf(
@@ -157,10 +182,11 @@ public sealed class DiscordPaginatorService : IDisposable
             return;
         }
 
+        var terminateAfterAmbiguousEdit = false;
         try
         {
             var stopRequested = false;
-            await session.Access.WaitAsync(_shutdown.Token);
+            await session.Access.WaitAsync(_shutdownToken);
             try
             {
                 if (!_sessions.TryGetValue(message.Id, out var currentSession)
@@ -178,17 +204,26 @@ public sealed class DiscordPaginatorService : IDisposable
                 {
                     if (session.Cursor.Move(action))
                     {
-                        await session.Message.ModifyAsync(
-                            properties => properties.Embed = BuildEmbed(session.Pages, session.Cursor),
-                            options: CreateRequestOptions(_shutdown.Token));
+                        try
+                        {
+                            await _discordOperations.RunAsync(
+                                "modify page",
+                                options => session.Message.ModifyAsync(
+                                    properties => properties.Embed = BuildEmbed(session.Pages, session.Cursor),
+                                    options));
+                        }
+                        catch (TimeoutException)
+                        {
+                            terminateAfterAmbiguousEdit = true;
+                            throw;
+                        }
                     }
 
                     await TryRemoveUserReactionAsync(
                         session.Message,
                         reaction.Emote,
                         reaction.UserId,
-                        _logger,
-                        _shutdown.Token);
+                        _shutdownToken);
                 }
             }
             finally
@@ -201,11 +236,29 @@ public sealed class DiscordPaginatorService : IDisposable
                 await StopSessionAsync(message.Id, session, deleteMessage: true);
             }
         }
-        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        catch (OperationCanceledException) when (_shutdownToken.IsCancellationRequested)
         {
         }
         catch (Exception exception)
         {
+            if (terminateAfterAmbiguousEdit)
+            {
+                try
+                {
+                    await StopSessionAsync(message.Id, session, deleteMessage: false);
+                }
+                catch (OperationCanceledException) when (_shutdownToken.IsCancellationRequested)
+                {
+                }
+                catch (Exception completionException)
+                {
+                    BeanBotLog.PaginatorReactionFailed(
+                        _logger,
+                        message.Id,
+                        completionException);
+                }
+            }
+
             BeanBotLog.PaginatorReactionFailed(_logger, message.Id, exception);
         }
     }
@@ -238,17 +291,24 @@ public sealed class DiscordPaginatorService : IDisposable
 
             foreach (var control in Controls)
             {
-                if (_shutdown.IsCancellationRequested)
+                if (_shutdownToken.IsCancellationRequested)
                 {
                     return;
                 }
 
                 try
                 {
-                    await session.Message.RemoveReactionAsync(
-                        control,
-                        currentUser,
-                        CreateRequestOptions(expirationCancellation));
+                    await _discordOperations.RunAsync(
+                        "remove expired control",
+                        options => session.Message.RemoveReactionAsync(
+                            control,
+                            currentUser,
+                            options),
+                        expirationCancellation);
+                }
+                catch (OperationCanceledException) when (expirationCancellation.IsCancellationRequested)
+                {
+                    return;
                 }
                 catch (Exception exception)
                 {
@@ -291,9 +351,12 @@ public sealed class DiscordPaginatorService : IDisposable
         try
         {
             await session.ExpirationTask;
-            if (deleteMessage && !_shutdown.IsCancellationRequested)
+            if (deleteMessage && !_shutdownToken.IsCancellationRequested)
             {
-                await session.Message.DeleteAsync(CreateRequestOptions(_shutdown.Token));
+                await _discordOperations.RunAsync(
+                    "delete stopped paginator",
+                    options => session.Message.DeleteAsync(options),
+                    _shutdownToken);
             }
         }
         finally
@@ -302,24 +365,31 @@ public sealed class DiscordPaginatorService : IDisposable
         }
     }
 
-    internal static async Task TryRemoveUserReactionAsync(
+    internal async Task TryRemoveUserReactionAsync(
         IUserMessage message,
         IEmote emote,
         ulong userId,
-        ILogger<DiscordPaginatorService> logger,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(logger);
         try
         {
-            await message.RemoveReactionAsync(
-                emote,
-                userId,
-                CreateRequestOptions(cancellationToken));
+            await _discordOperations.RunAsync(
+                "remove user reaction",
+                options => message.RemoveReactionAsync(
+                    emote,
+                    userId,
+                    options),
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested
+                || _shutdownToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception exception)
         {
-            BeanBotLog.PaginatorUserReactionRemoveFailed(logger, userId, exception);
+            BeanBotLog.PaginatorUserReactionRemoveFailed(_logger, userId, exception);
         }
     }
 
@@ -359,9 +429,6 @@ public sealed class DiscordPaginatorService : IDisposable
         }
     }
 
-    private static RequestOptions CreateRequestOptions(CancellationToken cancellationToken)
-        => new() { CancelToken = cancellationToken };
-
     private static PaginationAction GetAction(IEmote emote)
     {
         if (emote.Equals(FirstPage)) return PaginationAction.First;
@@ -390,7 +457,10 @@ public sealed class DiscordPaginatorService : IDisposable
 
             _discordClient.ReactionAdded -= HandleReactionAsync;
             _shutdown.Cancel();
-            shutdownTasks = new List<Task>(_sessions.Count);
+            shutdownTasks = new List<Task>(_sessions.Count + 1)
+            {
+                _discordOperations.StopAsync()
+            };
             foreach (var session in _sessions)
             {
                 session.Value.CancelExpiration();
