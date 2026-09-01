@@ -164,7 +164,7 @@ public class PaginatorDiscordOperationTrackerTests
         => new(
             maximumOperations,
             operationTimeout ?? TimeSpan.FromSeconds(1),
-            shutdownCancellation,
             NullLogger<DiscordPaginatorService>.Instance,
-            lateFailureObserver);
+            lateFailureObserver,
+            shutdownCancellation);
 }
