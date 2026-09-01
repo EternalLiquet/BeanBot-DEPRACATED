@@ -60,8 +60,9 @@ public sealed class DiscordPaginatorService : IDisposable
         _discordOperations = new PaginatorDiscordOperationTracker(
             MaximumActivePaginators,
             discordOperationTimeout,
-            _shutdownToken,
-            _logger);
+            _logger,
+            lateFailureObserver: null,
+            _shutdownToken);
         _discordClient.ReactionAdded += HandleReactionAsync;
     }
 
