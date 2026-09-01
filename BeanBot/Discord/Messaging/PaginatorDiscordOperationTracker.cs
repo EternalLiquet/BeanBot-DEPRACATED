@@ -20,9 +20,9 @@ internal sealed class PaginatorDiscordOperationTracker
     public PaginatorDiscordOperationTracker(
         int maximumOperations,
         TimeSpan operationTimeout,
-        CancellationToken shutdownCancellation,
         ILogger<DiscordPaginatorService> logger,
-        Action<Exception, string>? lateFailureObserver = null)
+        Action<Exception, string>? lateFailureObserver,
+        CancellationToken shutdownCancellation)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumOperations);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(operationTimeout, TimeSpan.Zero);
