@@ -171,23 +171,52 @@ public class DiscordPaginatorServiceTests
     [Fact]
     public async Task ReactionRemoval_UsesUserIdForRepeatedControlsWithoutCachedUser()
     {
+        using var client = new DiscordSocketClient();
+        using var paginator = new DiscordPaginatorService(
+            client,
+            NullLogger<DiscordPaginatorService>.Instance,
+            TimeSpan.FromSeconds(1));
         var message = DispatchProxy.Create<IUserMessage, ReactionRemovalMessageProxy>();
         var recorder = (ReactionRemovalMessageProxy)message;
         var control = new Emoji("▶");
 
-        await DiscordPaginatorService.TryRemoveUserReactionAsync(
+        await paginator.TryRemoveUserReactionAsync(
             message,
             control,
-            42,
-            NullLogger<DiscordPaginatorService>.Instance);
-        await DiscordPaginatorService.TryRemoveUserReactionAsync(
+            42);
+        await paginator.TryRemoveUserReactionAsync(
             message,
             control,
-            42,
-            NullLogger<DiscordPaginatorService>.Instance);
+            42);
 
         Assert.Equal(new ulong[] { 42, 42 }, recorder.RemovedUserIds);
         Assert.All(recorder.RemovedEmotes, emote => Assert.Equal(control, emote));
+    }
+
+    [Fact]
+    public async Task ReactionRemoval_TimeoutCancelsRequestWithoutRetrying()
+    {
+        using var client = new DiscordSocketClient();
+        using var paginator = new DiscordPaginatorService(
+            client,
+            NullLogger<DiscordPaginatorService>.Instance,
+            TimeSpan.FromMilliseconds(25));
+        var message = DispatchProxy.Create<IUserMessage, ReactionRemovalMessageProxy>();
+        var recorder = (ReactionRemovalMessageProxy)message;
+        var stalledRemoval = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        recorder.RemoveReactionTask = stalledRemoval.Task;
+
+        await paginator.TryRemoveUserReactionAsync(
+            message,
+            new Emoji("▶"),
+            42);
+
+        Assert.Single(recorder.RemovedUserIds);
+        Assert.Single(recorder.RequestCancellationTokens);
+        Assert.True(recorder.RequestCancellationTokens[0].IsCancellationRequested);
+
+        stalledRemoval.SetResult();
     }
 
     [Fact]
@@ -260,6 +289,8 @@ public class DiscordPaginatorServiceTests
     {
         public List<ulong> RemovedUserIds { get; } = [];
         public List<IEmote> RemovedEmotes { get; } = [];
+        public List<CancellationToken> RequestCancellationTokens { get; } = [];
+        public Task RemoveReactionTask { get; set; } = Task.CompletedTask;
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
@@ -268,7 +299,13 @@ public class DiscordPaginatorServiceTests
             {
                 RemovedEmotes.Add(emote);
                 RemovedUserIds.Add(userId);
-                return Task.CompletedTask;
+                var requestOptions = args.OfType<RequestOptions>().SingleOrDefault();
+                if (requestOptions is not null)
+                {
+                    RequestCancellationTokens.Add(requestOptions.CancelToken);
+                }
+
+                return RemoveReactionTask;
             }
 
             throw new NotSupportedException(targetMethod?.Name);
