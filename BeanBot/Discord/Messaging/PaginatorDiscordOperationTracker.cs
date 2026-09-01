@@ -20,20 +20,6 @@ internal sealed class PaginatorDiscordOperationTracker
     public PaginatorDiscordOperationTracker(
         int maximumOperations,
         TimeSpan operationTimeout,
-        CancellationToken shutdownCancellation,
-        ILogger<DiscordPaginatorService> logger)
-        : this(
-            maximumOperations,
-            operationTimeout,
-            logger,
-            lateFailureObserver: null,
-            shutdownCancellation)
-    {
-    }
-
-    public PaginatorDiscordOperationTracker(
-        int maximumOperations,
-        TimeSpan operationTimeout,
         ILogger<DiscordPaginatorService> logger,
         Action<Exception, string>? lateFailureObserver,
         CancellationToken shutdownCancellation)
