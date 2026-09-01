@@ -159,8 +159,8 @@ public class PaginatorDiscordOperationTrackerTests
     private static PaginatorDiscordOperationTracker CreateTracker(
         int maximumOperations,
         TimeSpan? operationTimeout = null,
-        CancellationToken shutdownCancellation = default,
-        Action<Exception, string>? lateFailureObserver = null)
+        Action<Exception, string>? lateFailureObserver = null,
+        CancellationToken shutdownCancellation = default)
         => new(
             maximumOperations,
             operationTimeout ?? TimeSpan.FromSeconds(1),
