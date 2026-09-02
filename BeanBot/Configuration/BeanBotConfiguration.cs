@@ -14,6 +14,8 @@ internal static class BeanBotConfiguration
     internal const string HealthCheckBindAddressVariable = "BEANBOT_HEALTHCHECK_BIND_ADDRESS";
     internal const string HealthCheckBearerTokenVariable = "BEANBOT_HEALTHCHECK_BEARER_TOKEN";
     internal const string HealthCheckRateLimitVariable = "BEANBOT_HEALTHCHECK_RATE_LIMIT_SECONDS";
+    internal const string NewMemberWelcomeEnabledVariable = "BEANBOT_NEW_MEMBER_WELCOME_ENABLED";
+    internal const string NewMemberWelcomeMessageVariable = "BEANBOT_NEW_MEMBER_WELCOME_MESSAGE";
 
     private static readonly ConfigurationKey[] RequiredKeys =
     [
@@ -32,6 +34,12 @@ internal static class BeanBotConfiguration
         new(HealthCheckBindAddressVariable, "healthCheckBindAddress", "HealthCheck:BindAddress"),
         new(HealthCheckBearerTokenVariable, "healthCheckBearerToken", "HealthCheck:BearerToken"),
         new(HealthCheckRateLimitVariable, "healthCheckRateLimitSeconds", "HealthCheck:RateLimitSeconds")
+    ];
+
+    private static readonly ConfigurationKey[] NewMemberWelcomeKeys =
+    [
+        new(NewMemberWelcomeEnabledVariable, "newMemberWelcomeEnabled", "NewMemberWelcome:Enabled"),
+        new(NewMemberWelcomeMessageVariable, "newMemberWelcomeMessage", "NewMemberWelcome:Message")
     ];
 
     internal static ConfigurationManager AddBeanBotConfiguration(
@@ -60,6 +68,11 @@ internal static class BeanBotConfiguration
             {
                 AddNormalizedValue(configuration, normalizedValues, key);
             }
+        }
+
+        foreach (var key in NewMemberWelcomeKeys)
+        {
+            AddNormalizedValue(configuration, normalizedValues, key);
         }
 
         configuration.AddInMemoryCollection(normalizedValues);

@@ -19,6 +19,19 @@ BEANBOT_YOSHIMARU_URL=
 
 Configuration is bound through the .NET configuration and Options pipeline and validated when the host starts. Missing or malformed settings stop startup with messages that name the affected variable without printing its value. For backwards compatibility, the legacy variable names (`botToken`, `mongoConnectionString`, and so on) are still accepted, but the `BEANBOT_*` names are the intended format. Canonical names take precedence over legacy aliases, and real environment variables take precedence over values from `.env`.
 
+### New-member welcome DM
+
+New-member welcome DMs remain enabled by default and preserve BeanBot's existing welcome text when no override is configured. They can be disabled or customized without rebuilding the bot:
+
+```env
+BEANBOT_NEW_MEMBER_WELCOME_ENABLED=true
+BEANBOT_NEW_MEMBER_WELCOME_MESSAGE=Welcome to the server!
+```
+
+`BEANBOT_NEW_MEMBER_WELCOME_MESSAGE` is optional; leave it unset to use the built-in message. When welcomes are enabled, a configured message must be non-empty and no longer than Discord's 2,000-character message limit. Validation errors identify the setting but do not print the configured message body.
+
+Welcome delivery is intentionally decoupled from Discord's `UserJoined` Gateway callback. BeanBot admits human joins into a bounded in-memory queue, uses finite worker concurrency and bounded Discord REST waits, suppresses duplicate pending work for the same user, and does not retry a timed-out send because Discord delivery status may be ambiguous. During shutdown the queue stops accepting new work and is boundedly drained/canceled before Discord teardown; if a timed-out Discord operation still owns the client, BeanBot skips explicit Discord teardown and lets process exit reclaim it safely.
+
 ### Discord Gateway Intents
 
 BeanBot explicitly requests only the gateway events used by its commands and event handlers. In the Discord Developer Portal, open the application, select **Bot**, and enable these privileged intents before deployment:

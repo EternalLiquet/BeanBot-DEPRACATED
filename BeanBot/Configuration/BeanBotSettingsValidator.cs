@@ -45,6 +45,7 @@ internal sealed class BeanBotSettingsValidator : IValidateOptions<BeanBotSetting
             failures);
 
         ValidateHealthCheck(settings.HealthCheck, failures);
+        ValidateNewMemberWelcome(settings.NewMemberWelcome, failures);
 
         return failures.Count == 0
             ? ValidateOptionsResult.Success
@@ -88,6 +89,34 @@ internal sealed class BeanBotSettingsValidator : IValidateOptions<BeanBotSetting
             failures.Add(
                 $"Invalid value for {BeanBotConfiguration.HealthCheckRateLimitVariable}. " +
                 "Expected a positive number of seconds.");
+        }
+    }
+
+    private static void ValidateNewMemberWelcome(
+        BeanBotNewMemberWelcomeSettings settings,
+        List<string> failures)
+    {
+        var enabled = true;
+        if (settings.Enabled is not null && !bool.TryParse(settings.Enabled, out enabled))
+        {
+            failures.Add(
+                $"Invalid value for {BeanBotConfiguration.NewMemberWelcomeEnabledVariable}. " +
+                "Expected true or false.");
+            enabled = true;
+        }
+
+        if (settings.Message is { Length: > NewMemberWelcomeOptions.DiscordMessageMaximumLength })
+        {
+            failures.Add(
+                $"Invalid value for {BeanBotConfiguration.NewMemberWelcomeMessageVariable}. " +
+                $"Expected at most {NewMemberWelcomeOptions.DiscordMessageMaximumLength} characters.");
+        }
+
+        if (enabled && settings.Message is not null && string.IsNullOrWhiteSpace(settings.Message))
+        {
+            failures.Add(
+                $"Invalid value for {BeanBotConfiguration.NewMemberWelcomeMessageVariable}. " +
+                "Expected a non-empty message while new-member welcomes are enabled.");
         }
     }
 

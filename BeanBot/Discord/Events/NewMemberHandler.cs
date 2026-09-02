@@ -8,16 +8,19 @@ internal sealed class NewMemberHandler : IDisposable
 {
     private readonly DiscordSocketClient _discordClient;
     private readonly LogHandler _logHandler;
+    private readonly NewMemberWelcomeService _welcomeService;
     private readonly ILogger<NewMemberHandler> _logger;
     private bool _initialized;
 
     public NewMemberHandler(
         DiscordSocketClient client,
         LogHandler logHandler,
+        NewMemberWelcomeService welcomeService,
         ILogger<NewMemberHandler> logger)
     {
         _discordClient = client ?? throw new ArgumentNullException(nameof(client));
         _logHandler = logHandler ?? throw new ArgumentNullException(nameof(logHandler));
+        _welcomeService = welcomeService ?? throw new ArgumentNullException(nameof(welcomeService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -29,28 +32,15 @@ internal sealed class NewMemberHandler : IDisposable
         }
 
         BeanBotLog.NewMemberHandlerInitializing(_logger);
-        _discordClient.UserJoined += WelcomeNewMemberAsync;
+        _discordClient.UserJoined += HandleUserJoinedAsync;
         _discordClient.UserJoined += _logHandler.LogNewMember;
         _initialized = true;
     }
 
-    private async Task WelcomeNewMemberAsync(SocketGuildUser user)
+    private Task HandleUserJoinedAsync(SocketGuildUser user)
     {
-        if (user.IsBot)
-        {
-            return;
-        }
-
-        try
-        {
-            var userDmChannel = await user.CreateDMChannelAsync();
-            await userDmChannel.SendMessageAsync("Please read the rules in the Eli's Charter channel. If you agree to these rules and are over the age of 17, please DM one of the moderators with the blue role \"Student Council\" (i.e discount Hatate/Makoto Kikuchi#2351) for full access to the server! (I promise it's worth it)");
-            BeanBotLog.WelcomeMessageSent(_logger, user.Id);
-        }
-        catch (Exception exception)
-        {
-            BeanBotLog.WelcomeMessageFailed(_logger, user.Id, exception);
-        }
+        _welcomeService.TryEnqueue(user.Id, user.IsBot);
+        return Task.CompletedTask;
     }
 
     public void Dispose()
@@ -60,7 +50,7 @@ internal sealed class NewMemberHandler : IDisposable
             return;
         }
 
-        _discordClient.UserJoined -= WelcomeNewMemberAsync;
+        _discordClient.UserJoined -= HandleUserJoinedAsync;
         _discordClient.UserJoined -= _logHandler.LogNewMember;
         _initialized = false;
     }
