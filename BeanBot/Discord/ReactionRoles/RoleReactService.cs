@@ -227,9 +227,9 @@ public class RoleReactService : IDisposable, IAsyncDisposable
             var recentSettings = await _roleReactRepository.GetRecentRoleSettings(
                 _roleSettings.Capacity,
                 cancellationToken);
-            for (var index = recentSettings.Count - 1; index >= 0; index--)
+            foreach (var setting in recentSettings)
             {
-                _roleSettings.Set(recentSettings[index]);
+                _roleSettings.Seed(setting);
             }
 
             _cacheLoaded = true;
