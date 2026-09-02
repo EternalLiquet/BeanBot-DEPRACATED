@@ -71,7 +71,7 @@ public class InteractionCommandRegistrationTests
     }
 
     [Fact]
-    public async Task EnsureRegisteredAsync_AfterTimeout_AllowsFreshRetry()
+    public async Task EnsureRegisteredAsync_AfterTimeout_SharesStillRunningAttempt()
     {
         var calls = 0;
         var stalledAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -86,12 +86,63 @@ public class InteractionCommandRegistrationTests
             TimeSpan.FromMilliseconds(20));
 
         await Assert.ThrowsAsync<TimeoutException>(() => registration.EnsureRegisteredAsync());
-        var retried = await registration.EnsureRegisteredAsync();
+        var secondWaiter = registration.EnsureRegisteredAsync();
+        Assert.Equal(1, calls);
 
-        Assert.True(retried);
-        Assert.Equal(2, calls);
+        stalledAttempt.SetResult();
+        var completed = await secondWaiter;
 
+        Assert.True(completed);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task EnsureRegisteredAsync_LateSuccess_IsReportedOnceWithoutRegisteringAgain()
+    {
+        var calls = 0;
+        var stalledAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var registration = new InteractionCommandRegistration(
+            () =>
+            {
+                calls++;
+                return stalledAttempt.Task;
+            },
+            TimeSpan.FromMilliseconds(20));
+
+        await Assert.ThrowsAsync<TimeoutException>(() => registration.EnsureRegisteredAsync());
+        stalledAttempt.SetResult();
+        await stalledAttempt.Task;
+
+        var reports = await Task.WhenAll(
+            registration.EnsureRegisteredAsync(),
+            registration.EnsureRegisteredAsync());
+
+        Assert.Single(reports, result => result);
+        Assert.Single(reports, result => !result);
+        Assert.False(await registration.EnsureRegisteredAsync());
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task EnsureRegisteredAsync_LateFailure_AllowsRetryAfterCompletion()
+    {
+        var calls = 0;
+        var stalledAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var registration = new InteractionCommandRegistration(
+            () =>
+            {
+                calls++;
+                return calls == 1
+                    ? stalledAttempt.Task
+                    : Task.CompletedTask;
+            },
+            TimeSpan.FromMilliseconds(20));
+
+        await Assert.ThrowsAsync<TimeoutException>(() => registration.EnsureRegisteredAsync());
         stalledAttempt.SetException(new InvalidOperationException("late failure"));
-        await Task.Yield();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => stalledAttempt.Task);
+
+        Assert.True(await registration.EnsureRegisteredAsync());
+        Assert.Equal(2, calls);
     }
 }

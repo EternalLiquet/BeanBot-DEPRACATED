@@ -14,9 +14,6 @@ internal sealed class BeanBotInteractionHostedService : IHostedService
     public Task StartAsync(CancellationToken cancellationToken)
         => _interactionHandler.InitializeAsync(cancellationToken);
 
-    public Task StopAsync(CancellationToken cancellationToken)
-    {
-        _interactionHandler.Dispose();
-        return Task.CompletedTask;
-    }
+    public async Task StopAsync(CancellationToken cancellationToken)
+        => await _interactionHandler.DisposeAsync();
 }

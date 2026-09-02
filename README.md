@@ -3,7 +3,9 @@
 
 # Bean Bot
 
-Bean Bot is a .NET 10 Discord bot with MongoDB-backed role reaction storage and a small set of server utilities.
+Bean Bot is a .NET 10 Discord bot with MongoDB-backed role menus, legacy reaction-role storage, and a small set of server utilities.
+
+Server administrators can publish persistent, dropdown-based self-service role panels with `/role-menu create`. See the [role-menu guide](docs/role-menus.md) for permissions, limits, deletion, and validation behavior.
 
 ## Configuration
 
@@ -70,7 +72,7 @@ Repository changes use a Codex-native Planner → Implementer → Verifier → R
 BeanBot remains a single application project, organized by responsibility:
 
 - `Configuration` binds and validates runtime settings.
-- `Discord` contains commands, event handlers, gateway lifecycle, messaging helpers, and reaction-role behavior.
+- `Discord` contains commands, event handlers, gateway lifecycle, messaging helpers, role-menu behavior, and legacy reaction-role behavior.
 - `Health` owns gateway health snapshots and the authenticated `/healthz` endpoint.
 - `Hosting` composes the Generic Host and coordinates startup and shutdown.
 - `Logging` contains structured log messages and Discord owner-alert delivery.
