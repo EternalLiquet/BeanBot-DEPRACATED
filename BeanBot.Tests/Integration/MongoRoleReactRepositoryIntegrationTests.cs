@@ -58,6 +58,39 @@ public sealed class MongoRoleReactRepositoryIntegrationTests
     }
 
     [Fact]
+    public async Task GetRecentRoleSettings_ReturnsNewestEntriesWithinLimit()
+    {
+        var databaseName = CreateDatabaseName();
+        var client = new MongoClient(_fixture.ConnectionString);
+        var database = client.GetDatabase(databaseName);
+        var repository = CreateRepository(database);
+        var now = DateTime.UtcNow;
+        var oldest = CreateRoleSettings("1", now.AddDays(-31));
+        var older = CreateRoleSettings("2", now.AddMinutes(-2));
+        var newer = CreateRoleSettings("3", now.AddMinutes(-1));
+        var newest = CreateRoleSettings("4", now);
+
+        try
+        {
+            using var cancellation = new CancellationTokenSource(OperationTimeout);
+            await database.GetCollection<RoleSettings>("roleSettings").InsertManyAsync(
+                [oldest, older, newer, newest],
+                cancellationToken: cancellation.Token);
+
+            var recent = await repository.GetRecentRoleSettings(2, cancellation.Token);
+
+            Assert.Collection(
+                recent,
+                setting => Assert.Equal("4", setting.MessageId),
+                setting => Assert.Equal("3", setting.MessageId));
+        }
+        finally
+        {
+            await DropDatabaseAsync(client, databaseName);
+        }
+    }
+
+    [Fact]
     public async Task GetRoleSetting_ReturnsNullWhenMongoCollectionHasNoMatch()
     {
         var databaseName = CreateDatabaseName();
@@ -100,6 +133,15 @@ public sealed class MongoRoleReactRepositoryIntegrationTests
 
     private static RoleReactRepository CreateRepository(IMongoDatabase database)
         => new(database, NullLogger<RoleReactRepository>.Instance);
+
+    private static RoleSettings CreateRoleSettings(string messageId, DateTime lastAccessedUtc)
+    {
+        var settings = new RoleSettings([], "1", "2", messageId)
+        {
+            LastAccessedUtc = lastAccessedUtc
+        };
+        return settings;
+    }
 
     private static string CreateDatabaseName()
         => $"BeanBotIntegration_{Guid.NewGuid():N}";
