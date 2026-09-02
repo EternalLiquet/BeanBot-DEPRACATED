@@ -9,7 +9,10 @@ namespace BeanBot.Persistence.Repositories;
 internal interface IRoleSettingsStore
 {
     Task InsertAsync(RoleSettings roleSettings, CancellationToken cancellationToken);
-    Task<List<RoleSettings>> GetRecentAsync(DateTime oldestLastAccessedUtc, CancellationToken cancellationToken);
+    Task<List<RoleSettings>> GetRecentAsync(
+        DateTime oldestLastAccessedUtc,
+        int limit,
+        CancellationToken cancellationToken);
     Task<RoleSettings?> GetByMessageIdAsync(string messageId, CancellationToken cancellationToken);
 }
 
@@ -26,16 +29,18 @@ internal sealed class MongoRoleSettingsStore : IRoleSettingsStore
     public Task InsertAsync(RoleSettings roleSettings, CancellationToken cancellationToken)
         => _roleSettings.InsertOneAsync(roleSettings, cancellationToken: cancellationToken);
 
-    public async Task<List<RoleSettings>> GetRecentAsync(
+    public Task<List<RoleSettings>> GetRecentAsync(
         DateTime oldestLastAccessedUtc,
+        int limit,
         CancellationToken cancellationToken)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(limit, 0);
         var filter = Builders<RoleSettings>.Filter.Where(
             result => result.LastAccessedUtc >= oldestLastAccessedUtc);
-        using var results = await _roleSettings.FindAsync(
-            filter,
-            cancellationToken: cancellationToken);
-        return await results.ToListAsync(cancellationToken);
+        return _roleSettings.Find(filter)
+            .SortByDescending(result => result.LastAccessedUtc)
+            .Limit(limit)
+            .ToListAsync(cancellationToken);
     }
 
     public async Task<RoleSettings?> GetByMessageIdAsync(
@@ -79,11 +84,14 @@ public sealed class RoleReactRepository
     }
 
     public Task<List<RoleSettings>> GetRecentRoleSettings(
+        int limit,
         CancellationToken cancellationToken = default)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(limit, 0);
         cancellationToken.ThrowIfCancellationRequested();
         return _roleSettingsStore.GetRecentAsync(
             DateTime.UtcNow.AddDays(-30),
+            limit,
             cancellationToken);
     }
 

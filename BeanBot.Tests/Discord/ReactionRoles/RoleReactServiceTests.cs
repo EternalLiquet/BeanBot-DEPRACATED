@@ -73,6 +73,71 @@ public class RoleReactServiceTests
     }
 
     [Fact]
+    public async Task GetCachedRoleSettingAsync_PreloadUsesCacheCapacity()
+    {
+        var newest = CreateRoleSettings("42");
+        var older = CreateRoleSettings("41");
+        var store = new FakeRoleSettingsStore
+        {
+            GetRecent = (_, limit, _) =>
+            {
+                Assert.Equal(2, limit);
+                return Task.FromResult(new List<RoleSettings> { newest, older });
+            }
+        };
+        await using var service = CreateService(
+            TimeSpan.FromSeconds(1),
+            store,
+            cacheCapacity: 2);
+
+        var actual = await service.GetCachedRoleSettingAsync(42UL, CancellationToken.None);
+
+        Assert.Same(newest, actual);
+        Assert.Equal(2, service.CachedRoleSettingsCount);
+        Assert.Equal(1, store.GetRecentCallCount);
+        Assert.Equal(0, store.GetByMessageIdCallCount);
+    }
+
+    [Fact]
+    public async Task GetCachedRoleSettingAsync_EvictedSettingReloadsFromStore()
+    {
+        var store = new FakeRoleSettingsStore
+        {
+            GetByMessageId = (messageId, _) =>
+                Task.FromResult<RoleSettings?>(CreateRoleSettings(messageId))
+        };
+        await using var service = CreateService(
+            TimeSpan.FromSeconds(1),
+            store,
+            cacheCapacity: 2);
+
+        await service.GetCachedRoleSettingAsync(1UL, CancellationToken.None);
+        await service.GetCachedRoleSettingAsync(2UL, CancellationToken.None);
+        await service.GetCachedRoleSettingAsync(1UL, CancellationToken.None);
+        await service.GetCachedRoleSettingAsync(3UL, CancellationToken.None);
+        var reloaded = await service.GetCachedRoleSettingAsync(2UL, CancellationToken.None);
+
+        Assert.NotNull(reloaded);
+        Assert.Equal("2", reloaded.MessageId);
+        Assert.Equal(2, service.CachedRoleSettingsCount);
+        Assert.Equal(4, store.GetByMessageIdCallCount);
+    }
+
+    [Fact]
+    public async Task GetCachedRoleSettingAsync_DoesNotNegativeCacheMissingSetting()
+    {
+        var store = new FakeRoleSettingsStore();
+        await using var service = CreateService(TimeSpan.FromSeconds(1), store);
+
+        var first = await service.GetCachedRoleSettingAsync(42UL, CancellationToken.None);
+        var second = await service.GetCachedRoleSettingAsync(42UL, CancellationToken.None);
+
+        Assert.Null(first);
+        Assert.Null(second);
+        Assert.Equal(2, store.GetByMessageIdCallCount);
+    }
+
+    [Fact]
     public async Task GetCachedRoleSettingAsync_DoesNotCacheInfrastructureFailure()
     {
         var expected = CreateRoleSettings("42");
@@ -98,7 +163,7 @@ public class RoleReactServiceTests
         var expected = CreateRoleSettings("42");
         var failure = new InvalidOperationException("database unavailable");
         var store = new FakeRoleSettingsStore();
-        store.GetRecent = (_, _) => store.GetRecentCallCount == 1
+        store.GetRecent = (_, _, _) => store.GetRecentCallCount == 1
             ? Task.FromException<List<RoleSettings>>(failure)
             : Task.FromResult(new List<RoleSettings> { expected });
         await using var service = CreateService(TimeSpan.FromSeconds(1), store);
@@ -110,6 +175,21 @@ public class RoleReactServiceTests
         Assert.Same(failure, actualFailure);
         Assert.Same(expected, recovered);
         Assert.Equal(2, store.GetRecentCallCount);
+        Assert.Equal(0, store.GetByMessageIdCallCount);
+    }
+
+    [Fact]
+    public async Task PersistRoleSettingsAsync_CachesSuccessfulInsert()
+    {
+        var settings = CreateRoleSettings("42");
+        var store = new FakeRoleSettingsStore();
+        await using var service = CreateService(TimeSpan.FromSeconds(1), store);
+
+        await service.PersistRoleSettingsAsync(settings, CancellationToken.None);
+        var cached = await service.GetCachedRoleSettingAsync(42UL, CancellationToken.None);
+
+        Assert.Same(settings, cached);
+        Assert.Equal(1, service.CachedRoleSettingsCount);
         Assert.Equal(0, store.GetByMessageIdCallCount);
     }
 
@@ -140,7 +220,7 @@ public class RoleReactServiceTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         var store = new FakeRoleSettingsStore
         {
-            GetRecent = async (_, cancellationToken) =>
+            GetRecent = async (_, _, cancellationToken) =>
             {
                 operationStarted.SetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
@@ -197,6 +277,7 @@ public class RoleReactServiceTests
     private static RoleReactService CreateService(
         TimeSpan shutdownDrainTimeout,
         FakeRoleSettingsStore? store = null,
+        int cacheCapacity = 256,
         CancellationToken applicationStopping = default)
     {
         return new RoleReactService(
@@ -206,6 +287,7 @@ public class RoleReactServiceTests
             client: null,
             shutdownDrainTimeout,
             NullLogger<RoleReactService>.Instance,
+            cacheCapacity,
             applicationStopping);
     }
 
@@ -224,8 +306,8 @@ public class RoleReactServiceTests
     {
         public Func<RoleSettings, CancellationToken, Task> Insert { get; set; }
             = (_, _) => Task.CompletedTask;
-        public Func<DateTime, CancellationToken, Task<List<RoleSettings>>> GetRecent { get; set; }
-            = (_, _) => Task.FromResult(new List<RoleSettings>());
+        public Func<DateTime, int, CancellationToken, Task<List<RoleSettings>>> GetRecent { get; set; }
+            = (_, _, _) => Task.FromResult(new List<RoleSettings>());
         public Func<string, CancellationToken, Task<RoleSettings?>> GetByMessageId { get; set; }
             = (_, _) => Task.FromResult<RoleSettings?>(null);
 
@@ -237,10 +319,11 @@ public class RoleReactServiceTests
 
         public Task<List<RoleSettings>> GetRecentAsync(
             DateTime oldestLastAccessedUtc,
+            int limit,
             CancellationToken cancellationToken)
         {
             GetRecentCallCount++;
-            return GetRecent(oldestLastAccessedUtc, cancellationToken);
+            return GetRecent(oldestLastAccessedUtc, limit, cancellationToken);
         }
 
         public Task<RoleSettings?> GetByMessageIdAsync(
