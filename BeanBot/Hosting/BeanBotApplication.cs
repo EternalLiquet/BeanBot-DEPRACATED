@@ -16,7 +16,7 @@ internal interface IBeanBotRuntime
     void StartEventAndBackgroundServices();
     void StopReactionServices();
     void StopNewMemberEvents();
-    void StopEditedMessageEvents();
+    Task StopEditedMessageEventsAsync();
     void StopCommandServices();
     void StopMessageWaiter();
     void StopPaginator();
@@ -133,7 +133,7 @@ internal sealed class BeanBotApplication : IBeanBotApplication
 
         await RunSynchronousStageAsync("reaction-services", _runtime.StopReactionServices);
         await RunSynchronousStageAsync("new-member-events", _runtime.StopNewMemberEvents);
-        await RunSynchronousStageAsync("edited-message-events", _runtime.StopEditedMessageEvents);
+        await RunStageAsync("edited-message-events", _runtime.StopEditedMessageEventsAsync);
         await RunSynchronousStageAsync("command-services", _runtime.StopCommandServices);
         await RunSynchronousStageAsync("message-waiter", _runtime.StopMessageWaiter);
         await RunSynchronousStageAsync("paginator", _runtime.StopPaginator);

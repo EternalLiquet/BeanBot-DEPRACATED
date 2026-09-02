@@ -68,7 +68,8 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     }
 
     public bool HasActiveDiscordLifecycleOperation
-        => _discordLifecycleCoordinator.HasActiveSequence;
+        => _discordLifecycleCoordinator.HasActiveSequence ||
+           _editMessageHandler.HasInFlightOperations;
 
     public bool CanDisposeDiscordClient => _canDisposeDiscordClient;
 
@@ -107,7 +108,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
 
     public void StopNewMemberEvents() => _newMemberHandler.Dispose();
 
-    public void StopEditedMessageEvents() => _editMessageHandler.Dispose();
+    public Task StopEditedMessageEventsAsync() => _editMessageHandler.StopAsync();
 
     public void StopCommandServices() => _commandHandler.Dispose();
 

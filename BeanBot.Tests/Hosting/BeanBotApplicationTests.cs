@@ -103,6 +103,31 @@ public class BeanBotApplicationTests
     }
 
     [Fact]
+    public async Task StopAsync_EditedMessageDrainBoundExpires_SkipsDiscordShutdownAndDisposal()
+    {
+        var editedMessageDrain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runtime = new RecordingRuntime
+        {
+            IncompleteOperation = "stop-edited-message",
+            IncompleteCompletion = editedMessageDrain,
+            ActivateDiscordLifecycleOnIncompleteOperation = true
+        };
+        var application = new BeanBotApplication(
+            runtime,
+            NullLogger<BeanBotApplication>.Instance,
+            TimeSpan.FromMilliseconds(25));
+
+        await Assert.ThrowsAsync<TimeoutException>(
+            () => application.StopAsync(CancellationToken.None));
+
+        Assert.Contains("stop-command", runtime.Calls);
+        Assert.Contains("stop-health", runtime.Calls);
+        Assert.DoesNotContain("stop-discord", runtime.Calls);
+        Assert.DoesNotContain("dispose-discord", runtime.Calls);
+        editedMessageDrain.SetResult();
+    }
+
+    [Fact]
     public async Task StopAsync_DiscordShutdownExceedsApplicationBound_SkipsDisposeAndRunsFinalCleanup()
     {
         var discordShutdown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -300,7 +325,7 @@ public class BeanBotApplicationTests
         public void StartEventAndBackgroundServices() => Record("start-event-background");
         public void StopReactionServices() => Record("stop-reaction");
         public void StopNewMemberEvents() => Record("stop-new-member");
-        public void StopEditedMessageEvents() => Record("stop-edited-message");
+        public Task StopEditedMessageEventsAsync() => RecordAsync("stop-edited-message");
         public void StopCommandServices() => Record("stop-command");
         public void StopMessageWaiter() => Record("stop-message-waiter");
         public void StopPaginator() => Record("stop-paginator");

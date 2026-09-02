@@ -314,7 +314,11 @@ public class BeanBotHostIntegrationTests
         public void StartEventAndBackgroundServices() => Calls.Add("start-event-background");
         public void StopReactionServices() => Calls.Add("stop-reaction");
         public void StopNewMemberEvents() => Calls.Add("stop-new-member");
-        public void StopEditedMessageEvents() => Calls.Add("stop-edited-message");
+        public Task StopEditedMessageEventsAsync()
+        {
+            Calls.Add("stop-edited-message");
+            return Task.CompletedTask;
+        }
         public void StopCommandServices() => Calls.Add("stop-command");
         public void StopMessageWaiter() => Calls.Add("stop-message-waiter");
         public void StopPaginator() => Calls.Add("stop-paginator");
