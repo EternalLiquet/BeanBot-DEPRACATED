@@ -75,6 +75,22 @@ public class MemeModuleTests
     }
 
     [Fact]
+    public void CreateExternalMediaAdmissionReply_IsConciseAndMentionSafe()
+    {
+        var reply = MemeModule.CreateExternalMediaAdmissionReply();
+
+        Assert.Equal("That command is cooling down; try again in a few seconds.", reply.Content);
+        Assert.True(reply.Content.Length < 100);
+        AssertMentionsDisabled(reply.AllowedMentions);
+    }
+
+    [Fact]
+    public void ExternalMediaCommands_UseOneSharedBudgetKey()
+    {
+        Assert.Equal("external-media", MemeModule.ExternalMediaBudgetKey);
+    }
+
+    [Fact]
     public void GetSafeMediaSource_RemovesQueryAndUserInfo()
     {
         var source = MemeModule.GetSafeMediaSource(
