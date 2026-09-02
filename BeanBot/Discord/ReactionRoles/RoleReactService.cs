@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Globalization;
 using BeanBot.Logging;
 using BeanBot.Persistence.Models;
@@ -12,11 +11,12 @@ namespace BeanBot.Discord.ReactionRoles;
 
 public class RoleReactService : IDisposable, IAsyncDisposable
 {
+    private const int DefaultRoleSettingsCacheCapacity = 256;
     private static readonly TimeSpan DefaultShutdownDrainTimeout = TimeSpan.FromSeconds(5);
     private readonly RoleReactRepository _roleReactRepository;
     private readonly DiscordSocketClient? _client;
     private readonly SemaphoreSlim _cacheLock = new(1, 1);
-    private readonly ConcurrentDictionary<string, RoleSettings> _roleSettings = [];
+    private readonly BoundedRoleSettingsCache _roleSettings;
     private readonly object _operationSync = new();
     private readonly HashSet<Task> _inFlightOperations = [];
     private readonly TimeSpan _shutdownDrainTimeout;
@@ -39,6 +39,7 @@ public class RoleReactService : IDisposable, IAsyncDisposable
             client,
             DefaultShutdownDrainTimeout,
             logger,
+            DefaultRoleSettingsCacheCapacity,
             (applicationLifetime ?? throw new ArgumentNullException(nameof(applicationLifetime)))
                 .ApplicationStopping)
     {
@@ -49,6 +50,7 @@ public class RoleReactService : IDisposable, IAsyncDisposable
         DiscordSocketClient? client,
         TimeSpan shutdownDrainTimeout,
         ILogger<RoleReactService> logger,
+        int cacheCapacity,
         CancellationToken applicationStopping)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(shutdownDrainTimeout, TimeSpan.Zero);
@@ -56,9 +58,12 @@ public class RoleReactService : IDisposable, IAsyncDisposable
         _client = client;
         _shutdownDrainTimeout = shutdownDrainTimeout;
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _roleSettings = new BoundedRoleSettingsCache(cacheCapacity);
         _shutdownCancellation = CancellationTokenSource.CreateLinkedTokenSource(applicationStopping);
         _shutdownToken = _shutdownCancellation.Token;
     }
+
+    internal int CachedRoleSettingsCount => _roleSettings.Count;
 
     public Task HandleReact(Cacheable<IUserMessage, ulong> message, Cacheable<IMessageChannel, ulong> channel, SocketReaction reaction)
         => TrackHandlerAsync(cancellationToken =>
@@ -190,7 +195,7 @@ public class RoleReactService : IDisposable, IAsyncDisposable
     {
         await EnsureCacheLoadedAsync(cancellationToken);
         var messageIdText = messageId.ToString(CultureInfo.InvariantCulture);
-        if (_roleSettings.TryGetValue(messageIdText, out var cached))
+        if (_roleSettings.TryGet(messageIdText, out var cached))
         {
             return cached;
         }
@@ -198,7 +203,7 @@ public class RoleReactService : IDisposable, IAsyncDisposable
         var roleSetting = await _roleReactRepository.GetRoleSetting(messageId, cancellationToken);
         if (roleSetting != null && !string.IsNullOrWhiteSpace(roleSetting.MessageId))
         {
-            _roleSettings[roleSetting.MessageId] = roleSetting;
+            _roleSettings.Set(roleSetting);
         }
 
         return roleSetting;
@@ -219,13 +224,14 @@ public class RoleReactService : IDisposable, IAsyncDisposable
                 return;
             }
 
-            foreach (var setting in await _roleReactRepository.GetRecentRoleSettings(cancellationToken))
+            var recentSettings = await _roleReactRepository.GetRecentRoleSettings(
+                _roleSettings.Capacity,
+                cancellationToken);
+            for (var index = recentSettings.Count - 1; index >= 0; index--)
             {
-                if (!string.IsNullOrWhiteSpace(setting.MessageId))
-                {
-                    _roleSettings[setting.MessageId] = setting;
-                }
+                _roleSettings.Set(recentSettings[index]);
             }
+
             _cacheLoaded = true;
         }
         finally
@@ -273,7 +279,7 @@ public class RoleReactService : IDisposable, IAsyncDisposable
         CancellationToken cancellationToken)
     {
         await _roleReactRepository.InsertNewRoleSettings(settings, cancellationToken);
-        _roleSettings[settings.MessageId] = settings;
+        _roleSettings.Set(settings);
     }
 
     public void Dispose()
