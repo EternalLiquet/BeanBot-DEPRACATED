@@ -76,6 +76,26 @@ internal sealed class BoundedRoleSettingsCache
         }
     }
 
+    public void Seed(RoleSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (string.IsNullOrWhiteSpace(settings.MessageId))
+        {
+            return;
+        }
+
+        lock (_sync)
+        {
+            if (_entries.ContainsKey(settings.MessageId) || _entries.Count == _capacity)
+            {
+                return;
+            }
+
+            var node = _recency.AddLast(settings.MessageId);
+            _entries.Add(settings.MessageId, new CacheEntry(settings, node));
+        }
+    }
+
     private void Touch(CacheEntry entry)
     {
         _recency.Remove(entry.Node);
