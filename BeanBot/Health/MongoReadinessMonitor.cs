@@ -150,7 +150,7 @@ internal sealed class MongoReadinessMonitor
         try
         {
             var result = await operation.Task.WaitAsync(remaining, cancellationToken);
-            return CreateSnapshot(result);
+            return RecordCompleted(operation, result);
         }
         catch (TimeoutException)
         {
@@ -162,9 +162,17 @@ internal sealed class MongoReadinessMonitor
     private async Task ObserveProbeCompletionAsync(ProbeOperation operation)
     {
         var result = await operation.Task;
+        _ = RecordCompleted(operation, result);
+    }
+
+    private MongoReadinessSnapshot RecordCompleted(
+        ProbeOperation operation,
+        ProbeExecutionResult result)
+    {
         var snapshot = CreateSnapshot(result);
         var failureKind = GetFailureKind(result);
         var transition = MongoReadinessTransition.None;
+        var ownsCompletion = false;
 
         lock (_syncRoot)
         {
@@ -173,11 +181,17 @@ internal sealed class MongoReadinessMonitor
                 _lastSnapshot = new CachedSnapshot(snapshot, _timeProvider.GetTimestamp());
                 _inFlight = null;
                 transition = UpdateLoggedReachabilityLocked(snapshot.IsReachable);
+                ownsCompletion = true;
             }
         }
 
-        operation.Dispose();
-        LogTransition(transition, failureKind);
+        if (ownsCompletion)
+        {
+            operation.Dispose();
+            LogTransition(transition, failureKind);
+        }
+
+        return snapshot;
     }
 
     private MongoReadinessSnapshot RecordTimeout(ProbeOperation operation)
