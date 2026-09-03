@@ -291,7 +291,17 @@ public sealed class MongoReadinessMonitor
         public long StartedTimestamp { get; }
         public Task<ProbeExecutionResult> Task { get; }
 
-        public void Cancel() => _timeoutCancellation.Cancel();
+        public void Cancel()
+        {
+            try
+            {
+                _timeoutCancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Probe completion already won ownership and disposed the timeout source.
+            }
+        }
 
         public void Dispose() => _timeoutCancellation.Dispose();
     }
