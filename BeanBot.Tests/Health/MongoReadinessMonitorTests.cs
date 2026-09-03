@@ -113,6 +113,31 @@ public class MongoReadinessMonitorTests
     }
 
     [Fact]
+    public async Task ProbeCompletionRacingDeadline_DoesNotThrowAfterTimeoutSourceIsDisposed()
+    {
+        var clock = new SequencedTimeProvider(
+            InitialTime,
+            TimeSpan.Zero,
+            TimeSpan.Zero,
+            TimeSpan.Zero,
+            TimeSpan.FromSeconds(2));
+        var probe = new ScriptedProbe(_ => Task.CompletedTask);
+        var monitor = CreateMonitor(
+            probe,
+            clock,
+            probeTimeout: TimeSpan.FromSeconds(1),
+            freshnessWindow: TimeSpan.FromSeconds(10));
+
+        var timedOutWaiter = await monitor.GetSnapshotAsync(CancellationToken.None);
+        var completedProbeSnapshot = await monitor.GetSnapshotAsync(CancellationToken.None);
+
+        Assert.False(timedOutWaiter.IsReachable);
+        Assert.True(completedProbeSnapshot.IsReachable);
+        Assert.False(monitor.HasInFlightProbe);
+        Assert.Equal(1, probe.CallCount);
+    }
+
+    [Fact]
     public async Task StaleSuccess_IsNotTrustedWhenRefreshCannotComplete()
     {
         var clock = new ManualTimeProvider(InitialTime);
@@ -242,6 +267,33 @@ public class MongoReadinessMonitorTests
             }
 
             return step(cancellationToken);
+        }
+    }
+
+    private sealed class SequencedTimeProvider : TimeProvider
+    {
+        private readonly DateTimeOffset _utcNow;
+        private readonly Queue<long> _timestamps;
+        private long _lastTimestamp;
+
+        public SequencedTimeProvider(DateTimeOffset utcNow, params TimeSpan[] timestamps)
+        {
+            _utcNow = utcNow;
+            _timestamps = new Queue<long>(timestamps.Select(timestamp => timestamp.Ticks));
+        }
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public override long GetTimestamp()
+        {
+            if (_timestamps.Count > 0)
+            {
+                _lastTimestamp = _timestamps.Dequeue();
+            }
+
+            return _lastTimestamp;
         }
     }
 
