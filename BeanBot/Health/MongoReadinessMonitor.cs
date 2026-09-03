@@ -79,6 +79,17 @@ internal sealed class MongoReadinessMonitor
         _freshnessWindow = freshnessWindow;
     }
 
+    internal bool HasInFlightProbe
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                return _inFlight is not null;
+            }
+        }
+    }
+
     public async Task<MongoReadinessSnapshot> GetSnapshotAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
