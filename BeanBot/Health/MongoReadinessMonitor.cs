@@ -5,7 +5,7 @@ using MongoDB.Driver;
 
 namespace BeanBot.Health;
 
-internal interface IMongoReadinessProbe
+public interface IMongoReadinessProbe
 {
     Task CheckAsync(CancellationToken cancellationToken);
 }
@@ -32,7 +32,7 @@ internal readonly record struct MongoReadinessSnapshot(
     bool IsReachable,
     DateTimeOffset LastCheckedAtUtc);
 
-internal sealed class MongoReadinessMonitor
+public sealed class MongoReadinessMonitor
 {
     internal static readonly TimeSpan DefaultProbeTimeout = TimeSpan.FromSeconds(2);
     internal static readonly TimeSpan DefaultFreshnessWindow = TimeSpan.FromSeconds(10);
@@ -90,7 +90,7 @@ internal sealed class MongoReadinessMonitor
         }
     }
 
-    public async Task<MongoReadinessSnapshot> GetSnapshotAsync(CancellationToken cancellationToken)
+    internal async Task<MongoReadinessSnapshot> GetSnapshotAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
