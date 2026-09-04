@@ -49,6 +49,10 @@ Successful and unhealthy JSON responses also include the non-secret release vers
 
 If you bind the endpoint to anything other than `127.0.0.1`, set `BEANBOT_HEALTHCHECK_BEARER_TOKEN` and send `Authorization: Bearer <token>` from Home Assistant.
 
+The same listener also exposes dependency-free `GET /livez` and `HEAD /livez` liveness checks. `/livez` returns `200 OK` with only the non-secret build identity while the BeanBot process and Kestrel health surface can answer; it does not query Discord, MongoDB, external services, or persistence. It uses the same bearer-token policy, Kestrel limits, bounded client tracking, and poll interval as `/healthz` without opening another port.
+
+Use `/livez` for process/container liveness and restart decisions, and use `/healthz` for application readiness/availability monitoring. A recoverable required-dependency outage may therefore produce `/healthz = 503` while `/livez = 200`; that divergence is expected. A supervisor should not restart BeanBot solely because readiness is temporarily unavailable unless its operational policy deliberately chooses to do so.
+
 ## Local Development
 
 Install a stable .NET 10 SDK and Docker. The repository's `global.json` accepts SDK
