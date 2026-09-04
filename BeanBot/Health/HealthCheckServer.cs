@@ -26,6 +26,7 @@ public sealed class HealthCheckServer : IAsyncDisposable
     internal const int MaxHeaderCharacters = 32 * 1024;
     internal const int DefaultMaximumConcurrentClients = 64;
     internal const int DefaultMaximumTrackedRateLimitClients = 4096;
+    internal const string LivenessPath = "/livez";
     private static readonly TimeSpan DefaultRequestHeadersTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DefaultShutdownTimeout = TimeSpan.FromSeconds(1);
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -247,6 +248,12 @@ public sealed class HealthCheckServer : IAsyncDisposable
         });
 
         var application = builder.Build();
+        application.MapWhen(
+            context => string.Equals(
+                context.Request.Path.Value,
+                LivenessPath,
+                StringComparison.OrdinalIgnoreCase),
+            branch => branch.Run(HandleLivenessRequestAsync));
         application.Run(HandleRequestAsync);
         return application;
     }
@@ -273,6 +280,61 @@ public sealed class HealthCheckServer : IAsyncDisposable
             .Where(port => port > 0)
             .DefaultIfEmpty(0)
             .Min();
+    }
+
+    private async Task HandleLivenessRequestAsync(HttpContext context)
+    {
+        context.Response.Headers.Connection = "close";
+        var isHeadRequest = HttpMethods.IsHead(context.Request.Method);
+        if (!HttpMethods.IsGet(context.Request.Method) && !isHeadRequest)
+        {
+            context.Response.Headers.Allow = "GET, HEAD";
+            await WritePlainTextResponseAsync(
+                context,
+                StatusCodes.Status405MethodNotAllowed,
+                "Only GET and HEAD are supported.",
+                suppressBody: false);
+            return;
+        }
+
+        if (!IsAuthorized(context.Request))
+        {
+            context.Response.Headers.WWWAuthenticate = "Bearer";
+            await WritePlainTextResponseAsync(
+                context,
+                StatusCodes.Status401Unauthorized,
+                "Missing or invalid bearer token.",
+                isHeadRequest);
+            return;
+        }
+
+        var clientIdentifier = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        if (_rateLimiter.IsRateLimited($"live|{clientIdentifier}", out var retryAfterSeconds))
+        {
+            context.Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+            await WriteJsonResponseAsync(
+                context,
+                StatusCodes.Status429TooManyRequests,
+                new
+                {
+                    status = "rate_limited",
+                    message = $"Wait {retryAfterSeconds} more seconds before polling {LivenessPath} again.",
+                    retryAfterSeconds
+                },
+                isHeadRequest);
+            return;
+        }
+
+        await WriteJsonResponseAsync(
+            context,
+            StatusCodes.Status200OK,
+            new
+            {
+                status = "alive",
+                version = BuildIdentity.Current.Version,
+                commitSha = BuildIdentity.Current.CommitSha
+            },
+            isHeadRequest);
     }
 
     private async Task HandleRequestAsync(HttpContext context)
