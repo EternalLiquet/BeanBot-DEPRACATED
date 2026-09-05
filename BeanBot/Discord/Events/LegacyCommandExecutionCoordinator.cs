@@ -177,9 +177,9 @@ internal sealed class LegacyCommandExecutionCoordinator
         }
     }
 
-    private static Task ObserveCompletionAsync(Task executionTask)
+    private static Task<AggregateException?> ObserveCompletionAsync(Task executionTask)
         => executionTask.ContinueWith(
-            static completedTask => _ = completedTask.Exception,
+            static completedTask => completedTask.Exception,
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
