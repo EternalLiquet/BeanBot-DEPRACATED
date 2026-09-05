@@ -87,7 +87,7 @@ public sealed class CommandHandler : IDisposable
         }
     }
 
-    public Task<LegacyCommandDrainResult> StopAsync()
+    internal Task<LegacyCommandDrainResult> StopAsync()
     {
         lock (_lifecycleGate)
         {
