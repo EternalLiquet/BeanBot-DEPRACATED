@@ -6,7 +6,7 @@ internal static partial class LegacyCommandLog
 {
     [LoggerMessage(
         Level = LogLevel.Debug,
-        Message = "Rejected a legacy command because {ActiveExecutionCount} execution(s) already occupy the configured limit {MaximumConcurrentExecutions}")]
+        Message = "Rejected a legacy command because the configured concurrent execution limit {MaximumConcurrentExecutions} was full at admission; {ActiveExecutionCount} execution(s) remain active when logged")]
     internal static partial void CapacityRejected(
         ILogger logger,
         int activeExecutionCount,
