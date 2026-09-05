@@ -26,10 +26,7 @@ internal sealed class LegacyCommandExecutionCoordinator
         int maximumConcurrentExecutions = DefaultMaximumConcurrentExecutions,
         TimeSpan? drainTimeout = null)
     {
-        if (maximumConcurrentExecutions <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(maximumConcurrentExecutions));
-        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumConcurrentExecutions);
 
         _maximumConcurrentExecutions = maximumConcurrentExecutions;
         _drainTimeout = drainTimeout ?? DefaultDrainTimeout;
