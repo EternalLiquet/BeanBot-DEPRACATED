@@ -135,6 +135,11 @@ internal sealed class LegacyCommandExecutionCoordinator
                 survivors = [.. _activeExecutions];
             }
 
+            if (survivors.Length == 0)
+            {
+                return new LegacyCommandDrainResult(true, 0);
+            }
+
             foreach (var survivor in survivors)
             {
                 _ = survivor.ExecutionTask.ContinueWith(
@@ -172,18 +177,12 @@ internal sealed class LegacyCommandExecutionCoordinator
         }
     }
 
-    private static async Task ObserveCompletionAsync(Task executionTask)
-    {
-        try
-        {
-            await executionTask.ConfigureAwait(false);
-        }
-        catch (Exception)
-        {
-            // The command event caller receives the original fault. Draining only needs
-            // to observe completion so command failures do not become shutdown failures.
-        }
-    }
+    private static Task ObserveCompletionAsync(Task executionTask)
+        => executionTask.ContinueWith(
+            static completedTask => _ = completedTask.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     private sealed class TrackedExecution
     {
