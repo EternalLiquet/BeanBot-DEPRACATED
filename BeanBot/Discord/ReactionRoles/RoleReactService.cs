@@ -166,12 +166,12 @@ public class RoleReactService : IDisposable, IAsyncDisposable
                     BotHierarchy: botUser.Hierarchy));
             if (assignabilityStatus != ReactionRoleAssignabilityStatus.Allowed)
             {
-                _logger.LogWarning(
-                    "Skipping reaction-role {Action} for message {MessageId} and role {RoleId} because the target is not assignable: {Reason}",
+                BeanBotLog.ReactionRoleTargetUnassignable(
+                    _logger,
                     addRole ? "add" : "remove",
                     message.Id,
                     roleId,
-                    assignabilityStatus);
+                    assignabilityStatus.ToString());
                 return;
             }
 
