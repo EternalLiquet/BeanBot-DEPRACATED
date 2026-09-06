@@ -29,16 +29,17 @@ public class AdministrativeModuleRoleAssignabilityTests
     }
 
     [Theory]
-    [InlineData(ReactionRoleAssignabilityStatus.EveryoneRole, "@everyone")]
-    [InlineData(ReactionRoleAssignabilityStatus.ManagedRole, "managed")]
-    [InlineData(ReactionRoleAssignabilityStatus.BotMissingManageRoles, "Manage Roles")]
-    [InlineData(ReactionRoleAssignabilityStatus.BotHierarchyTooLow, "highest role")]
-    [InlineData(ReactionRoleAssignabilityStatus.InvokerHierarchyTooLow, "below your highest role")]
-    [InlineData(ReactionRoleAssignabilityStatus.RoleMissing, "no longer available")]
+    [InlineData((int)ReactionRoleAssignabilityStatus.EveryoneRole, "@everyone")]
+    [InlineData((int)ReactionRoleAssignabilityStatus.ManagedRole, "managed")]
+    [InlineData((int)ReactionRoleAssignabilityStatus.BotMissingManageRoles, "Manage Roles")]
+    [InlineData((int)ReactionRoleAssignabilityStatus.BotHierarchyTooLow, "highest role")]
+    [InlineData((int)ReactionRoleAssignabilityStatus.InvokerHierarchyTooLow, "below your highest role")]
+    [InlineData((int)ReactionRoleAssignabilityStatus.RoleMissing, "no longer available")]
     public void GetRoleValidationMessage_Rejection_IsActionableAndSafe(
-        ReactionRoleAssignabilityStatus status,
+        int statusValue,
         string expectedText)
     {
+        var status = (ReactionRoleAssignabilityStatus)statusValue;
         var message = AdministrativeModule.GetRoleValidationMessage(status);
 
         Assert.NotNull(message);
