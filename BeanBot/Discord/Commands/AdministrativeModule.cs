@@ -50,7 +50,8 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
     [Remarks("role setting")]
     [RequireGuild]
     [RequireUserPermission(GuildPermission.ManageRoles)]
-    [RequireBotPermission(GuildPermission.EmbedLinks)]
+    [RequireBotPermission(GuildPermission.ManageRoles)]
+    [RequireBotPermission(ChannelPermission.EmbedLinks | ChannelPermission.AddReactions)]
     public Task RoleSetting() => InvokeRoleSettingsAsync();
 
     internal async Task InvokeRoleSettingsAsync()
@@ -146,6 +147,27 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         };
     }
 
+    internal static string? GetRoleValidationMessage(ReactionRoleAssignabilityStatus status)
+    {
+        return status switch
+        {
+            ReactionRoleAssignabilityStatus.Allowed => null,
+            ReactionRoleAssignabilityStatus.EveryoneRole =>
+                "The @everyone role cannot be used for self-assignment. Please start again.",
+            ReactionRoleAssignabilityStatus.ManagedRole =>
+                "That role is managed by Discord or an integration and cannot be self-assigned. Please start again.",
+            ReactionRoleAssignabilityStatus.BotMissingManageRoles =>
+                "Bean Bot needs the Manage Roles permission before this role can be configured. Please start again after fixing its permissions.",
+            ReactionRoleAssignabilityStatus.BotHierarchyTooLow =>
+                "Bean Bot's highest role must be above the selected role. Please move Bean Bot higher in the role list and start again.",
+            ReactionRoleAssignabilityStatus.InvokerHierarchyTooLow =>
+                "You can only configure roles below your highest role. Please choose a lower role and start again.",
+            ReactionRoleAssignabilityStatus.RoleMissing =>
+                "That role is no longer available. Please choose another role and start again.",
+            _ => throw new ArgumentOutOfRangeException(nameof(status), status, null)
+        };
+    }
+
     private async Task<IUserMessage> CreateRoleMessageAsync(IEnumerable<RoleEmotePair> roleEmotePairs, string roleGroupLabel)
     {
         var pairs = roleEmotePairs.ToList();
@@ -224,7 +246,33 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
             return null;
         }
 
-        return availableRoles.Single(role => role.Id == roleResolution.RoleId);
+        var role = availableRoles.Single(candidate => candidate.Id == roleResolution.RoleId);
+        var invokingUser = Context.User as SocketGuildUser ?? Context.Guild.GetUser(Context.User.Id);
+        if (invokingUser == null)
+        {
+            messages.Add(await ReplyAsync("Bean Bot could not verify your current role hierarchy. Please try again."));
+            return null;
+        }
+
+        var botUser = Context.Guild.CurrentUser;
+        var assignabilityStatus = ReactionRoleAssignabilityPolicy.EvaluateForSetup(
+            new ReactionRoleAssignabilityFacts(
+                RoleExists: true,
+                IsEveryoneRole: role.Id == Context.Guild.Id,
+                IsManagedRole: role.IsManaged,
+                BotCanManageRoles: botUser.GuildPermissions.ManageRoles,
+                TargetRolePosition: role.Position,
+                BotHierarchy: botUser.Hierarchy),
+            invokerIsGuildOwner: invokingUser.Id == Context.Guild.OwnerId,
+            invokerHierarchy: invokingUser.Hierarchy);
+        var validationMessage = GetRoleValidationMessage(assignabilityStatus);
+        if (validationMessage is not null)
+        {
+            messages.Add(await ReplyAsync(validationMessage));
+            return null;
+        }
+
+        return role;
     }
 
     internal static RoleResolution ResolveRole(
