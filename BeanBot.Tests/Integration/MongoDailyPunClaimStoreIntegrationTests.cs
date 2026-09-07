@@ -83,6 +83,30 @@ public sealed class MongoDailyPunClaimStoreIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task TryClaimAsync_UnacknowledgedWriteConcernFailsClosed()
+    {
+        var databaseName = CreateDatabaseName();
+        var cleanupClient = new MongoClient(_fixture.ConnectionString);
+        var settings = MongoClientSettings.FromConnectionString(_fixture.ConnectionString);
+        settings.WriteConcern = WriteConcern.Unacknowledged;
+        var client = new MongoClient(settings);
+        var store = new MongoDailyPunClaimStore(client.GetDatabase(databaseName));
+
+        try
+        {
+            using var cancellation = new CancellationTokenSource(OperationTimeout);
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => store.TryClaimAsync(new DateOnly(2026, 9, 7), cancellation.Token));
+
+            Assert.Contains("trustworthy acknowledgement", exception.Message);
+        }
+        finally
+        {
+            await DropDatabaseAsync(cleanupClient, databaseName);
+        }
+    }
+
     private static string CreateDatabaseName()
         => $"BeanBotPunIntegration_{Guid.NewGuid():N}";
 
