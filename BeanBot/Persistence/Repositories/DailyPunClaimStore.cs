@@ -3,13 +3,13 @@ using MongoDB.Driver;
 
 namespace BeanBot.Persistence.Repositories;
 
-internal enum DailyPunClaimResult
+public enum DailyPunClaimResult
 {
     Acquired,
     AlreadyClaimed
 }
 
-internal interface IDailyPunClaimStore
+public interface IDailyPunClaimStore
 {
     Task<DailyPunClaimResult> TryClaimAsync(
         DateOnly chicagoDate,
