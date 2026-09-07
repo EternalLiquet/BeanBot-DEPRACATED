@@ -306,9 +306,8 @@ public sealed partial class PunHandler : IAsyncDisposable
             return;
         }
 
-        LogPunGraceWindowExpired(
-            _logger,
-            localDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        var chicagoDate = localDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        LogPunGraceWindowExpired(_logger, chicagoDate);
     }
 
     internal static async Task SendPunMessagesAsync(
