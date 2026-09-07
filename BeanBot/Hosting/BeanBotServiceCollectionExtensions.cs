@@ -52,6 +52,7 @@ internal static class BeanBotServiceCollectionExtensions
             new MongoClient(provider.GetRequiredService<BeanBotOptions>().MongoConnectionString));
         services.AddSingleton<IMongoDatabase>(provider =>
             provider.GetRequiredService<MongoClient>().GetDatabase("BeanBotDB"));
+        services.AddSingleton<IDailyPunClaimStore, MongoDailyPunClaimStore>();
 
         services.AddSingleton<DiscordConnectionHealth>();
         services.AddSingleton<DiscordLifecycleCoordinator>();
@@ -121,7 +122,7 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<PunProvider>();
         services.AddSingleton<IPunProvider>(provider =>
             provider.GetRequiredService<PunProvider>());
-        services.AddSingleton(ExternalMediaCommandOptions.Default);
+        services.AddSingleton<ExternalMediaCommandOptions.Default);
         services.AddSingleton<ExternalImageClient>();
         services.AddSingleton<IExternalImageClient>(provider =>
             provider.GetRequiredService<ExternalImageClient>());
