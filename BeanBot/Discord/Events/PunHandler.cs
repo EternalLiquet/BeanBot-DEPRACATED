@@ -104,9 +104,7 @@ public sealed partial class PunHandler : IAsyncDisposable
                 var today = DateOnly.FromDateTime(chicagoNow.DateTime);
                 if (window.LocalDate > today)
                 {
-                    LogPunGraceWindowExpired(
-                        _logger,
-                        today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+                    LogGraceWindowExpired(today);
                 }
 
                 await RunOccurrenceAsync(window, timezone, token);
@@ -155,9 +153,7 @@ public sealed partial class PunHandler : IAsyncDisposable
             var nowUtc = _clock.UtcNow;
             if (nowUtc > window.GraceEndsUtc)
             {
-                LogPunGraceWindowExpired(
-                    _logger,
-                    window.LocalDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+                LogGraceWindowExpired(window.LocalDate);
                 return PunOccurrenceResult.GraceExpired;
             }
 
@@ -301,6 +297,18 @@ public sealed partial class PunHandler : IAsyncDisposable
             nextLocal,
             nextUtc,
             nowLocal);
+    }
+
+    private void LogGraceWindowExpired(DateOnly localDate)
+    {
+        if (!_logger.IsEnabled(LogLevel.Information))
+        {
+            return;
+        }
+
+        LogPunGraceWindowExpired(
+            _logger,
+            localDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
     }
 
     internal static async Task SendPunMessagesAsync(
