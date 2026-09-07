@@ -255,7 +255,7 @@ public sealed partial class PunHandler : IAsyncDisposable
         CancellationToken token)
     {
         var remaining = window.GraceEndsUtc - _clock.UtcNow;
-        if (remaining < TimeSpan.Zero)
+        if (remaining <= TimeSpan.Zero)
         {
             LogPunGraceWindowExpired(_logger, chicagoDate);
             return false;
