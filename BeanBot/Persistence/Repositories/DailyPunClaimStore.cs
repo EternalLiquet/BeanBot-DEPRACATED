@@ -44,11 +44,17 @@ internal sealed class MongoDailyPunClaimStore : IDailyPunClaimStore
 
         try
         {
-            await _checkpoints.UpdateOneAsync(
+            var result = await _checkpoints.UpdateOneAsync(
                 filter,
                 update,
                 new UpdateOptions { IsUpsert = true },
                 cancellationToken);
+            if (!result.IsAcknowledged || (result.MatchedCount == 0 && result.UpsertedId is null))
+            {
+                throw new InvalidOperationException(
+                    "Daily pun claim persistence did not return a trustworthy acknowledgement.");
+            }
+
             return DailyPunClaimResult.Acquired;
         }
         catch (MongoWriteException exception)
