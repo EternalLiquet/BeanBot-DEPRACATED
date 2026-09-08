@@ -168,16 +168,12 @@ public class LegacyCommandReplySenderTests
         var sender = CreateSender(logger, drainTimeout: TimeSpan.FromSeconds(1));
         CancellationToken requestToken = default;
 
-        var operation = sender.RunAsync<string>(
-            options =>
+        var operation = sender.RunAsync(
+            async options =>
             {
                 requestToken = options.CancelToken;
-                return Task.Delay(Timeout.InfiniteTimeSpan, requestToken)
-                    .ContinueWith(
-                        _ => "never",
-                        CancellationToken.None,
-                        TaskContinuationOptions.ExecuteSynchronously,
-                        TaskScheduler.Default);
+                await Task.Delay(Timeout.InfiniteTimeSpan, requestToken);
+                return "never";
             },
             "embed");
 
