@@ -21,7 +21,7 @@ internal sealed class LegacyCommandReplyTimeoutException : TimeoutException
     }
 }
 
-public sealed partial class LegacyCommandReplySender
+public sealed partial class LegacyCommandReplySender : IDisposable
 {
     internal const int DefaultCapacity = 16;
     internal static readonly TimeSpan DefaultSendTimeout = TimeSpan.FromSeconds(10);
@@ -43,21 +43,21 @@ public sealed partial class LegacyCommandReplySender
         IHostApplicationLifetime applicationLifetime,
         ILogger<LegacyCommandReplySender> logger)
         : this(
-            applicationLifetime?.ApplicationStopping
-                ?? throw new ArgumentNullException(nameof(applicationLifetime)),
             logger,
             DefaultCapacity,
             DefaultSendTimeout,
-            DefaultDrainTimeout)
+            DefaultDrainTimeout,
+            applicationLifetime?.ApplicationStopping
+                ?? throw new ArgumentNullException(nameof(applicationLifetime)))
     {
     }
 
     internal LegacyCommandReplySender(
-        CancellationToken applicationStopping,
         ILogger<LegacyCommandReplySender> logger,
         int capacity,
         TimeSpan sendTimeout,
-        TimeSpan drainTimeout)
+        TimeSpan drainTimeout,
+        CancellationToken applicationStopping)
     {
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
@@ -190,6 +190,11 @@ public sealed partial class LegacyCommandReplySender
 
         _shutdown.Cancel();
         return stopTask;
+    }
+
+    public void Dispose()
+    {
+        _shutdown.Dispose();
     }
 
     private OwnedReplyOperation ReserveOperation(string replyKind)

@@ -201,11 +201,11 @@ public class LegacyCommandReplySenderTests
         TimeSpan? sendTimeout = null,
         TimeSpan? drainTimeout = null)
         => new(
-            applicationStopping,
             logger,
             capacity,
             sendTimeout ?? TimeSpan.FromSeconds(1),
-            drainTimeout ?? TimeSpan.FromSeconds(1));
+            drainTimeout ?? TimeSpan.FromSeconds(1),
+            applicationStopping);
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
