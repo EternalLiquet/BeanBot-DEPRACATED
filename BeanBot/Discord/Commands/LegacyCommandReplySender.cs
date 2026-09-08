@@ -21,7 +21,7 @@ internal sealed class LegacyCommandReplyTimeoutException : TimeoutException
     }
 }
 
-internal sealed partial class LegacyCommandReplySender
+public sealed partial class LegacyCommandReplySender
 {
     internal const int DefaultCapacity = 16;
     internal static readonly TimeSpan DefaultSendTimeout = TimeSpan.FromSeconds(10);
