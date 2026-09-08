@@ -6,6 +6,13 @@ namespace BeanBot.Discord.Commands;
 [Name("Bot Information")]
 public class InfoModule : ModuleBase<SocketCommandContext>
 {
+    private readonly LegacyCommandReplySender _replySender;
+
+    public InfoModule(LegacyCommandReplySender replySender)
+    {
+        _replySender = replySender ?? throw new ArgumentNullException(nameof(replySender));
+    }
+
     [Command("dev")]
     [Summary("Tags the lead developer on Discord")]
     [Remarks("succ dev")]
@@ -13,6 +20,8 @@ public class InfoModule : ModuleBase<SocketCommandContext>
     public async Task DeveloperCommand()
     {
         const long leadDeveloperDiscordUserId = 114559039731531781;
-        await ReplyAsync($"<@{leadDeveloperDiscordUserId}> is my lead developer");
+        await _replySender.SendMessageAsync(
+            Context,
+            $"<@{leadDeveloperDiscordUserId}> is my lead developer");
     }
 }
