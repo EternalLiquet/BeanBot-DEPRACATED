@@ -108,8 +108,8 @@ public class LegacyCommandReplySenderTests
         var logger = new RecordingLogger<LegacyCommandReplySender>();
         var sender = CreateSender(
             logger,
-            applicationStopping.Token,
-            sendTimeout: TimeSpan.FromSeconds(1));
+            sendTimeout: TimeSpan.FromSeconds(1),
+            applicationStopping: applicationStopping.Token);
         var send = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         CancellationToken requestToken = default;
 
@@ -196,10 +196,10 @@ public class LegacyCommandReplySenderTests
 
     private static LegacyCommandReplySender CreateSender(
         RecordingLogger<LegacyCommandReplySender> logger,
-        CancellationToken applicationStopping = default,
         int capacity = 4,
         TimeSpan? sendTimeout = null,
-        TimeSpan? drainTimeout = null)
+        TimeSpan? drainTimeout = null,
+        CancellationToken applicationStopping = default)
         => new(
             logger,
             capacity,
