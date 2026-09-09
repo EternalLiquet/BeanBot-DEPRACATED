@@ -10,9 +10,9 @@ internal static partial class PunScheduleLog
     internal static partial void Scheduled(
         ILogger logger,
         string nextLocal,
+        string timeZoneId,
         string nextUtc,
-        string nowLocal,
-        string timeZoneId);
+        string nowLocal);
 
     [LoggerMessage(
         Level = LogLevel.Information,
