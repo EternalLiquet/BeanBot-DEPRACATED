@@ -33,10 +33,32 @@ public class DailyPunScheduleTests
     }
 
     [Fact]
+    public void ComputeNextOccurrenceUtc_SpringForwardKeepsAdjustedOccurrenceUntilItPasses()
+    {
+        var schedule = CreateSchedule("02:30", "America/Chicago");
+        var nowUtc = new DateTimeOffset(2026, 3, 8, 8, 15, 0, TimeSpan.Zero);
+
+        var nextUtc = PunHandler.ComputeNextOccurrenceUtc(schedule, nowUtc);
+
+        Assert.Equal(new DateTimeOffset(2026, 3, 8, 8, 30, 0, TimeSpan.Zero), nextUtc);
+    }
+
+    [Fact]
     public void ComputeNextOccurrenceUtc_FallBackChoosesOneStandardTimeOccurrence()
     {
         var schedule = CreateSchedule("01:30", "America/Chicago");
         var nowUtc = new DateTimeOffset(2026, 11, 1, 5, 0, 0, TimeSpan.Zero);
+
+        var nextUtc = PunHandler.ComputeNextOccurrenceUtc(schedule, nowUtc);
+
+        Assert.Equal(new DateTimeOffset(2026, 11, 1, 7, 30, 0, TimeSpan.Zero), nextUtc);
+    }
+
+    [Fact]
+    public void ComputeNextOccurrenceUtc_FallBackKeepsChosenOccurrenceDuringFirstRepeatedHour()
+    {
+        var schedule = CreateSchedule("01:30", "America/Chicago");
+        var nowUtc = new DateTimeOffset(2026, 11, 1, 6, 45, 0, TimeSpan.Zero);
 
         var nextUtc = PunHandler.ComputeNextOccurrenceUtc(schedule, nowUtc);
 
