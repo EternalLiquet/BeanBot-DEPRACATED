@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using BeanBot.Configuration;
 using BeanBot.Discord.Commands;
 using BeanBot.Logging;
@@ -90,9 +90,9 @@ public sealed class PunHandler : IAsyncDisposable
                     PunScheduleLog.Scheduled(
                         _logger,
                         nextLocal,
+                        _schedule.TimeZoneId,
                         nextUtc,
-                        nowLocal,
-                        _schedule.TimeZoneId);
+                        nowLocal);
                 }
 
                 await Task.Delay(delay, _timeProvider, token);
@@ -241,25 +241,35 @@ public sealed class PunHandler : IAsyncDisposable
             schedule.LocalTime.Seconds,
             DateTimeKind.Unspecified);
 
-        if (currentLocalTime.TimeOfDay >= schedule.LocalTime)
+        var nextOccurrenceUtc = ResolveOccurrenceUtc(schedule.TimeZone, tentativeNextPostTime);
+        if (nextOccurrenceUtc <= nowUtc)
         {
-            tentativeNextPostTime = tentativeNextPostTime.AddDays(1);
+            nextOccurrenceUtc = ResolveOccurrenceUtc(
+                schedule.TimeZone,
+                tentativeNextPostTime.AddDays(1));
         }
 
-        if (schedule.TimeZone.IsInvalidTime(tentativeNextPostTime))
+        return nextOccurrenceUtc;
+    }
+
+    private static DateTimeOffset ResolveOccurrenceUtc(
+        TimeZoneInfo timeZone,
+        DateTime localOccurrence)
+    {
+        if (timeZone.IsInvalidTime(localOccurrence))
         {
-            tentativeNextPostTime = tentativeNextPostTime.AddHours(1);
+            localOccurrence = localOccurrence.AddHours(1);
         }
-        else if (schedule.TimeZone.IsAmbiguousTime(tentativeNextPostTime))
+        else if (timeZone.IsAmbiguousTime(localOccurrence))
         {
-            var offsets = schedule.TimeZone.GetAmbiguousTimeOffsets(tentativeNextPostTime);
-            var preferredOffset = offsets.Contains(schedule.TimeZone.BaseUtcOffset)
-                ? schedule.TimeZone.BaseUtcOffset
+            var offsets = timeZone.GetAmbiguousTimeOffsets(localOccurrence);
+            var preferredOffset = offsets.Contains(timeZone.BaseUtcOffset)
+                ? timeZone.BaseUtcOffset
                 : offsets.Min();
-            return new DateTimeOffset(tentativeNextPostTime, preferredOffset).ToUniversalTime();
+            return new DateTimeOffset(localOccurrence, preferredOffset).ToUniversalTime();
         }
 
-        var utc = TimeZoneInfo.ConvertTimeToUtc(tentativeNextPostTime, schedule.TimeZone);
+        var utc = TimeZoneInfo.ConvertTimeToUtc(localOccurrence, timeZone);
         return new DateTimeOffset(utc, TimeSpan.Zero);
     }
 
