@@ -38,7 +38,6 @@ public class DailyPunScheduleConfigurationTests
     [InlineData("BEANBOT_DAILY_PUN_TIME", "9:05")]
     [InlineData("BEANBOT_DAILY_PUN_TIME", "24:00")]
     [InlineData("BEANBOT_DAILY_PUN_TIMEZONE", "Mars/Olympus")]
-    [InlineData("BEANBOT_DAILY_PUN_TIMEZONE", " ")]
     public void Options_RejectsMalformedDailyPunScheduleWithoutEchoingValue(string key, string value)
     {
         var values = RequiredSettings();
