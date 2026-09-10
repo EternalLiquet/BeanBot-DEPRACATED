@@ -47,6 +47,17 @@ internal sealed class InteractionOperationTracker : IAsyncDisposable
             : Task.CompletedTask;
     }
 
+    internal bool HasPendingOperations
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                return _operations.Any(operation => !operation.IsCompleted);
+            }
+        }
+    }
+
     internal InteractionOperationAdmission Start(
         Func<CancellationToken, Task> beginOperation)
     {

@@ -26,6 +26,7 @@ internal sealed class InteractionHandler : IAsyncDisposable
     private readonly InteractionOperationTracker _operationTracker;
     private readonly InteractionOperationTracker _busyResponseTracker;
     private readonly ILogger<InteractionHandler> _logger;
+    private readonly TimeSpan _shutdownDrainTimeout;
     private bool _initialized;
 
     public InteractionHandler(
@@ -34,7 +35,9 @@ internal sealed class InteractionHandler : IAsyncDisposable
         IServiceProvider services,
         InteractionExecutionContext executionContext,
         IHostApplicationLifetime applicationLifetime,
-        ILogger<InteractionHandler> logger)
+        ILogger<InteractionHandler> logger,
+        TimeSpan? shutdownDrainTimeout = null,
+        InteractionCommandRegistration? registration = null)
     {
         _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
         _interactionService = interactionService ?? throw new ArgumentNullException(nameof(interactionService));
@@ -42,20 +45,33 @@ internal sealed class InteractionHandler : IAsyncDisposable
         _executionContext = executionContext ?? throw new ArgumentNullException(nameof(executionContext));
         ArgumentNullException.ThrowIfNull(applicationLifetime);
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _shutdownDrainTimeout = shutdownDrainTimeout ?? ShutdownDrainTimeout;
         _operationTracker = new InteractionOperationTracker(
-            ShutdownDrainTimeout,
+            _shutdownDrainTimeout,
             _logger,
             MaximumConcurrentOperations,
             applicationLifetime.ApplicationStopping);
         _busyResponseTracker = new InteractionOperationTracker(
-            ShutdownDrainTimeout,
+            _shutdownDrainTimeout,
             _logger,
             MaximumConcurrentBusyResponses,
             applicationLifetime.ApplicationStopping);
-        _registration = new InteractionCommandRegistration(
+        _registration = registration ?? new InteractionCommandRegistration(
             () => _interactionService.RegisterCommandsGloballyAsync(deleteMissing: true),
-            RegistrationTimeout);
+            RegistrationTimeout,
+            applicationLifetime.ApplicationStopping);
     }
+
+    internal bool HasPendingOperations
+        => _operationTracker.HasPendingOperations
+            || _busyResponseTracker.HasPendingOperations
+            || _registration.HasPendingOperations;
+
+    internal InteractionOperationAdmission StartOperation(Func<CancellationToken, Task> operation)
+        => _operationTracker.Start(operation);
+
+    internal InteractionOperationAdmission StartBusyResponse(Func<CancellationToken, Task> operation)
+        => _busyResponseTracker.Start(operation);
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {
@@ -90,7 +106,8 @@ internal sealed class InteractionHandler : IAsyncDisposable
 
         await Task.WhenAll(
             _operationTracker.DisposeAsync().AsTask(),
-            _busyResponseTracker.DisposeAsync().AsTask());
+            _busyResponseTracker.DisposeAsync().AsTask(),
+            _registration.StopAsync(_shutdownDrainTimeout));
     }
 
     internal Task HandleReadyAsync()
@@ -99,11 +116,11 @@ internal sealed class InteractionHandler : IAsyncDisposable
     internal Task HandleInteractionAsync(SocketInteraction interaction)
     {
         ArgumentNullException.ThrowIfNull(interaction);
-        var admission = _operationTracker.Start(cancellationToken =>
+        var admission = StartOperation(cancellationToken =>
             ExecuteInteractionAsync(interaction, cancellationToken));
         if (admission == InteractionOperationAdmission.Saturated)
         {
-            _busyResponseTracker.Start(cancellationToken =>
+            StartBusyResponse(cancellationToken =>
                 TryRespondWithBusyAsync(interaction, cancellationToken));
         }
 

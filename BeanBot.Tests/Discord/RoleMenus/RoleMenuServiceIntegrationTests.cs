@@ -18,6 +18,11 @@ public class RoleMenuServiceIntegrationTests
     public async Task ConcurrentMembers_KeepMutationTargetsLocalToEachRequest()
     {
         var fixture = new Fixture();
+        // The bounded coordinator deliberately serializes hash collisions; this case needs two active lanes.
+        var secondMemberId = Enumerable.Range(6, 128).Select(value => (ulong)value).First(value =>
+            RoleMenuMutationCoordinator.GetStripeIndex($"member:1:{value.ToString(CultureInfo.InvariantCulture)}")
+            != RoleMenuMutationCoordinator.GetStripeIndex("member:1:3"));
+        fixture.MemberRoles[secondMemberId] = [99UL];
         var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.BeforeMutation = async memberId =>
@@ -35,10 +40,10 @@ public class RoleMenuServiceIntegrationTests
         try
         {
             var second = await fixture.Members.ApplySelectionAsync(
-                fixture.Settings.Id, 5UL, ["11"], 1UL, 4UL, 2UL, 6UL, CancellationToken.None)
+                fixture.Settings.Id, 5UL, ["11"], 1UL, 4UL, 2UL, secondMemberId, CancellationToken.None)
                 .WaitAsync(TimeSpan.FromSeconds(2));
             Assert.Contains("11", second, StringComparison.Ordinal);
-            Assert.Equal([11UL, 99UL], fixture.MemberRoles[6UL].Order());
+            Assert.Equal([11UL, 99UL], fixture.MemberRoles[secondMemberId].Order());
             Assert.Equal([99UL], fixture.MemberRoles[3UL]);
         }
         finally
@@ -48,8 +53,8 @@ public class RoleMenuServiceIntegrationTests
 
         await first.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.Equal([10UL, 11UL, 99UL], fixture.MemberRoles[3UL].Order());
-        Assert.Equal([11UL, 99UL], fixture.MemberRoles[6UL].Order());
-        Assert.Equal([(6UL, 11UL), (3UL, 10UL), (3UL, 11UL)], fixture.Mutations);
+        Assert.Equal([11UL, 99UL], fixture.MemberRoles[secondMemberId].Order());
+        Assert.Equal([(secondMemberId, 11UL), (3UL, 10UL), (3UL, 11UL)], fixture.Mutations);
     }
 
     [Fact]
