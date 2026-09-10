@@ -373,7 +373,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         }
 
         var rejection = CreateExternalMediaAdmissionReply();
-        await ReplyAsync(rejection.Content, allowedMentions: rejection.AllowedMentions);
+        await _replySender.SendMessageAsync(Context, rejection.Content, allowedMentions: rejection.AllowedMentions);
     }
 
     private async Task SendImageFromUrl(Uri url)
