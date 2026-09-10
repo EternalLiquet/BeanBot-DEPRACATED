@@ -25,17 +25,20 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
 {
     private readonly DiscordRoleMenuClient _discord;
     private readonly RoleMenuAdministrationService _administration;
+    private readonly RoleMenuAuditService _audit;
     private readonly ILogger<RoleMenuAdminModule> _logger;
 
     public RoleMenuAdminModule(
         RoleMenuInteractionService roleMenuService,
         DiscordRoleMenuClient discord,
         RoleMenuAdministrationService administration,
+        RoleMenuAuditService audit,
         ILogger<RoleMenuAdminModule> logger)
         : base(roleMenuService)
     {
         _discord = discord ?? throw new ArgumentNullException(nameof(discord));
         _administration = administration ?? throw new ArgumentNullException(nameof(administration));
+        _audit = audit ?? throw new ArgumentNullException(nameof(audit));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -300,6 +303,56 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
 
         await RespondToInvalidComponentAsync(
             "Role-menu creation cancelled.",
+            cancellation.Token);
+    }
+
+    [SlashCommand(
+        "audit",
+        "Audit saved role menus for stale panels, roles, or permissions.",
+        runMode: RunMode.Sync)]
+    public async Task AuditAsync(
+        [Summary("menu-id", "Optional ID shown in the role panel footer")]
+        string? menuId = null)
+    {
+        using var cancellation = RoleMenus.CreateOperationCancellation();
+        await RoleMenus.ExecuteInitialResponseAsync(
+            supportsOriginalResponse: true,
+            operationToken => DeferAsync(
+                ephemeral: true,
+                CreateRequestOptions(operationToken)),
+            operationToken => ReplaceResponseAsync(
+                "Auditing role menus…",
+                operationToken),
+            cancellation.Token);
+        if (Context.Guild is null)
+        {
+            await ReplaceResponseAsync(
+                "Role menus can only be audited inside a server.",
+                cancellation.Token);
+            return;
+        }
+
+        ObjectId? requestedMenuId = null;
+        if (!string.IsNullOrWhiteSpace(menuId))
+        {
+            if (!RoleMenuCustomIds.TryParseMenuId(menuId.Trim(), out var parsedMenuId))
+            {
+                await ReplaceResponseAsync(
+                    "That menu ID is invalid. Copy the ID from the role panel footer.",
+                    cancellation.Token);
+                return;
+            }
+
+            requestedMenuId = parsedMenuId;
+        }
+
+        var result = await _audit.AuditAsync(
+            Context.Guild.Id,
+            Context.Guild.CurrentUser.Id,
+            requestedMenuId,
+            cancellation.Token);
+        await ReplaceResponseAsync(
+            RoleMenuAuditPresentation.Format(result, requestedMenuId),
             cancellation.Token);
     }
 
