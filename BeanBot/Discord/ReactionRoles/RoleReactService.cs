@@ -20,6 +20,7 @@ public class RoleReactService : IDisposable, IAsyncDisposable
     private readonly object _operationSync = new();
     private readonly HashSet<Task> _inFlightOperations = [];
     private readonly TimeSpan _shutdownDrainTimeout;
+    private readonly ReactionRoleMutationCoordinator _mutationCoordinator;
     private readonly TaskCompletionSource _disposeCompletion = new(
         TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ILogger<RoleReactService> _logger;
@@ -51,7 +52,9 @@ public class RoleReactService : IDisposable, IAsyncDisposable
         TimeSpan shutdownDrainTimeout,
         ILogger<RoleReactService> logger,
         int cacheCapacity,
-        CancellationToken applicationStopping)
+        CancellationToken applicationStopping,
+        TimeSpan? roleMutationTimeout = null,
+        int mutationCoordinationCapacity = 256)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(shutdownDrainTimeout, TimeSpan.Zero);
         _roleReactRepository = roleReactRepository ?? throw new ArgumentNullException(nameof(roleReactRepository));
@@ -59,11 +62,29 @@ public class RoleReactService : IDisposable, IAsyncDisposable
         _shutdownDrainTimeout = shutdownDrainTimeout;
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _roleSettings = new BoundedRoleSettingsCache(cacheCapacity);
+        _mutationCoordinator = new ReactionRoleMutationCoordinator(mutationCoordinationCapacity, _logger, roleMutationTimeout);
         _shutdownCancellation = CancellationTokenSource.CreateLinkedTokenSource(applicationStopping);
         _shutdownToken = _shutdownCancellation.Token;
     }
 
     internal int CachedRoleSettingsCount => _roleSettings.Count;
+
+    internal bool HasPendingOperations
+    {
+        get
+        {
+            lock (_operationSync)
+            {
+                return _inFlightOperations.Any(operation => !operation.IsCompleted)
+                    || _mutationCoordinator.ActiveKeyCount > 0;
+            }
+        }
+    }
+
+    internal Task? CoordinateRoleMutation(
+        ReactionRoleMutationKey key, ulong messageId, bool desiredState,
+        Func<bool, CancellationToken, Task> mutate)
+        => _mutationCoordinator.Submit(key, messageId, desiredState, mutate, _shutdownToken);
 
     public Task HandleReact(Cacheable<IUserMessage, ulong> message, Cacheable<IMessageChannel, ulong> channel, SocketReaction reaction)
         => TrackHandlerAsync(cancellationToken =>
@@ -158,33 +179,16 @@ public class RoleReactService : IDisposable, IAsyncDisposable
                 return;
             }
 
-            var socketGuild = textChannel.Guild;
-            var role = socketGuild.GetRole(roleId);
-            var botUser = socketGuild.CurrentUser;
-            var assignabilityStatus = await ApplyRoleChangeAsync(
-                new ReactionRoleAssignabilityFacts(
-                    RoleExists: role is not null,
-                    IsEveryoneRole: role?.Id == socketGuild.Id,
-                    IsManagedRole: role?.IsManaged ?? false,
-                    BotCanManageRoles: botUser.GuildPermissions.ManageRoles,
-                    TargetRolePosition: role?.Position ?? 0,
-                    BotHierarchy: botUser.Hierarchy),
-                socketGuild,
-                role,
-                reaction.UserId,
-                addRole,
-                cancellationToken);
-            if (assignabilityStatus != ReactionRoleAssignabilityStatus.Allowed)
+            var guild = textChannel.Guild;
+            var operation = CoordinateRoleMutation(
+                new ReactionRoleMutationKey(guild.Id, reaction.UserId, roleId),
+                message.Id, addRole,
+                (desiredState, operationCancellation) => ApplyDesiredRoleStateAsync(
+                    guild, reaction.UserId, roleId, message.Id, desiredState, operationCancellation));
+            if (operation is not null)
             {
-                BeanBotLog.ReactionRoleTargetUnassignable(
-                    _logger,
-                    addRole ? "add" : "remove",
-                    message.Id,
-                    roleId,
-                    assignabilityStatus.ToString());
-                return;
+                await operation;
             }
-
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -197,6 +201,29 @@ public class RoleReactService : IDisposable, IAsyncDisposable
                 addRole ? "add" : "remove",
                 message.Id,
                 exception);
+        }
+    }
+
+    private async Task ApplyDesiredRoleStateAsync(
+        SocketGuild guild, ulong userId, ulong roleId, ulong messageId,
+        bool desiredState, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var role = guild.GetRole(roleId);
+        var botUser = guild.CurrentUser;
+        var status = await ApplyRoleChangeAsync(
+            new ReactionRoleAssignabilityFacts(
+                RoleExists: role is not null,
+                IsEveryoneRole: role?.Id == guild.Id,
+                IsManagedRole: role?.IsManaged ?? false,
+                BotCanManageRoles: botUser.GuildPermissions.ManageRoles,
+                TargetRolePosition: role?.Position ?? 0,
+                BotHierarchy: botUser.Hierarchy),
+            guild, role, userId, desiredState, cancellationToken);
+        if (status != ReactionRoleAssignabilityStatus.Allowed)
+        {
+            BeanBotLog.ReactionRoleTargetUnassignable(
+                _logger, desiredState ? "add" : "remove", messageId, roleId, status.ToString());
         }
     }
 
@@ -220,11 +247,11 @@ public class RoleReactService : IDisposable, IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
         if (user is not null)
         {
-            if (addRole && !user.RoleIds.Contains(role.Id))
+            if (addRole)
             {
                 await user.AddRoleAsync(role, requestOptions);
             }
-            else if (!addRole && user.RoleIds.Contains(role.Id))
+            else
             {
                 await user.RemoveRoleAsync(role, requestOptions);
             }
@@ -348,7 +375,7 @@ public class RoleReactService : IDisposable, IAsyncDisposable
             lock (_operationSync)
             {
                 _stopping = true;
-                inFlightOperations = [.. _inFlightOperations];
+                inFlightOperations = [.. _inFlightOperations, _mutationCoordinator.StopAsync()];
             }
 
             if (inFlightOperations.Length > 0)

@@ -1,7 +1,13 @@
 using System.Reflection;
+using BeanBot.Discord.Events;
 using BeanBot.Discord.ReactionRoles;
+using BeanBot.Hosting;
 using BeanBot.Persistence.Models;
 using BeanBot.Persistence.Repositories;
+using Discord.WebSocket;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -9,6 +15,68 @@ namespace BeanBot.Tests.Discord.ReactionRoles;
 
 public class RoleReactServiceTests
 {
+    [Fact]
+    public async Task ApplicationShutdown_RawRoleMutationSurvivesDrain_PreventsDiscordTeardown()
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["BeanBot:BotToken"] = "test-token",
+            ["BeanBot:MongoConnectionString"] = "mongodb://127.0.0.1:27017",
+            ["BeanBot:GeneralChannelId"] = "1",
+            ["BeanBot:HatoeteUrl"] = "https://example.com/a.png",
+            ["BeanBot:YoshimaruUrl"] = "https://example.com/b.png"
+        });
+        builder.Services.AddBeanBot(builder.Configuration);
+        var service = CreateService(TimeSpan.FromMilliseconds(25), roleMutationTimeout: TimeSpan.FromMilliseconds(25));
+        builder.Services.AddSingleton(service);
+        using var host = builder.Build();
+        using var client = host.Services.GetRequiredService<DiscordSocketClient>();
+        host.Services.GetRequiredService<ReactHandler>().InitializeReactDependentServices();
+        var realRuntime = host.Services.GetRequiredService<IBeanBotRuntime>();
+        var rawMutation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = new List<string>();
+        var runtime = DispatchProxy.Create<IBeanBotRuntime, RuntimeProxy>();
+        ((RuntimeProxy)runtime).InvokeMethod = method =>
+        {
+            calls.Add(method.Name);
+            if (method.Name == "get_HasActiveDiscordLifecycleOperation") return realRuntime.HasActiveDiscordLifecycleOperation;
+            if (method.Name == "get_CanDisposeDiscordClient") return true;
+            if (method.Name == nameof(IBeanBotRuntime.StopReactionServices)) realRuntime.StopReactionServices();
+            if (method.ReturnType == typeof(Task<bool>)) return Task.FromResult(true);
+            if (method.ReturnType == typeof(Task)) return Task.CompletedTask;
+            return null;
+        };
+        try
+        {
+            var owner = service.CoordinateRoleMutation(new ReactionRoleMutationKey(1, 2, 3), 42, true,
+                (_, _) => rawMutation.Task)!;
+            await Assert.ThrowsAsync<TimeoutException>(() => owner);
+            var application = new BeanBotApplication(runtime, NullLogger<BeanBotApplication>.Instance);
+
+            await application.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.Contains(nameof(IBeanBotRuntime.StopReactionServices), calls);
+            Assert.True(realRuntime.HasActiveDiscordLifecycleOperation);
+            Assert.DoesNotContain(nameof(IBeanBotRuntime.StopDiscordAsync), calls);
+            Assert.DoesNotContain(nameof(IBeanBotRuntime.DisposeDiscordClient), calls);
+        }
+        finally
+        {
+            rawMutation.TrySetResult();
+            var deadline = DateTime.UtcNow.AddSeconds(1);
+            while (service.HasPendingOperations && DateTime.UtcNow < deadline) await Task.Delay(5);
+            await service.DisposeAsync();
+        }
+        Assert.False(realRuntime.HasActiveDiscordLifecycleOperation);
+    }
+
+    public class RuntimeProxy : DispatchProxy
+    {
+        public Func<MethodInfo, object?>? InvokeMethod { get; set; }
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) => InvokeMethod!(targetMethod!);
+    }
+
     [Fact]
     public async Task DisposeAsync_DrainsTrackedHandlersBeforeDisposingCacheLock()
     {
@@ -274,10 +342,47 @@ public class RoleReactServiceTests
         Assert.False(started);
     }
 
+    [Fact]
+    public async Task DisposeAsync_RetainsTimedOutMutationOwnershipAndPreventsFollowup()
+    {
+        var service = CreateService(TimeSpan.FromMilliseconds(25), roleMutationTimeout: TimeSpan.FromMilliseconds(25));
+        var cacheLock = GetCacheLock(service);
+        var rawMutation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mutationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var followupCalls = 0;
+        var key = new ReactionRoleMutationKey(1, 2, 3);
+        var owner = service.CoordinateRoleMutation(key, 42, true, async (_, _) =>
+        {
+            mutationStarted.SetResult();
+            await rawMutation.Task;
+        })!;
+        await mutationStarted.Task;
+        await Assert.ThrowsAsync<TimeoutException>(() => owner);
+        Assert.True(service.HasPendingOperations);
+        Assert.Null(service.CoordinateRoleMutation(key, 43, false, (_, _) =>
+        {
+            followupCalls++;
+            return Task.CompletedTask;
+        }));
+
+        await service.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.True(service.HasPendingOperations);
+        Assert.True(cacheLock.Wait(0));
+        cacheLock.Release();
+        Assert.Null(service.CoordinateRoleMutation(key, 44, false, (_, _) => Task.CompletedTask));
+        rawMutation.SetResult();
+        var deadline = DateTime.UtcNow.AddSeconds(1);
+        while (service.HasPendingOperations && DateTime.UtcNow < deadline) await Task.Delay(5);
+        Assert.False(service.HasPendingOperations);
+        Assert.Equal(0, followupCalls);
+    }
+
     private static RoleReactService CreateService(
         TimeSpan shutdownDrainTimeout,
         FakeRoleSettingsStore? store = null,
         int cacheCapacity = 256,
+        TimeSpan? roleMutationTimeout = null,
         CancellationToken applicationStopping = default)
     {
         return new RoleReactService(
@@ -288,7 +393,8 @@ public class RoleReactServiceTests
             shutdownDrainTimeout,
             NullLogger<RoleReactService>.Instance,
             cacheCapacity,
-            applicationStopping);
+            applicationStopping,
+            roleMutationTimeout);
     }
 
     private static RoleSettings CreateRoleSettings(string messageId)
