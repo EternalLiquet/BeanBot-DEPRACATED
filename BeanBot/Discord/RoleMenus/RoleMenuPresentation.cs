@@ -140,4 +140,60 @@ internal static class RoleMenuPresentation
             _ => result.ConfigurationIssue.ToString()
         };
 
+    internal static string FormatDeletion(RoleMenuDeletionResult result)
+        => result switch
+        {
+            { AuthorizationDenied: true } =>
+                "You no longer have the **Manage Roles** permission required to delete role menus.",
+            { PanelStatus: RoleMenuPanelDeletionStatus.Failed } =>
+                "The published panel is still present, so its saved configuration was kept. Fix " +
+                "the channel permissions and retry.",
+            { PanelStatus: RoleMenuPanelDeletionStatus.OutcomeUnknown } =>
+                "Bean Bot couldn't confirm whether the published panel was deleted, so its saved " +
+                "configuration was kept. Retry this command to finish cleanup safely.",
+            {
+                PanelStatus: RoleMenuPanelDeletionStatus.UnexpectedMessage,
+                ConfigurationStatus: RoleMenuConfigurationDeletionStatus.Kept
+            } =>
+                "The referenced message no longer looked like Bean Bot's panel and was left " +
+                "untouched, but the saved configuration could not be deleted. Retry to finish cleanup.",
+            {
+                PanelStatus: RoleMenuPanelDeletionStatus.UnexpectedMessage,
+                ConfigurationStatus: RoleMenuConfigurationDeletionStatus.OutcomeUnknown
+            } =>
+                "The referenced message no longer looked like Bean Bot's panel and was left " +
+                "untouched. Bean Bot couldn't confirm whether the saved configuration was deleted; " +
+                "run this command again to check.",
+            { PanelStatus: RoleMenuPanelDeletionStatus.UnexpectedMessage } =>
+                "The saved configuration was deleted, but the referenced message no longer looked like " +
+                "Bean Bot's panel and was left untouched.",
+            { ConfigurationStatus: RoleMenuConfigurationDeletionStatus.Kept } =>
+                "The published panel is gone, but Bean Bot couldn't delete the saved configuration. " +
+                "Retry this command to finish cleanup.",
+            { ConfigurationStatus: RoleMenuConfigurationDeletionStatus.OutcomeUnknown } =>
+                "The published panel is gone, but Bean Bot couldn't confirm whether its saved " +
+                "configuration was deleted. Run this command again to check.",
+            { ConfigurationStatus: RoleMenuConfigurationDeletionStatus.AlreadyMissing } =>
+                "That role menu was already deleted.",
+            _ => "Role menu and saved configuration deleted."
+        };
+
+    internal static string FormatTerminalPublication(RoleMenuPublicationStatus status)
+        => status switch
+        {
+            RoleMenuPublicationStatus.PanelOutcomeUnknown =>
+                "Discord reported an error while publishing, and Bean Bot could not confirm " +
+                "whether a panel was created. Automatic retry was disabled to prevent a duplicate. " +
+                "Check the target channel and remove any orphaned panel before running " +
+                "`/role-menu create` again.",
+            RoleMenuPublicationStatus.PersistenceAbsentRollbackFailed =>
+                "Bean Bot confirmed the settings were not saved but could not remove the panel. " +
+                "Automatic retry was disabled to prevent a duplicate. Delete that orphaned panel " +
+                "manually before running `/role-menu create` again.",
+            _ =>
+                "Bean Bot could not confirm whether MongoDB saved this panel. The public panel was " +
+                "left in place to avoid deleting a possibly committed menu, and automatic retry " +
+                "was disabled to prevent a duplicate. Inspect the target channel before running " +
+                "`/role-menu create` again."
+        };
 }

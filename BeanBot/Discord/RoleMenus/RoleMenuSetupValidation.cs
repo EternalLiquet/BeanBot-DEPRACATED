@@ -16,8 +16,8 @@ namespace BeanBot.Discord.RoleMenus;
 internal static class RoleMenuSetupValidation
 {
     internal static bool TryParseAndValidateModal(
-        RoleMenuCreateModal modal,
-        SocketGuild guild,
+        RoleMenuCreateRequest request,
+        ulong guildId,
         IGuildUser administrator,
         IGuildUser bot,
         string title,
@@ -45,22 +45,22 @@ internal static class RoleMenuSetupValidation
             return false;
         }
 
-        if (!TryParseSelectionMode(modal.SelectionMode, out selectionMode))
+        if (!TryParseSelectionMode(request.SelectionMode, out selectionMode))
         {
             validationMessage = "Choose either single-selection or multiple-selection mode.";
             return false;
         }
 
-        if (modal.TargetChannel is null
-            || modal.TargetChannel.GuildId != guild.Id
-            || modal.TargetChannel.ChannelType != ChannelType.Text)
+        if (request.TargetChannelId is null
+            || request.TargetChannelGuildId != guildId
+            || request.TargetChannelType != ChannelType.Text)
         {
             validationMessage = "Choose a normal text channel from this server.";
             return false;
         }
 
-        targetChannelId = modal.TargetChannel.Id;
-        if (modal.Roles is not { Length: >= 1 and <= RoleMenuConstants.MaximumRoles })
+        targetChannelId = request.TargetChannelId.Value;
+        if (request.RoleIds is not { Count: >= 1 and <= RoleMenuConstants.MaximumRoles })
         {
             validationMessage =
                 $"Choose between 1 and {RoleMenuConstants.MaximumRoles} roles.";
@@ -68,7 +68,7 @@ internal static class RoleMenuSetupValidation
         }
 
         roleValidation = ValidateRoles(
-            modal.Roles.Select(role => role.Id).ToList(),
+            request.RoleIds,
             administrator,
             bot);
         if (!roleValidation.IsValid)

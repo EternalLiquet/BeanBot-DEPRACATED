@@ -18,30 +18,38 @@ public class RoleMenuInteractionServiceTests
             (_, _, _) => Task.FromResult<global::Discord.IGuildUser?>(null),
             (_, _) => Task.FromResult<global::Discord.IChannel?>(null));
 
+        var administration = new RoleMenuAdministrationService(
+            fixture.Service, discord, NullLogger<RoleMenuAdministrationService>.Instance);
+        var members = new RoleMenuMemberService(
+            fixture.Service, discord, NullLogger<RoleMenuMemberService>.Instance);
+
         Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
             null!,
             discord,
+            administration,
             NullLogger<RoleMenuAdminModule>.Instance));
         Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
             fixture.Service,
             discord,
+            administration,
             null!));
         _ = new RoleMenuAdminModule(
             fixture.Service,
             discord,
+            administration,
             NullLogger<RoleMenuAdminModule>.Instance);
 
         Assert.Throws<ArgumentNullException>(() => new RoleMenuMemberModule(
             null!,
-            discord,
+            members,
             NullLogger<RoleMenuMemberModule>.Instance));
         Assert.Throws<ArgumentNullException>(() => new RoleMenuMemberModule(
             fixture.Service,
-            discord,
+            members,
             null!));
         _ = new RoleMenuMemberModule(
             fixture.Service,
-            discord,
+            members,
             NullLogger<RoleMenuMemberModule>.Instance);
     }
 
