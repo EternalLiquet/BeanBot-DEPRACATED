@@ -109,13 +109,14 @@ public class RoleMenuAuditServiceTests
     }
 
     [Theory]
-    [InlineData(RoleMenuRoleIssueKind.Managed, "managed")]
-    [InlineData(RoleMenuRoleIssueKind.BotHierarchy, "highest role")]
-    [InlineData(RoleMenuRoleIssueKind.BotMissingManageRoles, "Manage Roles")]
+    [InlineData((int)RoleMenuRoleIssueKind.Managed, "managed")]
+    [InlineData((int)RoleMenuRoleIssueKind.BotHierarchy, "highest role")]
+    [InlineData((int)RoleMenuRoleIssueKind.BotMissingManageRoles, "Manage Roles")]
     public async Task AuditSpecific_UnassignableRoleState_IsBroken(
-        RoleMenuRoleIssueKind issueKind,
+        int issueKindValue,
         string expectedReason)
     {
+        var issueKind = (RoleMenuRoleIssueKind)issueKindValue;
         var fixture = new Fixture
         {
             RoleValidation = new RoleMenuRoleValidationResult(
