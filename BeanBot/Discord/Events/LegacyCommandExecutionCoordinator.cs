@@ -2,22 +2,20 @@ namespace BeanBot.Discord.Events;
 
 internal enum LegacyCommandAdmissionResult
 {
-    Executed,
+    Admitted,
     RejectedStopping,
     RejectedCapacity
 }
 
-internal readonly record struct LegacyCommandDrainResult(
-    bool IsDrained,
-    int SurvivingExecutionCount);
+internal readonly record struct LegacyCommandDrainResult(bool IsDrained, int SurvivingExecutionCount);
 
 internal sealed class LegacyCommandExecutionCoordinator
 {
     internal const int DefaultMaximumConcurrentExecutions = 16;
     internal static readonly TimeSpan DefaultDrainTimeout = TimeSpan.FromSeconds(5);
-
     private readonly object _gate = new();
-    private readonly HashSet<TrackedExecution> _activeExecutions = [];
+    private readonly HashSet<Task> _activeExecutions = [];
+    private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly int _maximumConcurrentExecutions;
     private readonly TimeSpan _drainTimeout;
     private bool _stopping;
@@ -27,25 +25,18 @@ internal sealed class LegacyCommandExecutionCoordinator
         TimeSpan? drainTimeout = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumConcurrentExecutions);
-
         _maximumConcurrentExecutions = maximumConcurrentExecutions;
         _drainTimeout = drainTimeout ?? DefaultDrainTimeout;
-        if (_drainTimeout <= TimeSpan.Zero)
-        {
-            throw new ArgumentOutOfRangeException(nameof(drainTimeout));
-        }
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(_drainTimeout, TimeSpan.Zero);
     }
 
     internal int MaximumConcurrentExecutions => _maximumConcurrentExecutions;
-
+    internal Task WhenDrained => _drained.Task;
     internal int ActiveExecutionCount
     {
         get
         {
-            lock (_gate)
-            {
-                return _activeExecutions.Count;
-            }
+            lock (_gate) { return _activeExecutions.Count; }
         }
     }
 
@@ -53,43 +44,39 @@ internal sealed class LegacyCommandExecutionCoordinator
     {
         get
         {
-            lock (_gate)
-            {
-                return _stopping;
-            }
+            lock (_gate) { return _stopping; }
         }
     }
 
-    internal async Task<LegacyCommandAdmissionResult> TryExecuteAsync(Func<Task> execute)
+    internal LegacyCommandAdmissionResult TryStart(
+        Func<Task> execute,
+        Action<Exception> reportFailure,
+        out Task completion)
     {
         ArgumentNullException.ThrowIfNull(execute);
-
-        TrackedExecution trackedExecution;
-        TaskCompletionSource<Func<Task>> startSource;
+        ArgumentNullException.ThrowIfNull(reportFailure);
+        TaskCompletionSource start;
         lock (_gate)
         {
+            completion = Task.CompletedTask;
             if (_stopping)
             {
                 return LegacyCommandAdmissionResult.RejectedStopping;
             }
-
             if (_activeExecutions.Count >= _maximumConcurrentExecutions)
             {
                 return LegacyCommandAdmissionResult.RejectedCapacity;
             }
 
-            trackedExecution = new TrackedExecution();
-            startSource = new TaskCompletionSource<Func<Task>>(
-                TaskCreationOptions.RunContinuationsAsynchronously);
-            trackedExecution.ExecutionTask = RunTrackedExecutionAsync(
-                trackedExecution,
-                startSource.Task);
-            _activeExecutions.Add(trackedExecution);
+            start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            completion = RunAsync(start.Task, execute, reportFailure);
+            _activeExecutions.Add(completion);
+            _ = completion.ContinueWith(CompleteExecution, CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
 
-        startSource.TrySetResult(execute);
-        await trackedExecution.ExecutionTask.ConfigureAwait(false);
-        return LegacyCommandAdmissionResult.Executed;
+        start.SetResult();
+        return LegacyCommandAdmissionResult.Admitted;
     }
 
     internal void StopAdmission()
@@ -97,95 +84,65 @@ internal sealed class LegacyCommandExecutionCoordinator
         lock (_gate)
         {
             _stopping = true;
+            if (_activeExecutions.Count == 0)
+            {
+                _drained.TrySetResult();
+            }
         }
     }
 
-    internal async Task<LegacyCommandDrainResult> DrainAsync(Action<Exception> lateFailureObserver)
+    internal async Task<LegacyCommandDrainResult> DrainAsync()
     {
-        ArgumentNullException.ThrowIfNull(lateFailureObserver);
-
-        TrackedExecution[] snapshot;
-        lock (_gate)
-        {
-            _stopping = true;
-            snapshot = [.. _activeExecutions];
-        }
-
-        if (snapshot.Length == 0)
-        {
-            return new LegacyCommandDrainResult(true, 0);
-        }
-
-        var completionTasks = snapshot
-            .Select(static execution => ObserveCompletionAsync(execution.ExecutionTask))
-            .ToArray();
-
+        StopAdmission();
         try
         {
-            await Task.WhenAll(completionTasks)
-                .WaitAsync(_drainTimeout)
-                .ConfigureAwait(false);
+            await WhenDrained.WaitAsync(_drainTimeout).ConfigureAwait(false);
             return new LegacyCommandDrainResult(true, 0);
         }
         catch (TimeoutException)
         {
-            TrackedExecution[] survivors;
             lock (_gate)
             {
-                survivors = [.. _activeExecutions];
+                return new LegacyCommandDrainResult(_activeExecutions.Count == 0, _activeExecutions.Count);
             }
-
-            if (survivors.Length == 0)
-            {
-                return new LegacyCommandDrainResult(true, 0);
-            }
-
-            foreach (var survivor in survivors)
-            {
-                _ = survivor.ExecutionTask.ContinueWith(
-                    static (completedTask, state) =>
-                    {
-                        var observer = (Action<Exception>)state!;
-                        observer(completedTask.Exception!.GetBaseException());
-                    },
-                    lateFailureObserver,
-                    CancellationToken.None,
-                    TaskContinuationOptions.OnlyOnFaulted |
-                    TaskContinuationOptions.ExecuteSynchronously,
-                    TaskScheduler.Default);
-            }
-
-            return new LegacyCommandDrainResult(false, survivors.Length);
         }
     }
 
-    private async Task RunTrackedExecutionAsync(
-        TrackedExecution trackedExecution,
-        Task<Func<Task>> startTask)
+    private static async Task RunAsync(Task start, Func<Task> execute, Action<Exception> reportFailure)
     {
+        await start.ConfigureAwait(false);
         try
         {
-            var execute = await startTask.ConfigureAwait(false);
             await execute().ConfigureAwait(false);
         }
-        finally
+        catch (OperationCanceledException)
         {
-            lock (_gate)
+            throw;
+        }
+        catch (Exception exception)
+        {
+            try
             {
-                _activeExecutions.Remove(trackedExecution);
+                reportFailure(exception);
             }
+            catch (Exception)
+            {
+                // Reporting must not replace the original failure or create an unowned fault.
+            }
+            throw;
         }
     }
 
-    private static Task<AggregateException?> ObserveCompletionAsync(Task executionTask)
-        => executionTask.ContinueWith(
-            static completedTask => completedTask.Exception,
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-
-    private sealed class TrackedExecution
+    private void CompleteExecution(Task completion)
     {
-        public Task ExecutionTask { get; set; } = Task.CompletedTask;
+        _ = completion.Exception;
+        lock (_gate)
+        {
+            _activeExecutions.Remove(completion);
+            if (_stopping && _activeExecutions.Count == 0)
+            {
+                _drained.TrySetResult();
+            }
+        }
     }
 }

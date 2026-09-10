@@ -27,6 +27,6 @@ internal static partial class LegacyCommandLog
 
     [LoggerMessage(
         Level = LogLevel.Error,
-        Message = "A legacy command failed after the bounded command-drain wait ended")]
+        Message = "An owned legacy command execution failed")]
     internal static partial void LateFailure(ILogger logger, Exception exception);
 }
