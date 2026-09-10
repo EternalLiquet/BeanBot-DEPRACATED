@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using BeanBot.Discord.RoleMenus;
 using BeanBot.Persistence.Models;
@@ -79,7 +80,7 @@ public class RoleMenuAuditServiceTests
         fixture.PanelFactory = settings => new RoleMenuPanelSnapshot(
             Fixture.GuildId,
             Fixture.ChannelId,
-            ulong.Parse(settings.MessageId),
+            ulong.Parse(settings.MessageId, CultureInfo.InvariantCulture),
             999UL,
             true);
 
@@ -293,21 +294,22 @@ public class RoleMenuAuditServiceTests
             PanelFactory = settings => new RoleMenuPanelSnapshot(
                 GuildId,
                 ChannelId,
-                ulong.Parse(settings.MessageId),
+                ulong.Parse(settings.MessageId, CultureInfo.InvariantCulture),
                 BotId,
                 true);
             SettingsReader = (menuId, guildId, cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 return Task.FromResult<RoleMenuSettings?>(
-                    Settings.FirstOrDefault(item => item.Id == menuId && item.GuildId == guildId.ToString()));
+                    Settings.FirstOrDefault(item => item.Id == menuId
+                        && item.GuildId == guildId.ToString(CultureInfo.InvariantCulture)));
             };
             GuildSettingsReader = (guildId, maximumResults, cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 RequestedGuildLimit = maximumResults;
                 return Task.FromResult<IReadOnlyList<RoleMenuSettings>>(
-                    Settings.Where(item => item.GuildId == guildId.ToString())
+                    Settings.Where(item => item.GuildId == guildId.ToString(CultureInfo.InvariantCulture))
                         .Take(maximumResults)
                         .ToList());
             };
@@ -315,7 +317,7 @@ public class RoleMenuAuditServiceTests
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 ChannelReads++;
-                return Task.FromResult(Channel);
+                return Task.FromResult<ITextChannel?>(Channel);
             };
 
             Service = new RoleMenuAuditService(new RoleMenuAuditOperations(
@@ -338,7 +340,7 @@ public class RoleMenuAuditServiceTests
                     cancellationToken.ThrowIfCancellationRequested();
                     PanelReads++;
                     var settings = Settings.Single(item => item.Id == menuId);
-                    Assert.Equal(ulong.Parse(settings.MessageId), messageId);
+                    Assert.Equal(ulong.Parse(settings.MessageId, CultureInfo.InvariantCulture), messageId);
                     return Task.FromResult(PanelFactory(settings));
                 }));
         }
@@ -368,9 +370,9 @@ public class RoleMenuAuditServiceTests
         private static RoleMenuSettings CreateSettings(ulong messageId)
             => new(
                 ObjectId.GenerateNewId(),
-                GuildId.ToString(),
-                ChannelId.ToString(),
-                messageId.ToString(),
+                GuildId.ToString(CultureInfo.InvariantCulture),
+                ChannelId.ToString(CultureInfo.InvariantCulture),
+                messageId.ToString(CultureInfo.InvariantCulture),
                 "Roles",
                 string.Empty,
                 ["10"],
