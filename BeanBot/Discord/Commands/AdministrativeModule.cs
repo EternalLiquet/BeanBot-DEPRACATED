@@ -27,20 +27,20 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
 
     private const int MaximumRolesPerGroup = 25;
     private static readonly TimeSpan InteractionTimeout = TimeSpan.FromSeconds(60);
-    private readonly RoleReactService _roleReactService;
+    private readonly ReactionRoleService _reactionRoleService;
     private readonly DiscordMessageCleanupService _messageCleanupService;
     private readonly DiscordMessageWaiter _messageWaiter;
     private readonly LegacyCommandReplySender _replySender;
     private readonly ILogger<AdministrativeModule> _logger;
 
     public AdministrativeModule(
-        RoleReactService roleReactService,
+        ReactionRoleService reactionRoleService,
         DiscordMessageCleanupService messageCleanupService,
         DiscordMessageWaiter messageWaiter,
         LegacyCommandReplySender replySender,
         ILogger<AdministrativeModule> logger)
     {
-        _roleReactService = roleReactService ?? throw new ArgumentNullException(nameof(roleReactService));
+        _reactionRoleService = reactionRoleService ?? throw new ArgumentNullException(nameof(reactionRoleService));
         _messageCleanupService = messageCleanupService ?? throw new ArgumentNullException(nameof(messageCleanupService));
         _messageWaiter = messageWaiter ?? throw new ArgumentNullException(nameof(messageWaiter));
         _replySender = replySender ?? throw new ArgumentNullException(nameof(replySender));
@@ -134,7 +134,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
                 async messageToListen =>
                 {
                     await AddRoleReactionsAsync(messageToListen, roleEmotePairs);
-                    await _roleReactService.SaveRoleSettings(roleEmotePairs, messageToListen);
+                    await _reactionRoleService.SaveRoleSettings(roleEmotePairs, messageToListen);
                 },
                 messageToListen => messageToListen.DeleteAsync(),
                 exception => BeanBotLog.IncompleteReactionRoleCleanupFailed(_logger, exception));

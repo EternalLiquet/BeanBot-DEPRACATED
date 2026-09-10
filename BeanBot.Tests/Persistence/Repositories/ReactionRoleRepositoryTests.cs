@@ -1,0 +1,183 @@
+using BeanBot.Persistence.Models;
+using BeanBot.Persistence.Repositories;
+
+using Microsoft.Extensions.Logging.Abstractions;
+
+using Xunit;
+
+namespace BeanBot.Tests.Persistence.Repositories;
+
+public class ReactionRoleRepositoryTests
+{
+    [Fact]
+    public async Task GetRoleSetting_ReturnsMatchingSetting()
+    {
+        var expected = CreateRoleSettings("42");
+        var store = new FakeReactionRoleSettingsStore
+        {
+            GetByMessageId = (messageId, _) =>
+            {
+                Assert.Equal("42", messageId);
+                return Task.FromResult<ReactionRoleSettings?>(expected);
+            }
+        };
+        var repository = CreateRepository(store);
+
+        var actual = await repository.GetRoleSetting(42UL);
+
+        Assert.Same(expected, actual);
+    }
+
+    [Fact]
+    public async Task GetRoleSetting_ReturnsNullWhenSettingDoesNotExist()
+    {
+        var repository = CreateRepository(new FakeReactionRoleSettingsStore());
+
+        var actual = await repository.GetRoleSetting(42UL);
+
+        Assert.Null(actual);
+    }
+
+    [Fact]
+    public async Task GetRoleSetting_PropagatesInfrastructureFailure()
+    {
+        var expected = new InvalidOperationException("database unavailable");
+        var store = new FakeReactionRoleSettingsStore
+        {
+            GetByMessageId = (_, _) => Task.FromException<ReactionRoleSettings?>(expected)
+        };
+        var repository = CreateRepository(store);
+
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => repository.GetRoleSetting(42UL));
+
+        Assert.Same(expected, actual);
+    }
+
+    [Fact]
+    public async Task GetRecentRoleSettings_PassesCancellationTokenToStore()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var store = new FakeReactionRoleSettingsStore
+        {
+            GetRecent = async (_, _, cancellationToken) =>
+            {
+                Assert.Equal(cancellation.Token, cancellationToken);
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return [];
+            }
+        };
+        var repository = CreateRepository(store);
+        var read = repository.GetRecentRoleSettings(10, cancellation.Token);
+        cancellation.Cancel();
+
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => read);
+
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
+    }
+
+    [Fact]
+    public async Task GetRecentRoleSettings_UsesThirtyDayUtcCutoffAndRequestedLimit()
+    {
+        DateTime? observedCutoff = null;
+        int? observedLimit = null;
+        var beforeRead = DateTime.UtcNow.AddDays(-30);
+        var store = new FakeReactionRoleSettingsStore
+        {
+            GetRecent = (oldestLastAccessedUtc, limit, _) =>
+            {
+                observedCutoff = oldestLastAccessedUtc;
+                observedLimit = limit;
+                return Task.FromResult(new List<ReactionRoleSettings>());
+            }
+        };
+        var repository = CreateRepository(store);
+
+        await repository.GetRecentRoleSettings(17);
+        var afterRead = DateTime.UtcNow.AddDays(-30);
+
+        var cutoff = Assert.IsType<DateTime>(observedCutoff);
+        Assert.Equal(DateTimeKind.Utc, cutoff.Kind);
+        Assert.InRange(cutoff, beforeRead, afterRead);
+        Assert.Equal(17, observedLimit);
+    }
+
+    [Fact]
+    public async Task GetRecentRoleSettings_RejectsNonPositiveLimit()
+    {
+        var repository = CreateRepository(new FakeReactionRoleSettingsStore());
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => repository.GetRecentRoleSettings(0));
+    }
+
+    [Fact]
+    public async Task InsertNewRoleSettings_UpdatesLastAccessedAndPassesCancellationToken()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var settings = CreateRoleSettings("42");
+        var beforeInsert = DateTime.UtcNow;
+        var store = new FakeReactionRoleSettingsStore
+        {
+            Insert = (actual, cancellationToken) =>
+            {
+                Assert.Same(settings, actual);
+                Assert.Equal(cancellation.Token, cancellationToken);
+                return Task.CompletedTask;
+            }
+        };
+        var repository = CreateRepository(store);
+
+        await repository.InsertNewRoleSettings(settings, cancellation.Token);
+
+        Assert.Equal(DateTimeKind.Utc, settings.LastAccessedUtc.Kind);
+        Assert.InRange(settings.LastAccessedUtc, beforeInsert, DateTime.UtcNow);
+    }
+
+    [Fact]
+    public async Task InsertNewRoleSettings_PropagatesInfrastructureFailure()
+    {
+        var expected = new InvalidOperationException("database unavailable");
+        var store = new FakeReactionRoleSettingsStore
+        {
+            Insert = (_, _) => Task.FromException(expected)
+        };
+        var repository = CreateRepository(store);
+
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => repository.InsertNewRoleSettings(CreateRoleSettings("42")));
+
+        Assert.Same(expected, actual);
+    }
+
+    private static ReactionRoleRepository CreateRepository(IReactionRoleSettingsStore store)
+        => new(store, NullLogger<ReactionRoleRepository>.Instance);
+
+    private static ReactionRoleSettings CreateRoleSettings(string messageId)
+        => new([], "1", "2", messageId);
+
+    private sealed class FakeReactionRoleSettingsStore : IReactionRoleSettingsStore
+    {
+        public Func<ReactionRoleSettings, CancellationToken, Task> Insert { get; set; }
+            = (_, _) => Task.CompletedTask;
+        public Func<DateTime, int, CancellationToken, Task<List<ReactionRoleSettings>>> GetRecent { get; set; }
+            = (_, _, _) => Task.FromResult(new List<ReactionRoleSettings>());
+        public Func<string, CancellationToken, Task<ReactionRoleSettings?>> GetByMessageId { get; set; }
+            = (_, _) => Task.FromResult<ReactionRoleSettings?>(null);
+
+        public Task InsertAsync(ReactionRoleSettings roleSettings, CancellationToken cancellationToken)
+            => Insert(roleSettings, cancellationToken);
+
+        public Task<List<ReactionRoleSettings>> GetRecentAsync(
+            DateTime oldestLastAccessedUtc,
+            int limit,
+            CancellationToken cancellationToken)
+            => GetRecent(oldestLastAccessedUtc, limit, cancellationToken);
+
+        public Task<ReactionRoleSettings?> GetByMessageIdAsync(
+            string messageId,
+            CancellationToken cancellationToken)
+            => GetByMessageId(messageId, cancellationToken);
+    }
+}

@@ -1,6 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
-using BeanBot.Discord.Commands;
 using BeanBot.Discord.Interactions;
+using BeanBot.Discord.Puns;
 using Xunit;
 
 namespace BeanBot.Tests.Discord.Interactions;

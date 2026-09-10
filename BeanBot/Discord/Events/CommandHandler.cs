@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using BeanBot.Discord;
 using BeanBot.Discord.Commands;
+using BeanBot.Discord.Fortunes;
 using BeanBot.Discord.Messaging;
 using BeanBot.Logging;
 using Discord.Commands;

@@ -41,12 +41,12 @@ public class ResponsibilityNamespaceTests
             (typeof(CommandHandler), "BeanBot.Discord.Events"),
             (typeof(DiscordStartupService), "BeanBot.Discord.Lifecycle"),
             (typeof(DiscordPaginatorService), "BeanBot.Discord.Messaging"),
-            (typeof(RoleReactService), "BeanBot.Discord.ReactionRoles"),
+            (typeof(ReactionRoleService), "BeanBot.Discord.ReactionRoles"),
             (typeof(HealthCheckServer), "BeanBot.Health"),
             (typeof(LogHandler), "BeanBot.Logging"),
-            (typeof(RoleSettings), "BeanBot.Persistence.Models"),
+            (typeof(ReactionRoleSettings), "BeanBot.Persistence.Models"),
             (typeof(DiscordOutageStore), "BeanBot.Persistence.Outages"),
-            (typeof(RoleReactRepository), "BeanBot.Persistence.Repositories")
+            (typeof(ReactionRoleRepository), "BeanBot.Persistence.Repositories")
         };
 
         foreach (var (type, expectedNamespace) in representativeTypes)

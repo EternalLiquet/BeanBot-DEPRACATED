@@ -1,8 +1,11 @@
 using BeanBot.Configuration;
 using BeanBot.Discord.Commands;
 using BeanBot.Discord.Events;
+using BeanBot.Discord.Fortunes;
 using BeanBot.Discord.Lifecycle;
+using BeanBot.Discord.Media;
 using BeanBot.Discord.Messaging;
+using BeanBot.Discord.Puns;
 using BeanBot.Discord.ReactionRoles;
 using BeanBot.Health;
 using BeanBot.Logging;
@@ -143,16 +146,16 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<NewMemberWelcomeService>();
         services.AddSingleton<DiscordMessageWaiter>();
         services.AddSingleton<DiscordPaginatorService>();
-        services.AddSingleton<EditMessageEventServices>();
-        services.AddSingleton<RoleReactRepository>();
-        services.AddSingleton<RoleReactService>();
+        services.AddSingleton<FortuneResponseEditService>();
+        services.AddSingleton<ReactionRoleRepository>();
+        services.AddSingleton<ReactionRoleService>();
         services.AddSingleton<DiscordMessageCleanupService>();
 
         services.AddSingleton<CommandHandler>();
-        services.AddSingleton<PunHandler>();
-        services.AddSingleton<EditMessageHandler>();
+        services.AddSingleton<DailyPunService>();
+        services.AddSingleton<FortuneMessageEditHandler>();
         services.AddSingleton<NewMemberHandler>();
-        services.AddSingleton<ReactHandler>();
+        services.AddSingleton<ReactionRoleHandler>();
         services.AddSingleton<HealthCheckServer>(provider => new HealthCheckServer(
             provider.GetRequiredService<BeanBotOptions>().HealthCheck,
             provider.GetRequiredService<DiscordSocketClient>(),
