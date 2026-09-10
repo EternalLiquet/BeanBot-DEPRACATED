@@ -12,6 +12,10 @@ namespace BeanBot.Discord.Commands;
 [Name("Meme Commands")]
 public class MemeModule : ModuleBase<SocketCommandContext>
 {
+    internal const string ExternalMediaBudgetKey = "external-media";
+    private const string ExternalMediaAdmissionRejectedMessage =
+        "That command is cooling down; try again in a few seconds.";
+
     private readonly BeanBotOptions _options;
     private readonly FortuneAnswerStore _fortuneAnswers;
     private readonly DiscordPaginatorService _paginator;
@@ -19,6 +23,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     private readonly IExternalImageClient _externalImageClient;
     private readonly IMemeProvider _memeProvider;
     private readonly ExternalMediaCommandOptions _mediaOptions;
+    private readonly ExternalMediaAdmissionGuard _mediaAdmissionGuard;
     private readonly IHostApplicationLifetime _applicationLifetime;
     private readonly LegacyCommandReplySender _replySender;
     private readonly ILogger<MemeModule> _logger;
@@ -31,6 +36,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         IExternalImageClient externalImageClient,
         IMemeProvider memeProvider,
         ExternalMediaCommandOptions mediaOptions,
+        ExternalMediaAdmissionGuard mediaAdmissionGuard,
         IHostApplicationLifetime applicationLifetime,
         LegacyCommandReplySender replySender,
         ILogger<MemeModule> logger)
@@ -42,6 +48,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         _externalImageClient = externalImageClient ?? throw new ArgumentNullException(nameof(externalImageClient));
         _memeProvider = memeProvider ?? throw new ArgumentNullException(nameof(memeProvider));
         _mediaOptions = mediaOptions ?? throw new ArgumentNullException(nameof(mediaOptions));
+        _mediaAdmissionGuard = mediaAdmissionGuard ?? throw new ArgumentNullException(nameof(mediaAdmissionGuard));
         _applicationLifetime = applicationLifetime ?? throw new ArgumentNullException(nameof(applicationLifetime));
         _replySender = replySender ?? throw new ArgumentNullException(nameof(replySender));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -117,7 +124,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [RequireBotPermission(ChannelPermission.AttachFiles)]
     public async Task Toes()
     {
-        await SendImageFromUrl(_options.HatoeteImageUrl);
+        await RunExternalMediaCommandAsync(() => SendImageFromUrl(_options.HatoeteImageUrl));
     }
 
     [Command("yoshimaru")]
@@ -127,7 +134,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [RequireBotPermission(ChannelPermission.AttachFiles)]
     public async Task YoshiMaru()
     {
-        await SendImageFromUrl(_options.YoshimaruImageUrl);
+        await RunExternalMediaCommandAsync(() => SendImageFromUrl(_options.YoshimaruImageUrl));
     }
 
     [Command("echo")]
@@ -170,7 +177,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [RequireBotPermission(ChannelPermission.SendMessages)]
     public async Task Meme(string subreddit = "")
     {
-        await InvokeMemeApi(subreddit);
+        await RunExternalMediaCommandAsync(() => InvokeMemeApi(subreddit));
     }
 
     private async Task InvokeMemeApi(string subreddit)
@@ -352,6 +359,23 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         return (Context.Message.Author.Id == 262010462323998720);
     }
 
+    private async Task RunExternalMediaCommandAsync(Func<Task> operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+
+        var result = await _mediaAdmissionGuard.RunAsync(
+            Context.Message.Author.Id,
+            ExternalMediaBudgetKey,
+            operation);
+        if (result == ExternalMediaAdmissionResult.Accepted)
+        {
+            return;
+        }
+
+        var rejection = CreateExternalMediaAdmissionReply();
+        await _replySender.SendMessageAsync(Context, rejection.Content, allowedMentions: rejection.AllowedMentions);
+    }
+
     private async Task SendImageFromUrl(Uri url)
     {
         var cancellationToken = _applicationLifetime.ApplicationStopping;
@@ -434,6 +458,9 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         ArgumentNullException.ThrowIfNull(content);
         return (content, AllowedMentions.None);
     }
+
+    internal static (string Content, AllowedMentions AllowedMentions) CreateExternalMediaAdmissionReply()
+        => (ExternalMediaAdmissionRejectedMessage, AllowedMentions.None);
 
     private Task<IUserMessage> ReplyWithReflectedContentAsync(string content)
     {
