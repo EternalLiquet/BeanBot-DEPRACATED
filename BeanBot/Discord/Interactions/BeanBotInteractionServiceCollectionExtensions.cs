@@ -27,6 +27,7 @@ internal static class BeanBotInteractionServiceCollectionExtensions
             provider.GetRequiredService<RoleMenuDraftRegistry>(),
             provider.GetRequiredService<RoleMenuMutationCoordinator>(),
             provider.GetRequiredService<InteractionExecutionContext>()));
+        services.AddSingleton<DiscordRoleMenuClient>();
         services.AddSingleton<InteractionHandler>();
         services.AddSingleton<BeanBotInteractionHostedService>();
         services.AddSingleton<IHostedService>(provider =>

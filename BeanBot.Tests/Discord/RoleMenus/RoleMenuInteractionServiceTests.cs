@@ -14,25 +14,34 @@ public class RoleMenuInteractionServiceTests
     public void ModuleConstructors_RequireFacadeAndLogger()
     {
         var fixture = CreateFixture();
+        var discord = new DiscordRoleMenuClient(
+            (_, _, _) => Task.FromResult<global::Discord.IGuildUser?>(null),
+            (_, _) => Task.FromResult<global::Discord.IChannel?>(null));
 
         Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
             null!,
+            discord,
             NullLogger<RoleMenuAdminModule>.Instance));
         Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
             fixture.Service,
+            discord,
             null!));
         _ = new RoleMenuAdminModule(
             fixture.Service,
+            discord,
             NullLogger<RoleMenuAdminModule>.Instance);
 
         Assert.Throws<ArgumentNullException>(() => new RoleMenuMemberModule(
             null!,
+            discord,
             NullLogger<RoleMenuMemberModule>.Instance));
         Assert.Throws<ArgumentNullException>(() => new RoleMenuMemberModule(
             fixture.Service,
+            discord,
             null!));
         _ = new RoleMenuMemberModule(
             fixture.Service,
+            discord,
             NullLogger<RoleMenuMemberModule>.Instance);
     }
 

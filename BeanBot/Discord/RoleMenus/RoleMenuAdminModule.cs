@@ -10,6 +10,10 @@ using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 
+using static BeanBot.Discord.RoleMenus.DiscordRoleMenuClient;
+using static BeanBot.Discord.RoleMenus.RoleMenuPresentation;
+using static BeanBot.Discord.RoleMenus.RoleMenuSetupValidation;
+
 namespace BeanBot.Discord.RoleMenus;
 
 [Group("role-menu", "Create and remove self-assignable role menus.")]
@@ -20,13 +24,16 @@ namespace BeanBot.Discord.RoleMenus;
 public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractionContext>
 {
     private readonly RoleMenuInteractionService _roleMenuService;
+    private readonly DiscordRoleMenuClient _discord;
     private readonly ILogger<RoleMenuAdminModule> _logger;
 
     public RoleMenuAdminModule(
         RoleMenuInteractionService roleMenuService,
+        DiscordRoleMenuClient discord,
         ILogger<RoleMenuAdminModule> logger)
     {
         _roleMenuService = roleMenuService ?? throw new ArgumentNullException(nameof(roleMenuService));
+        _discord = discord ?? throw new ArgumentNullException(nameof(discord));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -73,11 +80,11 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
             return;
         }
 
-        var currentAdministrator = await GetGuildUserAsync(
+        var currentAdministrator = await _discord.GetGuildUserAsync(
             guild.Id,
             administrator.Id,
             requestOptions);
-        var currentBot = await GetGuildUserAsync(guild.Id, bot.Id, requestOptions);
+        var currentBot = await _discord.GetGuildUserAsync(guild.Id, bot.Id, requestOptions);
         if (currentAdministrator is null || currentBot is null)
         {
             await ReplaceResponseAsync(
@@ -104,7 +111,7 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
             return;
         }
 
-        var targetChannel = await GetGuildTextChannelAsync(
+        var targetChannel = await _discord.GetGuildTextChannelAsync(
             guild.Id,
             targetChannelId,
             requestOptions);
@@ -206,11 +213,11 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
                 return;
             }
 
-            var currentAdministrator = await GetGuildUserAsync(
+            var currentAdministrator = await _discord.GetGuildUserAsync(
                 guild.Id,
                 administrator.Id,
                 requestOptions);
-            var currentBot = await GetGuildUserAsync(guild.Id, bot.Id, requestOptions);
+            var currentBot = await _discord.GetGuildUserAsync(guild.Id, bot.Id, requestOptions);
             if (currentAdministrator is null || currentBot is null)
             {
                 await RestorePreviewAsync(
@@ -236,7 +243,7 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
                 return;
             }
 
-            var targetChannel = await GetGuildTextChannelAsync(
+            var targetChannel = await _discord.GetGuildTextChannelAsync(
                 guild.Id,
                 draft.TargetChannelId,
                 requestOptions);
@@ -643,49 +650,6 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
             cancellation.Token);
     }
 
-    private static RequestOptions CreateRequestOptions(CancellationToken cancellationToken)
-        => new() { CancelToken = cancellationToken };
-
-    private async Task<IGuildUser?> GetGuildUserAsync(
-        ulong guildId,
-        ulong userId,
-        RequestOptions requestOptions)
-    {
-        try
-        {
-            return await Context.Client.Rest.GetGuildUserAsync(
-                guildId,
-                userId,
-                requestOptions);
-        }
-        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
-        {
-            return null;
-        }
-    }
-
-    private async Task<ITextChannel?> GetGuildTextChannelAsync(
-        ulong guildId,
-        ulong channelId,
-        RequestOptions requestOptions)
-    {
-        try
-        {
-            var channel = await Context.Client.Rest.GetChannelAsync(
-                channelId,
-                requestOptions);
-            return channel is ITextChannel textChannel
-                   && textChannel.GuildId == guildId
-                   && textChannel.ChannelType == ChannelType.Text
-                ? textChannel
-                : null;
-        }
-        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
-        {
-            return null;
-        }
-    }
-
     private bool TryGetGuildActors(
         out SocketGuild guild,
         out IGuildUser administrator,
@@ -695,197 +659,6 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         administrator = (Context.User as IGuildUser)!;
         bot = Context.Guild?.CurrentUser!;
         return guild is not null && administrator is not null && bot is not null;
-    }
-
-    private static bool TryParseAndValidateModal(
-        RoleMenuCreateModal modal,
-        SocketGuild guild,
-        IGuildUser administrator,
-        IGuildUser bot,
-        string title,
-        string description,
-        out ulong targetChannelId,
-        out RoleMenuSelectionMode selectionMode,
-        [NotNullWhen(true)] out RoleMenuRoleValidationResult? roleValidation,
-        out string validationMessage)
-    {
-        targetChannelId = 0;
-        selectionMode = default;
-        roleValidation = null;
-        if (string.IsNullOrWhiteSpace(title)
-            || title.Length > RoleMenuConstants.MaximumTitleLength)
-        {
-            validationMessage =
-                $"The panel title must be 1–{RoleMenuConstants.MaximumTitleLength} characters.";
-            return false;
-        }
-
-        if (description.Length > RoleMenuConstants.MaximumDescriptionLength)
-        {
-            validationMessage =
-                $"The description cannot exceed {RoleMenuConstants.MaximumDescriptionLength} characters.";
-            return false;
-        }
-
-        if (!TryParseSelectionMode(modal.SelectionMode, out selectionMode))
-        {
-            validationMessage = "Choose either single-selection or multiple-selection mode.";
-            return false;
-        }
-
-        if (modal.TargetChannel is null
-            || modal.TargetChannel.GuildId != guild.Id
-            || modal.TargetChannel.ChannelType != ChannelType.Text)
-        {
-            validationMessage = "Choose a normal text channel from this server.";
-            return false;
-        }
-
-        targetChannelId = modal.TargetChannel.Id;
-        if (modal.Roles is not { Length: >= 1 and <= RoleMenuConstants.MaximumRoles })
-        {
-            validationMessage =
-                $"Choose between 1 and {RoleMenuConstants.MaximumRoles} roles.";
-            return false;
-        }
-
-        roleValidation = ValidateRoles(
-            modal.Roles.Select(role => role.Id).ToList(),
-            administrator,
-            bot);
-        if (!roleValidation.IsValid)
-        {
-            validationMessage = FormatRoleValidationFailure(roleValidation);
-            return false;
-        }
-
-        validationMessage = string.Empty;
-        return true;
-    }
-
-    private static bool TryParseSelectionMode(
-        string value,
-        out RoleMenuSelectionMode selectionMode)
-    {
-        if (string.Equals(value, "multiple", StringComparison.Ordinal))
-        {
-            selectionMode = RoleMenuSelectionMode.Multiple;
-            return true;
-        }
-
-        if (string.Equals(value, "single", StringComparison.Ordinal))
-        {
-            selectionMode = RoleMenuSelectionMode.Exclusive;
-            return true;
-        }
-
-        selectionMode = default;
-        return false;
-    }
-
-    private static RoleMenuRoleValidationResult ValidateDraftRoles(
-        RoleMenuDraft draft,
-        IGuildUser administrator,
-        IGuildUser bot)
-        => ValidateRoles(draft.RoleIds, administrator, bot);
-
-    private static RoleMenuRoleValidationResult ValidateRoles(
-        IReadOnlyCollection<ulong> roleIds,
-        IGuildUser administrator,
-        IGuildUser bot)
-    {
-        var availableRoles = bot.Guild.Roles
-            .Select(role => new RoleMenuRoleSnapshot(
-                role.Id,
-                role.Name,
-                role.Id == bot.Guild.EveryoneRole.Id,
-                role.IsManaged,
-                role.Position))
-            .ToList();
-        return RoleMenuRoleValidator.Validate(
-            roleIds,
-            availableRoles,
-            CreateActorSnapshot(bot),
-            CreateActorSnapshot(administrator));
-    }
-
-    private static RoleMenuActorSnapshot CreateActorSnapshot(IGuildUser user)
-    {
-        var hierarchy = user.Guild.Roles
-            .Where(role => user.RoleIds.Contains(role.Id))
-            .Select(role => role.Position)
-            .DefaultIfEmpty(0)
-            .Max();
-        return new RoleMenuActorSnapshot(
-            user.GuildPermissions.ManageRoles,
-            hierarchy,
-            user.Guild.OwnerId == user.Id);
-    }
-
-    private static string FormatRoleValidationFailure(
-        RoleMenuRoleValidationResult validation)
-    {
-        var issue = validation.Issues[0];
-        var roleName = string.IsNullOrWhiteSpace(issue.RoleName)
-            ? "A selected role"
-            : $"The role **{issue.RoleName}**";
-        return issue.Kind switch
-        {
-            RoleMenuRoleIssueKind.BotMissingManageRoles =>
-                "Bean Bot needs the **Manage Roles** permission before it can publish this menu.",
-            RoleMenuRoleIssueKind.AdministratorMissingManageRoles =>
-                "You no longer have the **Manage Roles** permission required to publish this menu.",
-            RoleMenuRoleIssueKind.Duplicate =>
-                $"{roleName} was selected more than once. Reopen the setup modal.",
-            RoleMenuRoleIssueKind.Missing =>
-                "A selected role was deleted or does not belong to this server.",
-            RoleMenuRoleIssueKind.Everyone =>
-                "The `@everyone` role cannot be self-assigned.",
-            RoleMenuRoleIssueKind.Managed =>
-                $"{roleName} is managed by Discord or an integration and cannot be assigned.",
-            RoleMenuRoleIssueKind.BotHierarchy =>
-                $"{roleName} is at or above Bean Bot's highest role. Move Bean Bot above it first.",
-            RoleMenuRoleIssueKind.AdministratorHierarchy =>
-                $"{roleName} is at or above your highest role and cannot be configured by you.",
-            _ => "One or more selected roles cannot be assigned safely."
-        };
-    }
-
-    private static string? GetChannelPermissionFailure(
-        IGuildUser bot,
-        ITextChannel targetChannel)
-    {
-        if (!bot.GuildPermissions.ManageRoles)
-        {
-            return "Bean Bot needs the **Manage Roles** permission before this menu can be published.";
-        }
-
-        var permissions = bot.GetPermissions(targetChannel);
-        var missing = new List<string>();
-        if (!permissions.ViewChannel)
-        {
-            missing.Add("View Channel");
-        }
-
-        if (!permissions.SendMessages)
-        {
-            missing.Add("Send Messages");
-        }
-
-        if (!permissions.EmbedLinks)
-        {
-            missing.Add("Embed Links");
-        }
-
-        if (!permissions.ReadMessageHistory)
-        {
-            missing.Add("Read Message History");
-        }
-
-        return missing.Count == 0
-            ? null
-            : "Bean Bot is missing these permissions in the target channel: **" +
-              string.Join(", ", missing) + "**.";
     }
 
     private async Task<bool> AcknowledgeEphemeralComponentAsync(
@@ -1120,126 +893,6 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
                 menuId,
                 cancellationToken));
 
-    private static async Task<RoleMenuPanelSnapshot?> ReadPublicationPanelAsync(
-        ITextChannel targetChannel,
-        ulong channelId,
-        ulong messageId,
-        ObjectId menuId,
-        CancellationToken cancellationToken)
-    {
-        if (targetChannel.Id != channelId)
-        {
-            return null;
-        }
-
-        try
-        {
-            var message = await targetChannel.GetMessageAsync(
-                messageId,
-                CacheMode.AllowDownload,
-                CreateRequestOptions(cancellationToken));
-            return message is IUserMessage userMessage
-                ? CreatePanelSnapshot(targetChannel, userMessage, menuId)
-                : null;
-        }
-        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
-        {
-            return null;
-        }
-    }
-
-    private static async Task<IReadOnlyList<RoleMenuPanelSnapshot>>
-        ReadRecentPublicationPanelsAsync(
-            ITextChannel targetChannel,
-            ulong channelId,
-            int maximumResults,
-            ObjectId menuId,
-            CancellationToken cancellationToken)
-    {
-        if (targetChannel.Id != channelId)
-        {
-            return [];
-        }
-
-        var messages = await targetChannel
-            .GetMessagesAsync(
-                maximumResults,
-                CacheMode.AllowDownload,
-                CreateRequestOptions(cancellationToken))
-            .FlattenAsync();
-        return messages
-            .OfType<IUserMessage>()
-            .Select(message => CreatePanelSnapshot(targetChannel, message, menuId))
-            .ToList();
-    }
-
-    private static async Task<RoleMenuPanelSnapshot> SendPublicationPanelAsync(
-        ITextChannel targetChannel,
-        RoleMenuDraft draft,
-        CancellationToken cancellationToken)
-    {
-        var message = await targetChannel.SendMessageAsync(
-            embed: RoleMenuComponents.BuildPublicEmbed(
-                draft.MenuId,
-                draft.Title,
-                draft.Description,
-                draft.SelectionMode),
-            options: CreateRequestOptions(cancellationToken),
-            allowedMentions: AllowedMentions.None,
-            components: RoleMenuComponents.BuildPublicComponents(draft.MenuId));
-        return CreatePanelSnapshot(targetChannel, message, draft.MenuId);
-    }
-
-    private static async Task<bool> RollbackPublicationPanelAsync(
-        ITextChannel targetChannel,
-        RoleMenuPanelSnapshot panel,
-        ObjectId menuId,
-        CancellationToken cancellationToken)
-    {
-        if (panel.GuildId != targetChannel.GuildId
-            || panel.ChannelId != targetChannel.Id
-            || !panel.HasManageButton)
-        {
-            return false;
-        }
-
-        try
-        {
-            var message = await targetChannel.GetMessageAsync(
-                panel.MessageId,
-                CacheMode.AllowDownload,
-                CreateRequestOptions(cancellationToken));
-            if (message is null)
-            {
-                return true;
-            }
-
-            if (message.Author.Id != panel.AuthorId
-                || !RoleMenuComponents.HasManageButton(message, menuId))
-            {
-                return false;
-            }
-
-            await message.DeleteAsync(CreateRequestOptions(cancellationToken));
-            return true;
-        }
-        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
-        {
-            return true;
-        }
-    }
-
-    private static RoleMenuPanelSnapshot CreatePanelSnapshot(
-        ITextChannel channel,
-        IUserMessage message,
-        ObjectId menuId)
-        => new(
-            channel.GuildId,
-            channel.Id,
-            message.Id,
-            message.Author.Id,
-            RoleMenuComponents.HasManageButton(message, menuId));
-
     private async Task TrySendPublicationConfirmationAsync(
         ulong guildId,
         ulong channelId,
@@ -1301,7 +954,7 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
         ulong administratorId,
         CancellationToken cancellationToken)
     {
-        var currentAdministrator = await GetGuildUserAsync(
+        var currentAdministrator = await _discord.GetGuildUserAsync(
             guild.Id,
             administratorId,
             CreateRequestOptions(cancellationToken));
@@ -1372,14 +1025,14 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
                 guildId,
                 cancellationToken),
             (expectedMenuId, channelId, messageId, cancellationToken) =>
-                ReadDeletionPanelAsync(
-                    guild,
+                _discord.ReadDeletionPanelAsync(
+                    guild.Id,
                     expectedMenuId,
                     channelId,
                     messageId,
                     cancellationToken),
-            (panel, cancellationToken) => DeleteDeletionPanelAsync(
-                guild,
+            (panel, cancellationToken) => _discord.DeleteDeletionPanelAsync(
+                    guild.Id,
                 menuId,
                 panel,
                 cancellationToken),
@@ -1388,111 +1041,6 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
                 guildId,
                 cancellationToken),
             () => _roleMenuService.IsShuttingDown);
-
-    private async Task<RoleMenuPanelLookupResult> ReadDeletionPanelAsync(
-        SocketGuild guild,
-        ObjectId expectedMenuId,
-        ulong channelId,
-        ulong messageId,
-        CancellationToken cancellationToken)
-    {
-        var requestOptions = CreateRequestOptions(cancellationToken);
-        IChannel? channel;
-        try
-        {
-            channel = await Context.Client.Rest.GetChannelAsync(channelId, requestOptions);
-        }
-        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
-        {
-            return new RoleMenuPanelLookupResult(RoleMenuPanelLookupStatus.ChannelMissing);
-        }
-
-        if (channel is null)
-        {
-            return new RoleMenuPanelLookupResult(RoleMenuPanelLookupStatus.ChannelMissing);
-        }
-
-        if (channel is not ITextChannel textChannel || textChannel.GuildId != guild.Id)
-        {
-            return new RoleMenuPanelLookupResult(
-                RoleMenuPanelLookupStatus.UnexpectedChannelType);
-        }
-
-        IMessage? message;
-        try
-        {
-            message = await textChannel.GetMessageAsync(
-                messageId,
-                CacheMode.AllowDownload,
-                requestOptions);
-        }
-        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
-        {
-            return new RoleMenuPanelLookupResult(RoleMenuPanelLookupStatus.MessageMissing);
-        }
-
-        return message is null
-            ? new RoleMenuPanelLookupResult(RoleMenuPanelLookupStatus.MessageMissing)
-            : new RoleMenuPanelLookupResult(
-                RoleMenuPanelLookupStatus.Found,
-                new RoleMenuPanelSnapshot(
-                    textChannel.GuildId,
-                    textChannel.Id,
-                    message.Id,
-                    message.Author.Id,
-                    RoleMenuComponents.HasManageButton(message, expectedMenuId)));
-    }
-
-    private async Task<bool> DeleteDeletionPanelAsync(
-        SocketGuild guild,
-        ObjectId menuId,
-        RoleMenuPanelSnapshot panel,
-        CancellationToken cancellationToken)
-    {
-        if (panel.GuildId != guild.Id || !panel.HasManageButton)
-        {
-            return false;
-        }
-
-        var requestOptions = CreateRequestOptions(cancellationToken);
-        try
-        {
-            var channel = await Context.Client.Rest.GetChannelAsync(
-                panel.ChannelId,
-                requestOptions);
-            if (channel is null)
-            {
-                return true;
-            }
-
-            if (channel is not ITextChannel textChannel || textChannel.GuildId != guild.Id)
-            {
-                return false;
-            }
-
-            var message = await textChannel.GetMessageAsync(
-                panel.MessageId,
-                CacheMode.AllowDownload,
-                requestOptions);
-            if (message is null)
-            {
-                return true;
-            }
-
-            if (message.Author.Id != panel.AuthorId
-                || !RoleMenuComponents.HasManageButton(message, menuId))
-            {
-                return false;
-            }
-
-            await message.DeleteAsync(requestOptions);
-            return true;
-        }
-        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
-        {
-            return true;
-        }
-    }
 
     private async Task SendFreshFeedbackAsync(string content)
     {
@@ -1588,12 +1136,4 @@ public sealed class RoleMenuAdminModule : InteractionModuleBase<SocketInteractio
                        StringComparison.Ordinal)));
     }
 
-    private static string CreateMessageUrl(
-        ulong guildId,
-        ulong channelId,
-        ulong messageId)
-        => "https://discord.com/channels/" +
-           guildId.ToString(CultureInfo.InvariantCulture) + "/" +
-           channelId.ToString(CultureInfo.InvariantCulture) + "/" +
-           messageId.ToString(CultureInfo.InvariantCulture);
 }

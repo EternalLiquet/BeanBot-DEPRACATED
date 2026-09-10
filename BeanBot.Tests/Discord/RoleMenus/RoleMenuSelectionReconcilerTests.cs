@@ -63,7 +63,7 @@ public class RoleMenuSelectionReconcilerTests
             roleId => roleId,
             roleId => new string((char)('A' + roleId % 26), 100));
 
-        var content = RoleMenuMemberModule.FormatReconciliation(reconciliation, names);
+        var content = RoleMenuPresentation.FormatReconciliation(reconciliation, names);
 
         Assert.True(content.Length <= RoleMenuConstants.MaximumResponseContentLength);
         Assert.Contains("Some role details were omitted", content, StringComparison.Ordinal);

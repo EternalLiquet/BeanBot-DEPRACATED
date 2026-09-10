@@ -10,6 +10,10 @@ using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 
+using static BeanBot.Discord.RoleMenus.DiscordRoleMenuClient;
+using static BeanBot.Discord.RoleMenus.RoleMenuPresentation;
+using static BeanBot.Discord.RoleMenus.RoleMenuSetupValidation;
+
 namespace BeanBot.Discord.RoleMenus;
 
 public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteractionContext>
@@ -20,13 +24,16 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
     private sealed record RoleMenuApplicationResult(string Content);
 
     private readonly RoleMenuInteractionService _roleMenuService;
+    private readonly DiscordRoleMenuClient _discord;
     private readonly ILogger<RoleMenuMemberModule> _logger;
 
     public RoleMenuMemberModule(
         RoleMenuInteractionService roleMenuService,
+        DiscordRoleMenuClient discord,
         ILogger<RoleMenuMemberModule> logger)
     {
         _roleMenuService = roleMenuService ?? throw new ArgumentNullException(nameof(roleMenuService));
+        _discord = discord ?? throw new ArgumentNullException(nameof(discord));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -103,7 +110,7 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
                 return;
             }
 
-            var currentBot = await GetGuildMemberAsync(
+            var currentBot = await _discord.GetGuildUserAsync(
                 Context.Guild.Id,
                 Context.Guild.CurrentUser.Id,
                 requestOptions);
@@ -124,7 +131,7 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
                 return;
             }
 
-            var member = await GetGuildMemberAsync(
+            var member = await _discord.GetGuildUserAsync(
                 Context.Guild.Id,
                 Context.User.Id,
                 requestOptions);
@@ -316,20 +323,20 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
                     requestedGuildId,
                     operationToken),
             (requestedMenuId, channelId, messageId, operationToken) =>
-                ReadPanelSnapshotAsync(
-                    guild,
+                _discord.ReadPanelSnapshotAsync(
+                    guild.Id,
                     requestedMenuId,
                     channelId,
                     messageId,
                     operationToken),
             (requestedGuildId, requestedBotUserId, operationToken) =>
-                ReadBotSnapshotAsync(
+                _discord.ReadBotSnapshotAsync(
                     requestedGuildId,
                     requestedBotUserId,
                     operationToken),
             async (requestedGuildId, requestedMemberUserId, operationToken) =>
             {
-                var member = await GetGuildMemberAsync(
+                var member = await _discord.GetGuildUserAsync(
                     requestedGuildId,
                     requestedMemberUserId,
                     CreateRequestOptions(operationToken));
@@ -450,122 +457,6 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
             result.Failures.Count);
     }
 
-    private static string FormatConfigurationIssue(RoleMenuMemberWorkflowResult result)
-        => result.ConfigurationIssue switch
-        {
-            RoleMenuMemberConfigurationIssue.SettingsInvalid =>
-                $"{result.ConfigurationIssue}: {result.SettingsIssue}",
-            RoleMenuMemberConfigurationIssue.PanelInvalid =>
-                $"{result.ConfigurationIssue}: {result.PanelIssue}",
-            RoleMenuMemberConfigurationIssue.RolesInvalid when result.RoleIssues is { Count: > 0 } =>
-                $"{result.ConfigurationIssue}: {result.RoleIssues[0].Kind}",
-            _ => result.ConfigurationIssue.ToString()
-        };
-
-    private async Task<RoleMenuPanelSnapshot?> ReadPanelSnapshotAsync(
-        SocketGuild guild,
-        ObjectId menuId,
-        ulong channelId,
-        ulong messageId,
-        CancellationToken cancellationToken)
-    {
-        var requestOptions = CreateRequestOptions(cancellationToken);
-        IChannel? channel;
-        try
-        {
-            channel = await Context.Client.Rest.GetChannelAsync(channelId, requestOptions);
-        }
-        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
-        {
-            return null;
-        }
-
-        if (channel is not ITextChannel textChannel || textChannel.GuildId != guild.Id)
-        {
-            return null;
-        }
-
-        try
-        {
-            var message = await textChannel.GetMessageAsync(
-                messageId,
-                CacheMode.AllowDownload,
-                requestOptions);
-            return message is null
-                ? null
-                : new RoleMenuPanelSnapshot(
-                    textChannel.GuildId,
-                    textChannel.Id,
-                    message.Id,
-                    message.Author.Id,
-                    RoleMenuComponents.HasManageButton(message, menuId));
-        }
-        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
-        {
-            return null;
-        }
-    }
-
-    private async Task<RoleMenuBotSnapshot?> ReadBotSnapshotAsync(
-        ulong guildId,
-        ulong botUserId,
-        CancellationToken cancellationToken)
-    {
-        var bot = await GetGuildMemberAsync(
-            guildId,
-            botUserId,
-            CreateRequestOptions(cancellationToken));
-        if (bot is null)
-        {
-            return null;
-        }
-
-        return new RoleMenuBotSnapshot(
-            bot.Guild.Id,
-            bot.Id,
-            CreateRoleSnapshots(bot),
-            CreateActorSnapshot(bot));
-    }
-
-    private static RoleMenuMemberSnapshot CreateMemberSnapshot(IGuildUser member)
-        => new(member.Guild.Id, member.Id, member.RoleIds.ToList());
-
-    private static Task AddMemberRoleAsync(
-        IGuildUser? member,
-        ulong guildId,
-        ulong memberUserId,
-        ulong roleId,
-        CancellationToken cancellationToken)
-    {
-        EnsureExpectedMember(member, guildId, memberUserId);
-        return member.AddRoleAsync(roleId, CreateRequestOptions(cancellationToken));
-    }
-
-    private static Task RemoveMemberRoleAsync(
-        IGuildUser? member,
-        ulong guildId,
-        ulong memberUserId,
-        ulong roleId,
-        CancellationToken cancellationToken)
-    {
-        EnsureExpectedMember(member, guildId, memberUserId);
-        return member.RemoveRoleAsync(roleId, CreateRequestOptions(cancellationToken));
-    }
-
-    private static void EnsureExpectedMember(
-        [NotNull] IGuildUser? member,
-        ulong guildId,
-        ulong memberUserId)
-    {
-        if (member is null
-            || member.Guild.Id != guildId
-            || member.Id != memberUserId)
-        {
-            throw new InvalidOperationException(
-                "The role-menu member mutation was not bound to the expected guild member.");
-        }
-    }
-
     private bool TryValidateSettings(
         [NotNullWhen(true)] RoleMenuSettings? settings,
         SocketGuild guild,
@@ -592,133 +483,6 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
         }
 
         return true;
-    }
-
-    private async Task<IGuildUser?> GetGuildMemberAsync(
-        ulong guildId,
-        ulong userId,
-        RequestOptions requestOptions)
-    {
-        try
-        {
-            return await Context.Client.Rest.GetGuildUserAsync(
-                guildId,
-                userId,
-                requestOptions);
-        }
-        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
-        {
-            return null;
-        }
-    }
-
-    private static RoleMenuRoleValidationResult ValidateRoles(
-        IReadOnlyCollection<ulong> roleIds,
-        IGuildUser bot)
-    {
-        return RoleMenuRoleValidator.Validate(
-            roleIds,
-            CreateRoleSnapshots(bot),
-            CreateActorSnapshot(bot));
-    }
-
-    private static List<RoleMenuRoleSnapshot> CreateRoleSnapshots(
-        IGuildUser user)
-        => [.. user.Guild.Roles
-            .Select(role => new RoleMenuRoleSnapshot(
-                role.Id,
-                role.Name,
-                role.Id == user.Guild.EveryoneRole.Id,
-                role.IsManaged,
-                role.Position))];
-
-    private static RoleMenuActorSnapshot CreateActorSnapshot(IGuildUser user)
-    {
-        var hierarchy = user.Guild.Roles
-            .Where(role => user.RoleIds.Contains(role.Id))
-            .Select(role => role.Position)
-            .DefaultIfEmpty(0)
-            .Max();
-        return new RoleMenuActorSnapshot(
-            user.GuildPermissions.ManageRoles,
-            hierarchy,
-            user.Guild.OwnerId == user.Id);
-    }
-
-    internal static string FormatReconciliation(
-        RoleMenuSelectionReconciliation reconciliation,
-        IReadOnlyDictionary<ulong, string> roleNames)
-    {
-        var lines = new List<string>();
-        AddRoleList(lines, "Added", reconciliation.AddedRoleIds, roleNames);
-        AddRoleList(lines, "Removed", reconciliation.RemovedRoleIds, roleNames);
-        AddRoleList(
-            lines,
-            "Still missing",
-            reconciliation.MissingSelectedRoleIds,
-            roleNames);
-        AddRoleList(
-            lines,
-            "Still assigned",
-            reconciliation.StillAssignedUnselectedRoleIds,
-            roleNames);
-        if (lines.Count == 0)
-        {
-            lines.Add("Discord's current role state already matches your selection.");
-        }
-
-        lines.Add(reconciliation.IsComplete
-            ? "Bean Bot rechecked Discord's current role state. No roles outside this menu were changed."
-            : "Bean Bot rechecked Discord's current role state, but some requested changes are still " +
-              "not applied. No roles outside this menu were changed.");
-        return BoundResponseContent(string.Join('\n', lines));
-    }
-
-    private static void AddRoleList(
-        List<string> lines,
-        string label,
-        IReadOnlyCollection<ulong> roleIds,
-        IReadOnlyDictionary<ulong, string> roleNames)
-    {
-        if (roleIds.Count == 0)
-        {
-            return;
-        }
-
-        var names = roleIds.Select(roleId => GetRoleName(roleNames, roleId));
-        lines.Add($"**{label} ({roleIds.Count}):** {string.Join(", ", names)}");
-    }
-
-    private static string BoundResponseContent(string content)
-    {
-        if (content.Length <= RoleMenuConstants.MaximumResponseContentLength)
-        {
-            return content;
-        }
-
-        const string suffix =
-            "…\nSome role details were omitted. Open the menu again to verify the current state.";
-        var cutoff = RoleMenuConstants.MaximumResponseContentLength - suffix.Length;
-        if (cutoff > 0 && char.IsHighSurrogate(content[cutoff - 1]))
-        {
-            cutoff--;
-        }
-
-        return content[..cutoff] + suffix;
-    }
-
-    private static string GetRoleName(
-        IReadOnlyDictionary<ulong, string> roleNames,
-        ulong roleId)
-    {
-        var name = roleNames.TryGetValue(roleId, out var resolvedName)
-            ? resolvedName
-            : "unknown role";
-        var normalized = string.Join(' ', name.Split(
-            (char[]?)null,
-            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-        normalized = RoleMenuText.TruncateWithEllipsis(normalized, 40);
-        return normalized.Replace("`", "ʼ", StringComparison.Ordinal);
     }
 
     private async Task RespondToInvalidPrivateComponentAsync(
@@ -805,9 +569,6 @@ public sealed class RoleMenuMemberModule : InteractionModuleBase<SocketInteracti
                                   component.CustomId,
                                   customId,
                                   StringComparison.Ordinal));
-
-    private static RequestOptions CreateRequestOptions(CancellationToken cancellationToken)
-        => new() { CancelToken = cancellationToken };
 
     private static bool IsEphemeral(SocketMessageComponent component)
         => component.Message.Flags?.HasFlag(MessageFlags.Ephemeral) == true;
