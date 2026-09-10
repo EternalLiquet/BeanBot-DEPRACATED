@@ -24,6 +24,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     private readonly PunHandler _punHandler;
     private readonly EditMessageHandler _editMessageHandler;
     private readonly NewMemberHandler _newMemberHandler;
+    private readonly NewMemberWelcomeService _newMemberWelcomeService;
     private readonly ReactHandler _reactHandler;
     private readonly DiscordMessageWaiter _messageWaiter;
     private readonly DiscordPaginatorService _paginatorService;
@@ -45,6 +46,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         PunHandler punHandler,
         EditMessageHandler editMessageHandler,
         NewMemberHandler newMemberHandler,
+        NewMemberWelcomeService newMemberWelcomeService,
         ReactHandler reactHandler,
         DiscordMessageWaiter messageWaiter,
         DiscordPaginatorService paginatorService,
@@ -64,6 +66,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         _punHandler = punHandler ?? throw new ArgumentNullException(nameof(punHandler));
         _editMessageHandler = editMessageHandler ?? throw new ArgumentNullException(nameof(editMessageHandler));
         _newMemberHandler = newMemberHandler ?? throw new ArgumentNullException(nameof(newMemberHandler));
+        _newMemberWelcomeService = newMemberWelcomeService ?? throw new ArgumentNullException(nameof(newMemberWelcomeService));
         _reactHandler = reactHandler ?? throw new ArgumentNullException(nameof(reactHandler));
         _messageWaiter = messageWaiter ?? throw new ArgumentNullException(nameof(messageWaiter));
         _paginatorService = paginatorService ?? throw new ArgumentNullException(nameof(paginatorService));
@@ -73,6 +76,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
 
     public bool HasActiveDiscordLifecycleOperation
         => _discordLifecycleCoordinator.HasActiveSequence
+            || _newMemberWelcomeService.HasActiveDiscordOperation
             || _editMessageHandler.HasInFlightOperations
             || _commandReplySender.HasPendingOperations
             || _paginatorService.HasPendingOperations;
@@ -106,13 +110,19 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         _discordClient.Log += _logHandler.LogMessages;
         _punHandler.Start();
         _editMessageHandler.InitializeEventListener();
+        _newMemberWelcomeService.Start();
         _newMemberHandler.InitializeNewMembers();
         _reactHandler.InitializeReactDependentServices();
     }
 
     public void StopReactionServices() => _reactHandler.Dispose();
 
-    public void StopNewMemberEvents() => _newMemberHandler.Dispose();
+    public void StopNewMemberEvents()
+    {
+        _newMemberHandler.Dispose();
+        _newMemberWelcomeService.StopAccepting();
+        _newMemberWelcomeService.StopAsync().GetAwaiter().GetResult();
+    }
 
     public Task StopEditedMessageEventsAsync() => _editMessageHandler.StopAsync();
 
