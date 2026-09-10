@@ -164,33 +164,37 @@ public sealed class DiscordPaginatorService : IDisposable
         }
     }
 
-    private async Task HandleReactionAsync(
+    private Task HandleReactionAsync(
         Cacheable<IUserMessage, ulong> message,
         Cacheable<IMessageChannel, ulong> channel,
         SocketReaction reaction)
+        => HandleReactionAsync(message.Id, reaction.UserId, reaction.Emote);
+
+    internal async Task HandleReactionAsync(ulong messageId, ulong userId, IEmote emote)
     {
         if (Volatile.Read(ref _disposed) != 0
-            || reaction.UserId == _discordClient.CurrentUser?.Id
-            || !_sessions.TryGetValue(message.Id, out var session)
-            || reaction.UserId != session.UserId)
+            || userId == _discordClient.CurrentUser?.Id
+            || !_sessions.TryGetValue(messageId, out var session)
+            || userId != session.UserId)
         {
             return;
         }
 
-        var action = GetAction(reaction.Emote);
+        var action = GetAction(emote);
         if (action == PaginationAction.None)
         {
             return;
         }
 
         var terminateAfterAmbiguousEdit = false;
+        var ownsAmbiguousEditCompletion = false;
         try
         {
             var stopRequested = false;
             await session.Access.WaitAsync(_shutdownToken);
             try
             {
-                if (!_sessions.TryGetValue(message.Id, out var currentSession)
+                if (!_sessions.TryGetValue(messageId, out var currentSession)
                     || !ReferenceEquals(currentSession, session)
                     || session.CompletionStarted)
                 {
@@ -216,14 +220,15 @@ public sealed class DiscordPaginatorService : IDisposable
                         catch (TimeoutException)
                         {
                             terminateAfterAmbiguousEdit = true;
+                            ownsAmbiguousEditCompletion = session.TryBeginCompletion();
                             throw;
                         }
                     }
 
                     await TryRemoveUserReactionAsync(
                         session.Message,
-                        reaction.Emote,
-                        reaction.UserId,
+                        emote,
+                        userId,
                         _shutdownToken);
                 }
             }
@@ -234,7 +239,7 @@ public sealed class DiscordPaginatorService : IDisposable
 
             if (stopRequested)
             {
-                await StopSessionAsync(message.Id, session, deleteMessage: true);
+                await StopSessionAsync(messageId, session, deleteMessage: true);
             }
         }
         catch (OperationCanceledException) when (_shutdownToken.IsCancellationRequested)
@@ -246,7 +251,14 @@ public sealed class DiscordPaginatorService : IDisposable
             {
                 try
                 {
-                    await StopSessionAsync(message.Id, session, deleteMessage: false);
+                    if (ownsAmbiguousEditCompletion)
+                    {
+                        await CompleteStoppedSessionAsync(messageId, session, deleteMessage: false);
+                    }
+                    else
+                    {
+                        await session.CompletionTask;
+                    }
                 }
                 catch (OperationCanceledException) when (_shutdownToken.IsCancellationRequested)
                 {
@@ -255,12 +267,12 @@ public sealed class DiscordPaginatorService : IDisposable
                 {
                     BeanBotLog.PaginatorReactionFailed(
                         _logger,
-                        message.Id,
+                        messageId,
                         completionException);
                 }
             }
 
-            BeanBotLog.PaginatorReactionFailed(_logger, message.Id, exception);
+            BeanBotLog.PaginatorReactionFailed(_logger, messageId, exception);
         }
     }
 
@@ -348,6 +360,14 @@ public sealed class DiscordPaginatorService : IDisposable
             return;
         }
 
+        await CompleteStoppedSessionAsync(messageId, session, deleteMessage);
+    }
+
+    private async Task CompleteStoppedSessionAsync(
+        ulong messageId,
+        PaginationSession session,
+        bool deleteMessage)
+    {
         session.CancelExpiration();
         try
         {
@@ -539,7 +559,7 @@ public sealed class DiscordPaginatorService : IDisposable
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
     }
 
-    private sealed class PaginationSession
+    internal sealed class PaginationSession
     {
         public PaginationSession(
             IUserMessage message,

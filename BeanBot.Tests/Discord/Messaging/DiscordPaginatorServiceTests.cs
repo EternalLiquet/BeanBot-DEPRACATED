@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Reflection;
 using BeanBot.Discord.Messaging;
@@ -169,6 +170,51 @@ public class DiscordPaginatorServiceTests
     }
 
     [Fact]
+    public async Task PageEditTimeout_StopsQueuedNavigationBeforeAnotherEditCanStart()
+    {
+        using var client = new DiscordSocketClient();
+        using var paginator = new DiscordPaginatorService(
+            client,
+            NullLogger<DiscordPaginatorService>.Instance,
+            TimeSpan.FromMilliseconds(25));
+        var message = DispatchProxy.Create<IUserMessage, PageEditMessageProxy>();
+        var recorder = (PageEditMessageProxy)message;
+        var session = new DiscordPaginatorService.PaginationSession(
+            message,
+            42,
+            ["first", "second", "third"],
+            new PaginationCursor(3),
+            CancellationToken.None);
+        var sessions = Assert.IsType<ConcurrentDictionary<ulong, DiscordPaginatorService.PaginationSession>>(
+            typeof(DiscordPaginatorService).GetField("_sessions", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.GetValue(paginator));
+        var slots = Assert.IsType<SemaphoreSlim>(
+            typeof(DiscordPaginatorService).GetField("_availableSlots", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.GetValue(paginator));
+        Assert.True(slots.Wait(0));
+        Assert.True(sessions.TryAdd(7, session));
+
+        try
+        {
+            var firstNavigation = paginator.HandleReactionAsync(7, 42, new Emoji("▶"));
+            await recorder.EditStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            var queuedNavigation = paginator.HandleReactionAsync(7, 42, new Emoji("▶"));
+
+            await Task.WhenAll(firstNavigation, queuedNavigation).WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.Equal(1, recorder.EditCount);
+            Assert.True(session.CompletionStarted);
+            Assert.True(session.CompletionTask.IsCompletedSuccessfully);
+            Assert.Empty(sessions);
+            Assert.Equal(DiscordPaginatorService.MaximumActivePaginators, slots.CurrentCount);
+        }
+        finally
+        {
+            recorder.CompleteEdit.TrySetResult();
+        }
+    }
+
+    [Fact]
     public async Task ReactionRemoval_UsesUserIdForRepeatedControlsWithoutCachedUser()
     {
         using var client = new DiscordSocketClient();
@@ -282,6 +328,30 @@ public class DiscordPaginatorServiceTests
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+    }
+
+    public class PageEditMessageProxy : DispatchProxy
+    {
+        public TaskCompletionSource EditStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource CompleteEdit { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int EditCount { get; private set; }
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod?.Name == nameof(IUserMessage.ModifyAsync))
+            {
+                EditCount++;
+                EditStarted.TrySetResult();
+                return CompleteEdit.Task;
+            }
+
+            if (targetMethod?.Name == "get_Id")
+            {
+                return 7UL;
+            }
+
+            throw new NotSupportedException(targetMethod?.Name);
         }
     }
 
