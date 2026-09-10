@@ -282,9 +282,7 @@ public class RoleMenuAuditServiceTests
 
         internal Fixture(int menuCount = 1)
         {
-            Settings = Enumerable.Range(0, menuCount)
-                .Select(index => CreateSettings((ulong)(5 + index)))
-                .ToList();
+            Settings = [.. Enumerable.Range(0, menuCount).Select(index => CreateSettings((ulong)(5 + index)))];
             _bot = Proxy<IGuildUser>((method, _) => method.Name switch
             {
                 "get_Id" => BotId,
