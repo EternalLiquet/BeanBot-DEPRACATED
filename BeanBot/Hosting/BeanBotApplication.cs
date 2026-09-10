@@ -17,7 +17,7 @@ internal interface IBeanBotRuntime
     void StopReactionServices();
     void StopNewMemberEvents();
     Task StopEditedMessageEventsAsync();
-    void StopCommandServices();
+    Task<bool> StopCommandServicesAsync();
     Task StopCommandRepliesAsync();
     void StopMessageWaiter();
     void StopPaginator();
@@ -83,6 +83,7 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         }
 
         Exception? firstFailure = null;
+        var commandServicesDrained = false;
 
         async Task RunStageAsync(
             string stageName,
@@ -135,7 +136,17 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         await RunSynchronousStageAsync("reaction-services", _runtime.StopReactionServices);
         await RunSynchronousStageAsync("new-member-events", _runtime.StopNewMemberEvents);
         await RunStageAsync("edited-message-events", _runtime.StopEditedMessageEventsAsync);
-        await RunSynchronousStageAsync("command-services", _runtime.StopCommandServices);
+        await RunStageAsync(
+            "command-services",
+            async () =>
+            {
+                commandServicesDrained = await _runtime.StopCommandServicesAsync();
+                if (!commandServicesDrained)
+                {
+                    throw new TimeoutException(
+                        "Legacy command execution did not drain before the command-services shutdown bound.");
+                }
+            });
         await RunStageAsync("command-replies", _runtime.StopCommandRepliesAsync);
         await RunSynchronousStageAsync("message-waiter", _runtime.StopMessageWaiter);
         await RunSynchronousStageAsync("paginator", _runtime.StopPaginator);
@@ -149,7 +160,8 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         var canStopDiscord = false;
         await RunSynchronousStageAsync(
             "discord-startup-state",
-            () => canStopDiscord = !_runtime.HasActiveDiscordLifecycleOperation);
+            () => canStopDiscord = commandServicesDrained &&
+                !_runtime.HasActiveDiscordLifecycleOperation);
         if (!canStopDiscord)
         {
             BeanBotLog.DiscordStopSkipped(_logger);

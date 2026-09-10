@@ -158,22 +158,33 @@ public class RoleReactService : IDisposable, IAsyncDisposable
                 return;
             }
 
-            var guild = (IGuild)textChannel.Guild;
-            var user = await guild.GetUserAsync(reaction.UserId, CacheMode.AllowDownload);
-            var role = guild.Roles.FirstOrDefault(candidate => candidate.Id == roleId);
-            if (user == null || role == null)
+            var socketGuild = textChannel.Guild;
+            var role = socketGuild.GetRole(roleId);
+            var botUser = socketGuild.CurrentUser;
+            var assignabilityStatus = await ApplyRoleChangeAsync(
+                new ReactionRoleAssignabilityFacts(
+                    RoleExists: role is not null,
+                    IsEveryoneRole: role?.Id == socketGuild.Id,
+                    IsManagedRole: role?.IsManaged ?? false,
+                    BotCanManageRoles: botUser.GuildPermissions.ManageRoles,
+                    TargetRolePosition: role?.Position ?? 0,
+                    BotHierarchy: botUser.Hierarchy),
+                socketGuild,
+                role,
+                reaction.UserId,
+                addRole,
+                cancellationToken);
+            if (assignabilityStatus != ReactionRoleAssignabilityStatus.Allowed)
             {
+                BeanBotLog.ReactionRoleTargetUnassignable(
+                    _logger,
+                    addRole ? "add" : "remove",
+                    message.Id,
+                    roleId,
+                    assignabilityStatus.ToString());
                 return;
             }
 
-            if (addRole && !user.RoleIds.Contains(roleId))
-            {
-                await user.AddRoleAsync(role);
-            }
-            else if (!addRole && user.RoleIds.Contains(roleId))
-            {
-                await user.RemoveRoleAsync(role);
-            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -187,6 +198,39 @@ public class RoleReactService : IDisposable, IAsyncDisposable
                 message.Id,
                 exception);
         }
+    }
+
+    internal static async Task<ReactionRoleAssignabilityStatus> ApplyRoleChangeAsync(
+        ReactionRoleAssignabilityFacts facts,
+        IGuild guild,
+        IRole? role,
+        ulong userId,
+        bool addRole,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var status = ReactionRoleAssignabilityPolicy.EvaluateForRuntime(facts);
+        if (status != ReactionRoleAssignabilityStatus.Allowed || role is null)
+        {
+            return role is null ? ReactionRoleAssignabilityStatus.RoleMissing : status;
+        }
+
+        var requestOptions = new RequestOptions { CancelToken = cancellationToken };
+        var user = await guild.GetUserAsync(userId, CacheMode.AllowDownload, requestOptions);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (user is not null)
+        {
+            if (addRole && !user.RoleIds.Contains(role.Id))
+            {
+                await user.AddRoleAsync(role, requestOptions);
+            }
+            else if (!addRole && user.RoleIds.Contains(role.Id))
+            {
+                await user.RemoveRoleAsync(role, requestOptions);
+            }
+        }
+
+        return status;
     }
 
     internal async Task<RoleSettings?> GetCachedRoleSettingAsync(

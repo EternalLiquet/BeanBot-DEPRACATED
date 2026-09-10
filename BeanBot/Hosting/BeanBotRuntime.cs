@@ -115,7 +115,11 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
 
     public Task StopEditedMessageEventsAsync() => _editMessageHandler.StopAsync();
 
-    public void StopCommandServices() => _commandHandler.Dispose();
+    public async Task<bool> StopCommandServicesAsync()
+    {
+        var result = await _commandHandler.StopAsync();
+        return result.IsDrained;
+    }
 
     public Task StopCommandRepliesAsync() => _commandReplySender.StopAsync();
 

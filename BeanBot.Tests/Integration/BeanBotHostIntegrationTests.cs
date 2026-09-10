@@ -320,8 +320,11 @@ public class BeanBotHostIntegrationTests
             Calls.Add("stop-edited-message");
             return Task.CompletedTask;
         }
-        public void StopCommandServices() => Calls.Add("stop-command");
-
+        public Task<bool> StopCommandServicesAsync()
+        {
+            Calls.Add("stop-command");
+            return Task.FromResult(true);
+        }
         public Task StopCommandRepliesAsync()
         {
             Calls.Add("stop-command-replies");
