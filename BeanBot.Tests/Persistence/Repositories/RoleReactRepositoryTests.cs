@@ -60,7 +60,7 @@ public class RoleReactRepositoryTests
         using var cancellation = new CancellationTokenSource();
         var store = new FakeRoleSettingsStore
         {
-            GetRecent = async (_, cancellationToken) =>
+            GetRecent = async (_, _, cancellationToken) =>
             {
                 Assert.Equal(cancellation.Token, cancellationToken);
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
@@ -68,7 +68,7 @@ public class RoleReactRepositoryTests
             }
         };
         var repository = CreateRepository(store);
-        var read = repository.GetRecentRoleSettings(cancellation.Token);
+        var read = repository.GetRecentRoleSettings(10, cancellation.Token);
         cancellation.Cancel();
 
         var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(
@@ -78,26 +78,38 @@ public class RoleReactRepositoryTests
     }
 
     [Fact]
-    public async Task GetRecentRoleSettings_UsesThirtyDayUtcCutoff()
+    public async Task GetRecentRoleSettings_UsesThirtyDayUtcCutoffAndRequestedLimit()
     {
         DateTime? observedCutoff = null;
+        int? observedLimit = null;
         var beforeRead = DateTime.UtcNow.AddDays(-30);
         var store = new FakeRoleSettingsStore
         {
-            GetRecent = (oldestLastAccessedUtc, _) =>
+            GetRecent = (oldestLastAccessedUtc, limit, _) =>
             {
                 observedCutoff = oldestLastAccessedUtc;
+                observedLimit = limit;
                 return Task.FromResult(new List<RoleSettings>());
             }
         };
         var repository = CreateRepository(store);
 
-        await repository.GetRecentRoleSettings();
+        await repository.GetRecentRoleSettings(17);
         var afterRead = DateTime.UtcNow.AddDays(-30);
 
         var cutoff = Assert.IsType<DateTime>(observedCutoff);
         Assert.Equal(DateTimeKind.Utc, cutoff.Kind);
         Assert.InRange(cutoff, beforeRead, afterRead);
+        Assert.Equal(17, observedLimit);
+    }
+
+    [Fact]
+    public async Task GetRecentRoleSettings_RejectsNonPositiveLimit()
+    {
+        var repository = CreateRepository(new FakeRoleSettingsStore());
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => repository.GetRecentRoleSettings(0));
     }
 
     [Fact]
@@ -149,8 +161,8 @@ public class RoleReactRepositoryTests
     {
         public Func<RoleSettings, CancellationToken, Task> Insert { get; set; }
             = (_, _) => Task.CompletedTask;
-        public Func<DateTime, CancellationToken, Task<List<RoleSettings>>> GetRecent { get; set; }
-            = (_, _) => Task.FromResult(new List<RoleSettings>());
+        public Func<DateTime, int, CancellationToken, Task<List<RoleSettings>>> GetRecent { get; set; }
+            = (_, _, _) => Task.FromResult(new List<RoleSettings>());
         public Func<string, CancellationToken, Task<RoleSettings?>> GetByMessageId { get; set; }
             = (_, _) => Task.FromResult<RoleSettings?>(null);
 
@@ -159,8 +171,9 @@ public class RoleReactRepositoryTests
 
         public Task<List<RoleSettings>> GetRecentAsync(
             DateTime oldestLastAccessedUtc,
+            int limit,
             CancellationToken cancellationToken)
-            => GetRecent(oldestLastAccessedUtc, cancellationToken);
+            => GetRecent(oldestLastAccessedUtc, limit, cancellationToken);
 
         public Task<RoleSettings?> GetByMessageIdAsync(
             string messageId,

@@ -18,6 +18,7 @@ internal interface IBeanBotRuntime
     void StopNewMemberEvents();
     void StopEditedMessageEvents();
     Task<bool> StopCommandServicesAsync();
+    Task StopCommandRepliesAsync();
     void StopMessageWaiter();
     void StopPaginator();
     void UnsubscribeDiscordLog();
@@ -146,6 +147,7 @@ internal sealed class BeanBotApplication : IBeanBotApplication
                         "Legacy command execution did not drain before the command-services shutdown bound.");
                 }
             });
+        await RunStageAsync("command-replies", _runtime.StopCommandRepliesAsync);
         await RunSynchronousStageAsync("message-waiter", _runtime.StopMessageWaiter);
         await RunSynchronousStageAsync("paginator", _runtime.StopPaginator);
         await RunSynchronousStageAsync("discord-log", _runtime.UnsubscribeDiscordLog);

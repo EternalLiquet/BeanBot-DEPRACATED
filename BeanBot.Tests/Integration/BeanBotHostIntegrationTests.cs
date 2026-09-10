@@ -74,6 +74,7 @@ public class BeanBotHostIntegrationTests
                 "stop-new-member",
                 "stop-edited-message",
                 "stop-command",
+                "stop-command-replies",
                 "stop-message-waiter",
                 "stop-paginator",
                 "unsubscribe-discord-log",
@@ -320,6 +321,12 @@ public class BeanBotHostIntegrationTests
             Calls.Add("stop-command");
             return Task.FromResult(true);
         }
+        public Task StopCommandRepliesAsync()
+        {
+            Calls.Add("stop-command-replies");
+            return Task.CompletedTask;
+        }
+
         public void StopMessageWaiter() => Calls.Add("stop-message-waiter");
         public void StopPaginator() => Calls.Add("stop-paginator");
         public void UnsubscribeDiscordLog() => Calls.Add("unsubscribe-discord-log");
