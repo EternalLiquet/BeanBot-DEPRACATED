@@ -36,6 +36,7 @@ public sealed class DiscordPaginatorService : IDisposable
     private readonly object _syncRoot = new();
     private readonly ILogger<DiscordPaginatorService> _logger;
     private readonly PaginatorDiscordOperationTracker _discordOperations;
+    private readonly TimeSpan _shutdownTimeout;
     private int _disposed;
 
     public DiscordPaginatorService(
@@ -49,7 +50,8 @@ public sealed class DiscordPaginatorService : IDisposable
         DiscordSocketClient discordClient,
         ILogger<DiscordPaginatorService> logger,
         TimeSpan discordOperationTimeout,
-        Func<ulong?>? getCurrentUserId = null)
+        Func<ulong?>? getCurrentUserId = null,
+        TimeSpan? shutdownTimeout = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(
             discordOperationTimeout,
@@ -58,6 +60,8 @@ public sealed class DiscordPaginatorService : IDisposable
         _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
         _getCurrentUserId = getCurrentUserId ?? (() => _discordClient.CurrentUser?.Id);
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _shutdownTimeout = shutdownTimeout ?? ShutdownTimeout;
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(_shutdownTimeout, TimeSpan.Zero);
         _shutdownToken = _shutdown.Token;
         _discordOperations = new PaginatorDiscordOperationTracker(
             MaximumActivePaginators,
@@ -67,6 +71,8 @@ public sealed class DiscordPaginatorService : IDisposable
             _shutdownToken);
         _discordClient.ReactionAdded += HandleReactionAsync;
     }
+
+    internal bool HasPendingOperations => _discordOperations.OwnedOperationCount > 0;
 
     public Task<IUserMessage> SendAsync(
         SocketCommandContext context,
@@ -509,13 +515,13 @@ public sealed class DiscordPaginatorService : IDisposable
         var shutdown = Task.WhenAll(shutdownTasks);
         try
         {
-            if (WaitForShutdown(shutdown, ShutdownTimeout))
+            if (WaitForShutdown(shutdown, _shutdownTimeout))
             {
                 _shutdown.Dispose();
                 return;
             }
 
-            BeanBotLog.PaginatorShutdownTimedOut(_logger, ShutdownTimeout);
+            BeanBotLog.PaginatorShutdownTimedOut(_logger, _shutdownTimeout);
         }
         catch (Exception exception)
         {

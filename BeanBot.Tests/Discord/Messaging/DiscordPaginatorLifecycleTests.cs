@@ -1,9 +1,13 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using BeanBot.Discord.Messaging;
+using BeanBot.Hosting;
 using Discord;
 using Discord.Commands;
 using Discord.WebSocket;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -11,6 +15,64 @@ namespace BeanBot.Tests.Discord.Messaging;
 
 public class DiscordPaginatorLifecycleTests
 {
+    [Fact]
+    public async Task ApplicationShutdown_PaginatorRestSurvivesDrain_PreventsDiscordTeardown()
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["BeanBot:BotToken"] = "test-token",
+            ["BeanBot:MongoConnectionString"] = "mongodb://127.0.0.1:27017",
+            ["BeanBot:GeneralChannelId"] = "1",
+            ["BeanBot:HatoeteUrl"] = "https://example.com/a.png",
+            ["BeanBot:YoshimaruUrl"] = "https://example.com/b.png"
+        });
+        builder.Services.AddBeanBot(builder.Configuration);
+        builder.Services.AddSingleton(provider => new DiscordPaginatorService(
+            provider.GetRequiredService<DiscordSocketClient>(), NullLogger<DiscordPaginatorService>.Instance,
+            TimeSpan.FromMilliseconds(25), shutdownTimeout: TimeSpan.FromMilliseconds(25)));
+        using var host = builder.Build();
+        using var client = host.Services.GetRequiredService<DiscordSocketClient>();
+        var realRuntime = host.Services.GetRequiredService<IBeanBotRuntime>();
+        var paginator = host.Services.GetRequiredService<DiscordPaginatorService>();
+        var stalled = new TaskCompletionSource<IUserMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var channel = CreateProxy<IMessageChannel>((_, _) => stalled.Task);
+        var context = CreateProxy<ICommandContext>((method, _) => method.Name == "get_Channel"
+            ? channel : throw new InvalidOperationException(method.Name));
+        var calls = new List<string>();
+        var runtime = CreateProxy<IBeanBotRuntime>((method, _) =>
+        {
+            calls.Add(method.Name);
+            if (method.Name == "get_HasActiveDiscordLifecycleOperation") return realRuntime.HasActiveDiscordLifecycleOperation;
+            if (method.Name == "get_CanDisposeDiscordClient") return true;
+            if (method.Name == nameof(IBeanBotRuntime.StopPaginator)) realRuntime.StopPaginator();
+            if (method.ReturnType == typeof(Task<bool>)) return Task.FromResult(true);
+            if (method.ReturnType == typeof(Task)) return Task.CompletedTask;
+            return null;
+        });
+        try
+        {
+            await Assert.ThrowsAsync<TimeoutException>(() => paginator.SendAsync(context, ["first"]));
+            var application = new BeanBotApplication(runtime, NullLogger<BeanBotApplication>.Instance);
+
+            await application.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.Contains(nameof(IBeanBotRuntime.StopPaginator), calls);
+            Assert.True(paginator.HasPendingOperations);
+            Assert.True(realRuntime.HasActiveDiscordLifecycleOperation);
+            Assert.DoesNotContain(nameof(IBeanBotRuntime.StopDiscordAsync), calls);
+            Assert.DoesNotContain(nameof(IBeanBotRuntime.DisposeDiscordClient), calls);
+        }
+        finally
+        {
+            stalled.TrySetException(new InvalidOperationException("late paginator send"));
+            var deadline = DateTime.UtcNow.AddSeconds(1);
+            while (paginator.HasPendingOperations && DateTime.UtcNow < deadline) await Task.Delay(5);
+        }
+        Assert.False(paginator.HasPendingOperations);
+        Assert.False(realRuntime.HasActiveDiscordLifecycleOperation);
+    }
+
     [Fact]
     public async Task SendAsync_CreatesPageAndAllControlsThenStopDeletesOnce()
     {
