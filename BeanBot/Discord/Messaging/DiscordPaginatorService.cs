@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using BeanBot.Logging;
 using Discord;
 using Discord.Commands;
-using Discord.Rest;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
 
@@ -29,6 +28,7 @@ public sealed class DiscordPaginatorService : IDisposable
     };
 
     private readonly DiscordSocketClient _discordClient;
+    private readonly Func<ulong?> _getCurrentUserId;
     private readonly ConcurrentDictionary<ulong, PaginationSession> _sessions = new();
     private readonly SemaphoreSlim _availableSlots = new(MaximumActivePaginators, MaximumActivePaginators);
     private readonly CancellationTokenSource _shutdown = new();
@@ -48,13 +48,15 @@ public sealed class DiscordPaginatorService : IDisposable
     internal DiscordPaginatorService(
         DiscordSocketClient discordClient,
         ILogger<DiscordPaginatorService> logger,
-        TimeSpan discordOperationTimeout)
+        TimeSpan discordOperationTimeout,
+        Func<ulong?>? getCurrentUserId = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(
             discordOperationTimeout,
             TimeSpan.Zero);
 
         _discordClient = discordClient ?? throw new ArgumentNullException(nameof(discordClient));
+        _getCurrentUserId = getCurrentUserId ?? (() => _discordClient.CurrentUser?.Id);
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _shutdownToken = _shutdown.Token;
         _discordOperations = new PaginatorDiscordOperationTracker(
@@ -66,8 +68,14 @@ public sealed class DiscordPaginatorService : IDisposable
         _discordClient.ReactionAdded += HandleReactionAsync;
     }
 
-    public async Task<IUserMessage> SendAsync(
+    public Task<IUserMessage> SendAsync(
         SocketCommandContext context,
+        IReadOnlyCollection<string> pages,
+        TimeSpan? timeout = null)
+        => SendAsync((ICommandContext)context, pages, timeout);
+
+    internal async Task<IUserMessage> SendAsync(
+        ICommandContext context,
         IReadOnlyCollection<string> pages,
         TimeSpan? timeout = null)
     {
@@ -96,7 +104,7 @@ public sealed class DiscordPaginatorService : IDisposable
             }
         }
 
-        RestUserMessage? message = null;
+        IUserMessage? message = null;
         PaginationSession? session = null;
         var sessionRegistered = false;
         var sessionAccessHeld = false;
@@ -173,7 +181,7 @@ public sealed class DiscordPaginatorService : IDisposable
     internal async Task HandleReactionAsync(ulong messageId, ulong userId, IEmote emote)
     {
         if (Volatile.Read(ref _disposed) != 0
-            || userId == _discordClient.CurrentUser?.Id
+            || userId == _getCurrentUserId()
             || !_sessions.TryGetValue(messageId, out var session)
             || userId != session.UserId)
         {
@@ -296,8 +304,8 @@ public sealed class DiscordPaginatorService : IDisposable
             await session.Access.WaitAsync();
             ownsAccess = true;
 
-            var currentUser = _discordClient.CurrentUser;
-            if (currentUser == null)
+            var currentUserId = _getCurrentUserId();
+            if (currentUserId is null)
             {
                 return;
             }
@@ -315,7 +323,7 @@ public sealed class DiscordPaginatorService : IDisposable
                         "remove expired control",
                         options => session.Message.RemoveReactionAsync(
                             control,
-                            currentUser,
+                            currentUserId.Value,
                             options),
                         expirationCancellation);
                 }
