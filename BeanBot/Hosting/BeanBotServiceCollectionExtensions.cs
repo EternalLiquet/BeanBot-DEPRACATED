@@ -45,6 +45,7 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton(_ => new CommandService(new CommandServiceConfig
         {
             LogLevel = LogSeverity.Verbose,
+            DefaultRunMode = RunMode.Sync,
             CaseSensitiveCommands = false
         }));
 

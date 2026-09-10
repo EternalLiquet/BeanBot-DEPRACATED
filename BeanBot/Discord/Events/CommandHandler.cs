@@ -36,6 +36,11 @@ public sealed class CommandHandler : IDisposable
     private readonly LogHandler _logHandler;
     private readonly LegacyCommandFeedbackResponder _feedbackResponder;
     private readonly ILogger<CommandHandler> _logger;
+    private readonly object _lifecycleGate = new();
+    private readonly LegacyCommandExecutionCoordinator _executionCoordinator = new();
+    private Task<LegacyCommandDrainResult>? _stopTask;
+    private Task? _completionUnsubscribeTask;
+    private bool _completionSubscribed;
     private bool _initialized;
 
     public CommandHandler(
@@ -58,37 +63,64 @@ public sealed class CommandHandler : IDisposable
 
     public async Task InitializeCommandsAsync()
     {
-        if (_initialized)
+        lock (_lifecycleGate)
         {
-            return;
+            if (_initialized || _executionCoordinator.IsStopping)
+            {
+                return;
+            }
         }
 
         BeanBotLog.CommandsInstalling(_logger);
         await _commandService.AddModulesAsync(assembly: Assembly.GetEntryAssembly() ?? typeof(CommandHandler).Assembly,
                                               services: _services);
-        _discordClient.MessageReceived += HandleCommandAsync;
-        _commandService.CommandExecuted += _logHandler.LogCommands;
-        _commandService.CommandExecuted += _feedbackResponder.RespondAsync;
-        _initialized = true;
+
+        lock (_lifecycleGate)
+        {
+            if (_initialized || _executionCoordinator.IsStopping)
+            {
+                return;
+            }
+
+            _discordClient.MessageReceived += HandleCommandAsync;
+            _commandService.CommandExecuted += _logHandler.LogCommands;
+            _commandService.CommandExecuted += _feedbackResponder.RespondAsync;
+            _completionSubscribed = true;
+            _initialized = true;
+        }
+    }
+
+    internal Task<LegacyCommandDrainResult> StopAsync()
+    {
+        lock (_lifecycleGate)
+        {
+            if (_stopTask is not null)
+            {
+                return _stopTask;
+            }
+
+            _executionCoordinator.StopAdmission();
+            StopSubscriptionsCore();
+            _stopTask = DrainCommandsAsync();
+            return _stopTask;
+        }
     }
 
     public void Dispose()
     {
-        if (_initialized)
+        lock (_lifecycleGate)
         {
-            _discordClient.MessageReceived -= HandleCommandAsync;
-            _commandService.CommandExecuted -= _feedbackResponder.RespondAsync;
-            _commandService.CommandExecuted -= _logHandler.LogCommands;
-            _initialized = false;
+            _executionCoordinator.StopAdmission();
+            StopSubscriptionsCore();
         }
     }
 
-    internal async Task HandleCommandAsync(SocketMessage messageEvent)
+    internal Task HandleCommandAsync(SocketMessage messageEvent)
     {
         var discordMessage = messageEvent as SocketUserMessage;
         if (MessageIsSystemMessage(discordMessage))
         {
-            return; // Return and ignore if the message is a Discord system message.
+            return Task.CompletedTask;
         }
 
         var argPos = 0;
@@ -109,19 +141,36 @@ public sealed class CommandHandler : IDisposable
         if (route == CommandMessageRoute.PublishToMessageWaiter)
         {
             _messageWaiter.TryPublish(messageEvent);
-            return;
+            return Task.CompletedTask;
         }
 
         if (route == CommandMessageRoute.Ignore)
         {
-            return;
+            return Task.CompletedTask;
         }
 
-        var context = new SocketCommandContext(_discordClient, discordMessage);
-        await _commandService.ExecuteAsync(
-            context: context,
-            argPos: argPos,
-            services: _services);
+        var admissionResult = _executionCoordinator.TryStart(() =>
+        {
+            var context = new SocketCommandContext(_discordClient, discordMessage);
+            return _commandService.ExecuteAsync(
+                context: context,
+                argPos: argPos,
+                services: _services);
+        }, exception => LegacyCommandLog.LateFailure(_logger, exception), out _);
+
+        if (admissionResult == LegacyCommandAdmissionResult.RejectedCapacity)
+        {
+            LegacyCommandLog.CapacityRejected(
+                _logger,
+                _executionCoordinator.ActiveExecutionCount,
+                _executionCoordinator.MaximumConcurrentExecutions);
+        }
+        else if (admissionResult == LegacyCommandAdmissionResult.RejectedStopping)
+        {
+            LegacyCommandLog.ShutdownRejected(_logger);
+        }
+
+        return Task.CompletedTask;
     }
 
     internal CommandPrefixKind GetCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
@@ -158,4 +207,41 @@ public sealed class CommandHandler : IDisposable
 
     internal static bool MessageIsSystemMessage([NotNullWhen(false)] SocketUserMessage? discordMessage)
         => discordMessage == null;
+
+    private async Task<LegacyCommandDrainResult> DrainCommandsAsync()
+    {
+        var result = await _executionCoordinator.DrainAsync();
+        if (!result.IsDrained)
+        {
+            LegacyCommandLog.DrainTimedOut(
+                _logger,
+                result.SurvivingExecutionCount,
+                LegacyCommandExecutionCoordinator.DefaultDrainTimeout);
+        }
+
+        return result;
+    }
+
+    private void StopSubscriptionsCore()
+    {
+        if (_initialized)
+        {
+            _discordClient.MessageReceived -= HandleCommandAsync;
+            _initialized = false;
+        }
+
+        _completionUnsubscribeTask ??= UnsubscribeCompletionWhenDrainedAsync();
+    }
+
+    private async Task UnsubscribeCompletionWhenDrainedAsync()
+    {
+        await _executionCoordinator.WhenDrained.ConfigureAwait(false);
+        lock (_lifecycleGate)
+        {
+            if (!_completionSubscribed) return;
+            _commandService.CommandExecuted -= _feedbackResponder.RespondAsync;
+            _commandService.CommandExecuted -= _logHandler.LogCommands;
+            _completionSubscribed = false;
+        }
+    }
 }
