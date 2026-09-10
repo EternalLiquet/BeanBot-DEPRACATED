@@ -47,7 +47,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    [Command("role setting", RunMode = RunMode.Async)]
+    [Command("role setting", RunMode = RunMode.Sync)]
     [Summary("Will create a message for auto-role based on reactions")]
     [Alias("rolesetting", "role settings", "rolesettings")]
     [Remarks("role setting")]
