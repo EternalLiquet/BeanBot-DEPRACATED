@@ -12,7 +12,7 @@ public enum DailyPunClaimResult
 public interface IDailyPunClaimStore
 {
     Task<DailyPunClaimResult> TryClaimAsync(
-        DateOnly chicagoDate,
+        DateOnly localDate,
         CancellationToken cancellationToken);
 }
 
@@ -30,14 +30,14 @@ internal sealed class MongoDailyPunClaimStore : IDailyPunClaimStore
     }
 
     public async Task<DailyPunClaimResult> TryClaimAsync(
-        DateOnly chicagoDate,
+        DateOnly localDate,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var claimedDate = chicagoDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var claimedDate = localDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var filter = Builders<DailyPunCheckpoint>.Filter.And(
             Builders<DailyPunCheckpoint>.Filter.Eq(checkpoint => checkpoint.Id, CheckpointId),
-            Builders<DailyPunCheckpoint>.Filter.Ne(checkpoint => checkpoint.ClaimedDate, claimedDate));
+            Builders<DailyPunCheckpoint>.Filter.Lt(checkpoint => checkpoint.ClaimedDate, claimedDate));
         var update = Builders<DailyPunCheckpoint>.Update
             .SetOnInsert(checkpoint => checkpoint.Id, CheckpointId)
             .Set(checkpoint => checkpoint.ClaimedDate, claimedDate);

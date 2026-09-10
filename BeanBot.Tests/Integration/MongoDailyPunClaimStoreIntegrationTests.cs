@@ -69,6 +69,13 @@ public sealed class MongoDailyPunClaimStoreIntegrationTests
                 DailyPunClaimResult.AlreadyClaimed,
                 await store.TryClaimAsync(new DateOnly(2026, 9, 7), cancellation.Token));
 
+            Assert.Equal(
+                DailyPunClaimResult.AlreadyClaimed,
+                await store.TryClaimAsync(new DateOnly(2026, 9, 6), cancellation.Token));
+            Assert.Equal(
+                DailyPunClaimResult.AlreadyClaimed,
+                await store.TryClaimAsync(new DateOnly(2026, 9, 7), cancellation.Token));
+
             var collection = database.GetCollection<BsonDocument>(MongoDailyPunClaimStore.CollectionName);
             var documents = await collection
                 .Find(FilterDefinition<BsonDocument>.Empty)

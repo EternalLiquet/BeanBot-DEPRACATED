@@ -8,10 +8,14 @@ namespace BeanBot.Discord.Commands;
 public class HelpModule : ModuleBase<SocketCommandContext>
 {
     private readonly CommandService _commandService;
+    private readonly LegacyCommandReplySender _replySender;
 
-    public HelpModule(CommandService commandService)
+    public HelpModule(
+        CommandService commandService,
+        LegacyCommandReplySender replySender)
     {
         _commandService = commandService ?? throw new ArgumentNullException(nameof(commandService));
+        _replySender = replySender ?? throw new ArgumentNullException(nameof(replySender));
     }
 
     [Command("help")]
@@ -58,6 +62,8 @@ public class HelpModule : ModuleBase<SocketCommandContext>
             }
         }
 
-        await ReplyAsync(string.Empty, false, helpBuilder.Build());
+        await _replySender.SendMessageAsync(
+            Context,
+            embed: helpBuilder.Build());
     }
 }

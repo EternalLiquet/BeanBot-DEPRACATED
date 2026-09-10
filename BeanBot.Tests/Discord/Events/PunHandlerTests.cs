@@ -37,7 +37,7 @@ public class PunHandlerTests
     [Fact]
     public void ComputeScheduleWindow_BeforeScheduledTimeTargetsToday()
     {
-        var timezone = PunHandler.GetChicagoTimeZone();
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
         var nowUtc = new DateTimeOffset(2026, 9, 7, 20, 0, 0, TimeSpan.Zero);
 
         var window = PunHandler.ComputeScheduleWindow(
@@ -54,7 +54,7 @@ public class PunHandlerTests
     [Fact]
     public void ComputeScheduleWindow_InsideGraceWindowTargetsToday()
     {
-        var timezone = PunHandler.GetChicagoTimeZone();
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
         var nowUtc = new DateTimeOffset(2026, 9, 7, 21, 30, 0, TimeSpan.Zero);
 
         var window = PunHandler.ComputeScheduleWindow(
@@ -69,7 +69,7 @@ public class PunHandlerTests
     [Fact]
     public void ComputeScheduleWindow_AfterGraceWindowTargetsTomorrow()
     {
-        var timezone = PunHandler.GetChicagoTimeZone();
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
         var nowUtc = new DateTimeOffset(2026, 9, 7, 22, 6, 0, TimeSpan.Zero);
 
         var window = PunHandler.ComputeScheduleWindow(
@@ -87,7 +87,7 @@ public class PunHandlerTests
     [InlineData("2026-11-01", 22)]
     public void ComputeOccurrenceUtc_UsesChicagoDstOffset(string localDateText, int expectedUtcHour)
     {
-        var timezone = PunHandler.GetChicagoTimeZone();
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
         var localDate = DateOnly.Parse(localDateText, System.Globalization.CultureInfo.InvariantCulture);
 
         var occurrence = PunHandler.ComputeOccurrenceUtc(timezone, localDate, ScheduledLocalTime);
@@ -100,7 +100,7 @@ public class PunHandlerTests
     [Fact]
     public async Task RunOccurrenceAsync_BeforeScheduleWaitsThenSendsExactlyOneSequence()
     {
-        var timezone = PunHandler.GetChicagoTimeZone();
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
         var clock = new AdvancingPunClock(
             new DateTimeOffset(2026, 9, 7, 20, 0, 0, TimeSpan.Zero));
         var claimStore = new InMemoryClaimStore();
@@ -126,7 +126,7 @@ public class PunHandlerTests
     [Fact]
     public async Task RunOccurrenceAsync_InsideGraceWindowPerformsCatchUpOnce()
     {
-        var timezone = PunHandler.GetChicagoTimeZone();
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
         var clock = new AdvancingPunClock(
             new DateTimeOffset(2026, 9, 7, 21, 25, 0, TimeSpan.Zero));
         var claimStore = new InMemoryClaimStore();
@@ -151,7 +151,7 @@ public class PunHandlerTests
     [Fact]
     public async Task RunOccurrenceAsync_PersistedClaimSuppressesRestartDuplicate()
     {
-        var timezone = PunHandler.GetChicagoTimeZone();
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
         var clock = new AdvancingPunClock(
             new DateTimeOffset(2026, 9, 7, 21, 25, 0, TimeSpan.Zero));
         var claimStore = new InMemoryClaimStore();
@@ -182,7 +182,7 @@ public class PunHandlerTests
     [Fact]
     public async Task RunOccurrenceAsync_ChannelUnavailableRetriesBeforeClaimThenSends()
     {
-        var timezone = PunHandler.GetChicagoTimeZone();
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
         var clock = new AdvancingPunClock(
             new DateTimeOffset(2026, 9, 7, 21, 25, 0, TimeSpan.Zero));
         var claimStore = new InMemoryClaimStore();
@@ -214,7 +214,7 @@ public class PunHandlerTests
     [Fact]
     public async Task RunOccurrenceAsync_ClaimStoreFailureFailsClosedThenRetries()
     {
-        var timezone = PunHandler.GetChicagoTimeZone();
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
         var clock = new AdvancingPunClock(
             new DateTimeOffset(2026, 9, 7, 21, 25, 0, TimeSpan.Zero));
         var claimStore = new FlakyClaimStore(new InMemoryClaimStore(), failuresBeforeSuccess: 1);
@@ -240,7 +240,7 @@ public class PunHandlerTests
     [Fact]
     public async Task RunOccurrenceAsync_ClaimStoreUnavailableUntilGraceExpiresNeverSends()
     {
-        var timezone = PunHandler.GetChicagoTimeZone();
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
         var scheduledUtc = new DateTimeOffset(2026, 9, 7, 21, 20, 0, TimeSpan.Zero);
         var clock = new AdvancingPunClock(scheduledUtc);
         var claimStore = new AlwaysFailingClaimStore();
@@ -274,7 +274,7 @@ public class PunHandlerTests
     [Fact]
     public async Task RunOccurrenceAsync_SendFailureAfterClaimDoesNotAllowSecondSequence()
     {
-        var timezone = PunHandler.GetChicagoTimeZone();
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
         var clock = new AdvancingPunClock(
             new DateTimeOffset(2026, 9, 7, 21, 25, 0, TimeSpan.Zero));
         var claimStore = new InMemoryClaimStore();
@@ -317,7 +317,7 @@ public class PunHandlerTests
     [Fact]
     public async Task RunOccurrenceAsync_CancellationInterruptsScheduledWait()
     {
-        var timezone = PunHandler.GetChicagoTimeZone();
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
         var clock = new BlockingPunClock(
             new DateTimeOffset(2026, 9, 7, 20, 0, 0, TimeSpan.Zero));
         await using var handler = CreateHandler(
@@ -336,6 +336,105 @@ public class PunHandlerTests
         cancellation.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => running);
+    }
+
+    [Theory]
+    [InlineData("2026-09-08T00:05:00+00:00", "2026-09-07")]
+    [InlineData("2026-09-08T00:35:00+00:00", "2026-09-07")]
+    [InlineData("2026-09-08T00:35:01+00:00", "2026-09-08")]
+    public void ComputeScheduleWindow_CatchesUpAcrossConfiguredLocalMidnight(string nowText, string expectedDate)
+    {
+        var now = DateTimeOffset.Parse(nowText, System.Globalization.CultureInfo.InvariantCulture);
+        var window = PunHandler.ComputeScheduleWindow(
+            TimeZoneInfo.Utc, now, new TimeSpan(23, 50, 0), DefaultGraceWindow);
+
+        Assert.Equal(DateOnly.Parse(expectedDate, System.Globalization.CultureInfo.InvariantCulture), window.LocalDate);
+        Assert.Equal(23, window.ScheduledUtc.Hour);
+        Assert.Equal(50, window.ScheduledUtc.Minute);
+    }
+
+    [Fact]
+    public async Task RunOccurrenceAsync_ConfiguredMidnightCatchUpClaimsOccurrenceDateAndSuppressesRestart()
+    {
+        var schedule = new DailyPunSchedule(new TimeSpan(23, 50, 0), "UTC", TimeZoneInfo.Utc);
+        var clock = new AdvancingPunClock(new DateTimeOffset(2026, 9, 8, 0, 5, 0, TimeSpan.Zero));
+        var claims = new InMemoryClaimStore();
+        var messages = new List<string>();
+        var window = PunHandler.ComputeScheduleWindow(
+            schedule.TimeZone, clock.GetUtcNow(), schedule.LocalTime, DefaultGraceWindow);
+        await using var handler = CreateHandler(claims, clock, () => CreateRecordingSender(messages), schedule: schedule);
+
+        Assert.Equal(PunOccurrenceResult.Attempted,
+            await handler.RunOccurrenceAsync(window, schedule.TimeZone, CancellationToken.None));
+        Assert.Equal(new DateOnly(2026, 9, 7), claims.ClaimedDate);
+        await using var restarted = CreateHandler(claims, clock, () => CreateRecordingSender(messages), schedule: schedule);
+        Assert.Equal(PunOccurrenceResult.DuplicateSuppressed,
+            await restarted.RunOccurrenceAsync(window, schedule.TimeZone, CancellationToken.None));
+        Assert.Equal(3, messages.Count);
+    }
+
+    [Fact]
+    public async Task RunOccurrenceAsync_UncooperativeClaimStaysSingleUntilGraceExpires()
+    {
+        var clock = new AdvancingPunClock(new DateTimeOffset(2026, 9, 7, 21, 20, 0, TimeSpan.Zero));
+        var claims = new BlockingClaimStore();
+        var messages = new List<string>();
+        var options = CreateSchedulerOptions(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5)) with
+        {
+            ClaimAttemptTimeout = TimeSpan.FromMilliseconds(25)
+        };
+        var handler = CreateHandler(claims, clock, () => CreateRecordingSender(messages), options);
+        var window = PunHandler.CreateScheduleWindow(
+            DailyPunSchedule.CreateDefault().TimeZone, new DateOnly(2026, 9, 7), ScheduledLocalTime, options.CatchUpGraceWindow);
+        try
+        {
+            Assert.Equal(PunOccurrenceResult.GraceExpired,
+                await handler.RunOccurrenceAsync(window, DailyPunSchedule.CreateDefault().TimeZone, CancellationToken.None)
+                    .WaitAsync(TimeSpan.FromSeconds(2)));
+            Assert.Equal(1, claims.CallCount);
+            Assert.Empty(messages);
+            await handler.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            claims.Completion.TrySetException(new InvalidOperationException("late claim failure"));
+            await handler.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task DisposeAsync_CancelsUncooperativeClaimWithoutSending()
+    {
+        var clock = new BlockingPunClock(new DateTimeOffset(2026, 9, 7, 21, 20, 0, TimeSpan.Zero));
+        var claims = new BlockingClaimStore();
+        var messages = new List<string>();
+        var handler = CreateHandler(claims, clock, () => CreateRecordingSender(messages));
+        try
+        {
+            handler.Start();
+            await claims.Started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            await handler.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.Equal(1, claims.CallCount);
+            Assert.Empty(messages);
+        }
+        finally
+        {
+            claims.Completion.TrySetResult(DailyPunClaimResult.Acquired);
+            await handler.DisposeAsync();
+        }
+    }
+
+    private sealed class BlockingClaimStore : IDailyPunClaimStore
+    {
+        public int CallCount { get; private set; }
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<DailyPunClaimResult> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task<DailyPunClaimResult> TryClaimAsync(DateOnly localDate, CancellationToken cancellationToken)
+        {
+            CallCount++;
+            Started.TrySetResult();
+            return Completion.Task;
+        }
     }
 
     [Fact]
@@ -480,9 +579,10 @@ public class PunHandlerTests
 
     private static PunHandler CreateHandler(
         IDailyPunClaimStore claimStore,
-        IPunClock clock,
+        TimeProvider clock,
         Func<Func<string, RequestOptions, Task>?> resolveSendMessage,
-        PunSchedulerOptions? schedulerOptions = null)
+        PunSchedulerOptions? schedulerOptions = null,
+        DailyPunSchedule? schedule = null)
         => new(
             123,
             new StaticPunProvider("test pun"),
@@ -490,7 +590,8 @@ public class PunHandlerTests
             resolveSendMessage,
             clock,
             schedulerOptions ?? CreateSchedulerOptions(),
-            NullLogger<PunHandler>.Instance);
+            NullLogger<PunHandler>.Instance,
+            schedule ?? DailyPunSchedule.CreateDefault());
 
     private static PunSchedulerOptions CreateSchedulerOptions(
         TimeSpan? catchUpGraceWindow = null,
@@ -600,30 +701,30 @@ public class PunHandlerTests
         }
     }
 
-    private sealed class AdvancingPunClock(DateTimeOffset utcNow) : IPunClock
+    private sealed class AdvancingPunClock(DateTimeOffset utcNow) : TimeProvider
     {
         public DateTimeOffset UtcNow { get; private set; } = utcNow;
         public List<TimeSpan> Delays { get; } = [];
+        public override DateTimeOffset GetUtcNow() => UtcNow;
 
-        public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            Delays.Add(delay);
-            UtcNow = UtcNow.Add(delay);
-            return Task.CompletedTask;
+            Delays.Add(dueTime);
+            UtcNow = UtcNow.Add(dueTime);
+            return base.CreateTimer(callback, state, TimeSpan.Zero, Timeout.InfiniteTimeSpan);
         }
     }
 
-    private sealed class BlockingPunClock(DateTimeOffset utcNow) : IPunClock
+    private sealed class BlockingPunClock(DateTimeOffset utcNow) : TimeProvider
     {
-        public DateTimeOffset UtcNow { get; } = utcNow;
+        public override DateTimeOffset GetUtcNow() => utcNow;
         public TaskCompletionSource DelayStarted { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public async Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             DelayStarted.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return base.CreateTimer(callback, state, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         }
     }
 

@@ -15,14 +15,15 @@ public sealed partial class PunHandler : IAsyncDisposable
     private readonly IPunProvider _punProvider;
     private readonly IDailyPunClaimStore _claimStore;
     private readonly Func<Func<string, RequestOptions, Task>?> _resolveSendMessage;
-    private readonly IPunClock _clock;
+    private readonly TimeProvider _timeProvider;
+    private readonly DailyPunSchedule _schedule;
+    private Task<DailyPunClaimResult>? _pendingClaim;
     private readonly PunSchedulerOptions _schedulerOptions;
     private readonly ILogger<PunHandler> _logger;
     private readonly CancellationTokenSource _tokenSource = new();
     private Task? _runner;
     private int _disposed;
 
-    private static readonly TimeSpan PostTimeLocal = new(16, 20, 0);
     internal static readonly TimeSpan MessageSendTimeout = TimeSpan.FromSeconds(10);
 
     public PunHandler(
@@ -31,27 +32,28 @@ public sealed partial class PunHandler : IAsyncDisposable
         IPunProvider punProvider,
         IDailyPunClaimStore claimStore,
         ILogger<PunHandler> logger)
+        : this(discordSocketClient, options, punProvider, claimStore, logger, TimeProvider.System)
+    {
+    }
+
+    internal PunHandler(
+        DiscordSocketClient discordSocketClient,
+        BeanBotOptions options,
+        IPunProvider punProvider,
+        IDailyPunClaimStore claimStore,
+        ILogger<PunHandler> logger,
+        TimeProvider timeProvider)
+        : this(
+            options.GeneralChannelId,
+            punProvider,
+            claimStore,
+            () => ResolveSender(discordSocketClient, options.GeneralChannelId),
+            timeProvider,
+            PunSchedulerOptions.Default,
+            logger,
+            options.DailyPun)
     {
         ArgumentNullException.ThrowIfNull(discordSocketClient);
-        ArgumentNullException.ThrowIfNull(options);
-        _generalChannelId = options.GeneralChannelId;
-        _punProvider = punProvider ?? throw new ArgumentNullException(nameof(punProvider));
-        _claimStore = claimStore ?? throw new ArgumentNullException(nameof(claimStore));
-        _resolveSendMessage = () =>
-        {
-            var channel = discordSocketClient.GetChannel(_generalChannelId) as SocketTextChannel;
-            if (channel is null)
-            {
-                return null;
-            }
-
-            return async (message, requestOptions) =>
-                await channel.SendMessageAsync(message, options: requestOptions);
-        };
-        _clock = SystemPunClock.Instance;
-        _schedulerOptions = PunSchedulerOptions.Default;
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        BeanBotLog.PunServiceInitializing(_logger);
     }
 
     internal PunHandler(
@@ -59,19 +61,32 @@ public sealed partial class PunHandler : IAsyncDisposable
         IPunProvider punProvider,
         IDailyPunClaimStore claimStore,
         Func<Func<string, RequestOptions, Task>?> resolveSendMessage,
-        IPunClock clock,
+        TimeProvider timeProvider,
         PunSchedulerOptions schedulerOptions,
-        ILogger<PunHandler> logger)
+        ILogger<PunHandler> logger,
+        DailyPunSchedule schedule)
     {
         _generalChannelId = generalChannelId;
         _punProvider = punProvider ?? throw new ArgumentNullException(nameof(punProvider));
         _claimStore = claimStore ?? throw new ArgumentNullException(nameof(claimStore));
         _resolveSendMessage = resolveSendMessage ?? throw new ArgumentNullException(nameof(resolveSendMessage));
-        _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+        _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+        _schedule = schedule ?? throw new ArgumentNullException(nameof(schedule));
         _schedulerOptions = schedulerOptions ?? throw new ArgumentNullException(nameof(schedulerOptions));
         ValidateSchedulerOptions(_schedulerOptions);
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         BeanBotLog.PunServiceInitializing(_logger);
+    }
+
+    private static Func<string, RequestOptions, Task>? ResolveSender(
+        DiscordSocketClient client, ulong channelId)
+    {
+        if (client.GetChannel(channelId) is not SocketTextChannel channel)
+        {
+            return null;
+        }
+
+        return async (message, options) => await channel.SendMessageAsync(message, options: options);
     }
 
     public void Start()
@@ -88,20 +103,20 @@ public sealed partial class PunHandler : IAsyncDisposable
 
     private async Task RunAsync(CancellationToken token)
     {
-        var timezone = GetChicagoTimeZone();
+        var timezone = _schedule.TimeZone;
 
         while (!token.IsCancellationRequested)
         {
             try
             {
-                var nowUtc = _clock.UtcNow;
+                var nowUtc = _timeProvider.GetUtcNow();
                 var window = ComputeScheduleWindow(
                     timezone,
                     nowUtc,
-                    PostTimeLocal,
+                    _schedule.LocalTime,
                     _schedulerOptions.CatchUpGraceWindow);
-                var chicagoNow = TimeZoneInfo.ConvertTime(nowUtc, timezone);
-                var today = DateOnly.FromDateTime(chicagoNow.DateTime);
+                var localNow = TimeZoneInfo.ConvertTime(nowUtc, timezone);
+                var today = DateOnly.FromDateTime(localNow.DateTime);
                 if (window.LocalDate > today)
                 {
                     LogGraceWindowExpired(today);
@@ -123,7 +138,7 @@ public sealed partial class PunHandler : IAsyncDisposable
                 BeanBotLog.PunLoopFailed(_logger, exception);
                 try
                 {
-                    await _clock.DelayAsync(_schedulerOptions.UnexpectedFailureRetryDelay, token);
+                    await Task.Delay(_schedulerOptions.UnexpectedFailureRetryDelay, _timeProvider, token);
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested)
                 {
@@ -141,31 +156,31 @@ public sealed partial class PunHandler : IAsyncDisposable
     {
         LogSchedule(timezone, window.ScheduledUtc);
 
-        var delayUntilScheduled = window.ScheduledUtc - _clock.UtcNow;
+        var delayUntilScheduled = window.ScheduledUtc - _timeProvider.GetUtcNow();
         if (delayUntilScheduled > TimeSpan.Zero)
         {
-            await _clock.DelayAsync(delayUntilScheduled, token);
+            await Task.Delay(delayUntilScheduled, _timeProvider, token);
         }
 
         while (true)
         {
             token.ThrowIfCancellationRequested();
-            var nowUtc = _clock.UtcNow;
+            var nowUtc = _timeProvider.GetUtcNow();
             if (nowUtc > window.GraceEndsUtc)
             {
                 LogGraceWindowExpired(window.LocalDate);
                 return PunOccurrenceResult.GraceExpired;
             }
 
-            var chicagoDate = window.LocalDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            var localDate = window.LocalDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             var isCatchUp = nowUtc > window.ScheduledUtc;
-            LogPunAttempting(_logger, chicagoDate, isCatchUp);
+            LogPunAttempting(_logger, localDate, isCatchUp);
 
             var sendMessage = _resolveSendMessage();
             if (sendMessage is null)
             {
                 BeanBotLog.PunChannelMissing(_logger, _generalChannelId);
-                if (!await DelayForPreSendRetryAsync(window, chicagoDate, "channel-unavailable", token))
+                if (!await DelayForPreSendRetryAsync(window, localDate, "channel-unavailable", token))
                 {
                     return PunOccurrenceResult.GraceExpired;
                 }
@@ -175,7 +190,7 @@ public sealed partial class PunHandler : IAsyncDisposable
 
             if (!_punProvider.TryGetRandomPun(out var pun))
             {
-                if (!await DelayForPreSendRetryAsync(window, chicagoDate, "pun-unavailable", token))
+                if (!await DelayForPreSendRetryAsync(window, localDate, "pun-unavailable", token))
                 {
                     return PunOccurrenceResult.GraceExpired;
                 }
@@ -186,11 +201,7 @@ public sealed partial class PunHandler : IAsyncDisposable
             DailyPunClaimResult claimResult;
             try
             {
-                using var claimCancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
-                claimCancellation.CancelAfter(_schedulerOptions.ClaimAttemptTimeout);
-                claimResult = await _claimStore.TryClaimAsync(
-                    window.LocalDate,
-                    claimCancellation.Token);
+                claimResult = await TryClaimWithTimeoutAsync(window.LocalDate, token);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -198,8 +209,8 @@ public sealed partial class PunHandler : IAsyncDisposable
             }
             catch (Exception exception)
             {
-                LogPunClaimStoreFailed(_logger, chicagoDate, exception);
-                if (!await DelayForPreSendRetryAsync(window, chicagoDate, "claim-store-unavailable", token))
+                LogPunClaimStoreFailed(_logger, localDate, exception);
+                if (!await DelayForPreSendRetryAsync(window, localDate, "claim-store-unavailable", token))
                 {
                     return PunOccurrenceResult.GraceExpired;
                 }
@@ -209,18 +220,19 @@ public sealed partial class PunHandler : IAsyncDisposable
 
             if (claimResult == DailyPunClaimResult.AlreadyClaimed)
             {
-                LogPunDuplicateSuppressed(_logger, chicagoDate);
+                LogPunDuplicateSuppressed(_logger, localDate);
                 return PunOccurrenceResult.DuplicateSuppressed;
             }
 
-            if (_clock.UtcNow > window.GraceEndsUtc)
+            token.ThrowIfCancellationRequested();
+            if (_timeProvider.GetUtcNow() > window.GraceEndsUtc)
             {
-                LogPunGraceWindowExpired(_logger, chicagoDate);
+                LogPunGraceWindowExpired(_logger, localDate);
                 return PunOccurrenceResult.GraceExpiredAfterClaim;
             }
 
-            var chicagoNow = TimeZoneInfo.ConvertTime(_clock.UtcNow, timezone);
-            BeanBotLog.PunPosting(_logger, chicagoNow);
+            var localNow = TimeZoneInfo.ConvertTime(_timeProvider.GetUtcNow(), timezone);
+            PunScheduleLog.Posting(_logger, localNow, _schedule.TimeZoneId);
             var requestOptions = new RequestOptions { CancelToken = token };
             try
             {
@@ -244,25 +256,48 @@ public sealed partial class PunHandler : IAsyncDisposable
         }
     }
 
+    private async Task<DailyPunClaimResult> TryClaimWithTimeoutAsync(
+        DateOnly localDate, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        // A timed-out Mongo operation still owns the single claim slot until it actually settles.
+        // Its result is deliberately discarded: a fresh durable claim must authorize every send.
+        if (_pendingClaim is { IsCompleted: false })
+        {
+            throw new TimeoutException("The previous daily pun claim has not completed.");
+        }
+
+        _pendingClaim = ClaimAsync(localDate, token);
+        ObserveLateFault(_pendingClaim);
+        return await _pendingClaim.WaitAsync(_schedulerOptions.ClaimAttemptTimeout, token);
+    }
+
+    private async Task<DailyPunClaimResult> ClaimAsync(DateOnly localDate, CancellationToken token)
+    {
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
+        cancellation.CancelAfter(_schedulerOptions.ClaimAttemptTimeout);
+        return await _claimStore.TryClaimAsync(localDate, cancellation.Token);
+    }
+
     private async Task<bool> DelayForPreSendRetryAsync(
         PunScheduleWindow window,
-        string chicagoDate,
+        string localDate,
         string reason,
         CancellationToken token)
     {
-        var remaining = window.GraceEndsUtc - _clock.UtcNow;
+        var remaining = window.GraceEndsUtc - _timeProvider.GetUtcNow();
         if (remaining <= TimeSpan.Zero)
         {
-            LogPunGraceWindowExpired(_logger, chicagoDate);
+            LogPunGraceWindowExpired(_logger, localDate);
             return false;
         }
 
         var delay = remaining < _schedulerOptions.PreflightRetryDelay
             ? remaining
             : _schedulerOptions.PreflightRetryDelay;
-        LogPunPreflightRetrying(_logger, chicagoDate, reason, delay);
-        await _clock.DelayAsync(delay, token);
-        return _clock.UtcNow <= window.GraceEndsUtc;
+        LogPunPreflightRetrying(_logger, localDate, reason, delay);
+        await Task.Delay(delay, _timeProvider, token);
+        return _timeProvider.GetUtcNow() <= window.GraceEndsUtc;
     }
 
     private async Task DelayUntilNextOccurrenceAsync(
@@ -270,12 +305,12 @@ public sealed partial class PunHandler : IAsyncDisposable
         DateOnly nextDate,
         CancellationToken token)
     {
-        var nextRunUtc = ComputeOccurrenceUtc(timezone, nextDate, PostTimeLocal);
+        var nextRunUtc = ComputeOccurrenceUtc(timezone, nextDate, _schedule.LocalTime);
         LogSchedule(timezone, nextRunUtc);
-        var delay = nextRunUtc - _clock.UtcNow;
+        var delay = nextRunUtc - _timeProvider.GetUtcNow();
         if (delay > TimeSpan.Zero)
         {
-            await _clock.DelayAsync(delay, token);
+            await Task.Delay(delay, _timeProvider, token);
         }
     }
 
@@ -290,11 +325,12 @@ public sealed partial class PunHandler : IAsyncDisposable
             .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
         var nextUtc = nextRunUtc.UtcDateTime
             .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-        var nowLocal = TimeZoneInfo.ConvertTime(_clock.UtcNow, timezone)
+        var nowLocal = TimeZoneInfo.ConvertTime(_timeProvider.GetUtcNow(), timezone)
             .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-        BeanBotLog.PunScheduled(
+        PunScheduleLog.Scheduled(
             _logger,
             nextLocal,
+            _schedule.TimeZoneId,
             nextUtc,
             nowLocal);
     }
@@ -306,8 +342,8 @@ public sealed partial class PunHandler : IAsyncDisposable
             return;
         }
 
-        var chicagoDate = localDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        LogPunGraceWindowExpired(_logger, chicagoDate);
+        var formattedDate = localDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        LogPunGraceWindowExpired(_logger, formattedDate);
     }
 
     internal static async Task SendPunMessagesAsync(
@@ -398,16 +434,52 @@ public sealed partial class PunHandler : IAsyncDisposable
             TaskScheduler.Default);
     }
 
-    internal static TimeZoneInfo GetChicagoTimeZone()
+    internal static DateTimeOffset ComputeNextOccurrenceUtc(
+        DailyPunSchedule schedule,
+        DateTimeOffset nowUtc)
     {
-        try
+        ArgumentNullException.ThrowIfNull(schedule);
+
+        var currentLocalTime = TimeZoneInfo.ConvertTime(nowUtc, schedule.TimeZone);
+        var tentativeNextPostTime = new DateTime(
+            currentLocalTime.Year,
+            currentLocalTime.Month,
+            currentLocalTime.Day,
+            schedule.LocalTime.Hours,
+            schedule.LocalTime.Minutes,
+            schedule.LocalTime.Seconds,
+            DateTimeKind.Unspecified);
+
+        var nextOccurrenceUtc = ResolveOccurrenceUtc(schedule.TimeZone, tentativeNextPostTime);
+        if (nextOccurrenceUtc <= nowUtc)
         {
-            return TimeZoneInfo.FindSystemTimeZoneById("America/Chicago");
+            nextOccurrenceUtc = ResolveOccurrenceUtc(
+                schedule.TimeZone,
+                tentativeNextPostTime.AddDays(1));
         }
-        catch (TimeZoneNotFoundException)
+
+        return nextOccurrenceUtc;
+    }
+
+    private static DateTimeOffset ResolveOccurrenceUtc(
+        TimeZoneInfo timeZone,
+        DateTime localOccurrence)
+    {
+        if (timeZone.IsInvalidTime(localOccurrence))
         {
-            return TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time");
+            localOccurrence = localOccurrence.AddHours(1);
         }
+        else if (timeZone.IsAmbiguousTime(localOccurrence))
+        {
+            var offsets = timeZone.GetAmbiguousTimeOffsets(localOccurrence);
+            var preferredOffset = offsets.Contains(timeZone.BaseUtcOffset)
+                ? timeZone.BaseUtcOffset
+                : offsets.Min();
+            return new DateTimeOffset(localOccurrence, preferredOffset).ToUniversalTime();
+        }
+
+        var utc = TimeZoneInfo.ConvertTimeToUtc(localOccurrence, timeZone);
+        return new DateTimeOffset(utc, TimeSpan.Zero);
     }
 
     internal static PunScheduleWindow ComputeScheduleWindow(
@@ -424,8 +496,14 @@ public sealed partial class PunHandler : IAsyncDisposable
                 "Catch-up grace window must be greater than zero.");
         }
 
-        var chicagoNow = TimeZoneInfo.ConvertTime(nowUtc, timezone);
-        var localDate = DateOnly.FromDateTime(chicagoNow.DateTime);
+        var localNow = TimeZoneInfo.ConvertTime(nowUtc, timezone);
+        var localDate = DateOnly.FromDateTime(localNow.DateTime);
+        var previous = CreateScheduleWindow(timezone, localDate.AddDays(-1), localTime, catchUpGraceWindow);
+        if (nowUtc >= previous.ScheduledUtc && nowUtc <= previous.GraceEndsUtc)
+        {
+            return previous;
+        }
+
         var today = CreateScheduleWindow(timezone, localDate, localTime, catchUpGraceWindow);
         if (nowUtc <= today.GraceEndsUtc)
         {
@@ -462,20 +540,7 @@ public sealed partial class PunHandler : IAsyncDisposable
             TimeOnly.FromTimeSpan(localTime),
             DateTimeKind.Unspecified);
 
-        if (timezone.IsInvalidTime(tentativePostTime))
-        {
-            tentativePostTime = tentativePostTime.AddHours(1);
-        }
-        else if (timezone.IsAmbiguousTime(tentativePostTime))
-        {
-            return new DateTimeOffset(
-                    tentativePostTime,
-                    timezone.GetAmbiguousTimeOffsets(tentativePostTime)[0])
-                .ToUniversalTime();
-        }
-
-        var utc = TimeZoneInfo.ConvertTimeToUtc(tentativePostTime, timezone);
-        return new DateTimeOffset(utc, TimeSpan.Zero);
+        return ResolveOccurrenceUtc(timezone, tentativePostTime);
     }
 
     private static void ValidateSchedulerOptions(PunSchedulerOptions options)
@@ -532,33 +597,33 @@ public sealed partial class PunHandler : IAsyncDisposable
 
     [LoggerMessage(
         Level = LogLevel.Information,
-        Message = "Attempting daily pun for Chicago date {ChicagoDate}. CatchUp={CatchUp}")]
-    private static partial void LogPunAttempting(ILogger logger, string chicagoDate, bool catchUp);
+        Message = "Attempting daily pun for local date {LocalDate}. CatchUp={CatchUp}")]
+    private static partial void LogPunAttempting(ILogger logger, string localDate, bool catchUp);
 
     [LoggerMessage(
         Level = LogLevel.Information,
-        Message = "Daily pun for Chicago date {ChicagoDate} was already claimed; suppressing duplicate delivery")]
-    private static partial void LogPunDuplicateSuppressed(ILogger logger, string chicagoDate);
+        Message = "Daily pun for local date {LocalDate} was already claimed; suppressing duplicate delivery")]
+    private static partial void LogPunDuplicateSuppressed(ILogger logger, string localDate);
 
     [LoggerMessage(
         Level = LogLevel.Information,
-        Message = "Daily pun catch-up grace window expired for Chicago date {ChicagoDate}; advancing to the next day")]
-    private static partial void LogPunGraceWindowExpired(ILogger logger, string chicagoDate);
+        Message = "Daily pun catch-up grace window expired for local date {LocalDate}; advancing to the next day")]
+    private static partial void LogPunGraceWindowExpired(ILogger logger, string localDate);
 
     [LoggerMessage(
         Level = LogLevel.Warning,
-        Message = "Daily pun claim store failed for Chicago date {ChicagoDate}; failing closed before Discord send")]
+        Message = "Daily pun claim store failed for local date {LocalDate}; failing closed before Discord send")]
     private static partial void LogPunClaimStoreFailed(
         ILogger logger,
-        string chicagoDate,
+        string localDate,
         Exception exception);
 
     [LoggerMessage(
         Level = LogLevel.Information,
-        Message = "Daily pun pre-send retry scheduled for Chicago date {ChicagoDate}. Reason={Reason}, Delay={Delay}")]
+        Message = "Daily pun pre-send retry scheduled for local date {LocalDate}. Reason={Reason}, Delay={Delay}")]
     private static partial void LogPunPreflightRetrying(
         ILogger logger,
-        string chicagoDate,
+        string localDate,
         string reason,
         TimeSpan delay);
 }
@@ -589,24 +654,4 @@ internal sealed record PunSchedulerOptions(
         TimeSpan.FromSeconds(5),
         TimeSpan.FromSeconds(30),
         PunHandler.MessageSendTimeout);
-}
-
-internal interface IPunClock
-{
-    DateTimeOffset UtcNow { get; }
-    Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken);
-}
-
-internal sealed class SystemPunClock : IPunClock
-{
-    internal static SystemPunClock Instance { get; } = new();
-
-    private SystemPunClock()
-    {
-    }
-
-    public DateTimeOffset UtcNow => DateTimeOffset.UtcNow;
-
-    public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
-        => Task.Delay(delay, cancellationToken);
 }
