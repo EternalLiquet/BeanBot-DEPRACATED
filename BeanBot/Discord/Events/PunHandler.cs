@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using BeanBot.Configuration;
 using BeanBot.Discord.Commands;
 using BeanBot.Logging;
@@ -12,13 +12,14 @@ public sealed class PunHandler : IAsyncDisposable
 {
     private readonly DiscordSocketClient _discordClient;
     private readonly ulong _generalChannelId;
+    private readonly DailyPunSchedule _schedule;
     private readonly IPunProvider _punProvider;
     private readonly ILogger<PunHandler> _logger;
+    private readonly TimeProvider _timeProvider;
     private readonly CancellationTokenSource _tokenSource = new();
     private Task? _runner;
     private int _disposed;
 
-    private static readonly TimeSpan PostTimeLocal = new(16, 20, 0);
     internal static readonly TimeSpan MessageSendTimeout = TimeSpan.FromSeconds(10);
 
     public PunHandler(
@@ -26,11 +27,29 @@ public sealed class PunHandler : IAsyncDisposable
         BeanBotOptions options,
         IPunProvider punProvider,
         ILogger<PunHandler> logger)
+        : this(
+            discordSocketClient,
+            options,
+            punProvider,
+            logger,
+            TimeProvider.System)
+    {
+    }
+
+    internal PunHandler(
+        DiscordSocketClient discordSocketClient,
+        BeanBotOptions options,
+        IPunProvider punProvider,
+        ILogger<PunHandler> logger,
+        TimeProvider timeProvider)
     {
         _discordClient = discordSocketClient ?? throw new ArgumentNullException(nameof(discordSocketClient));
-        _generalChannelId = (options ?? throw new ArgumentNullException(nameof(options))).GeneralChannelId;
+        var configuredOptions = options ?? throw new ArgumentNullException(nameof(options));
+        _generalChannelId = configuredOptions.GeneralChannelId;
+        _schedule = configuredOptions.DailyPun;
         _punProvider = punProvider ?? throw new ArgumentNullException(nameof(punProvider));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         BeanBotLog.PunServiceInitializing(_logger);
     }
 
@@ -48,54 +67,54 @@ public sealed class PunHandler : IAsyncDisposable
 
     private async Task RunAsync(CancellationToken token)
     {
-        var timezone = GetChicagoTimeZone();
-
         while (!token.IsCancellationRequested)
         {
             try
             {
-                var nextRunUtc = ComputeNextOccurenceUtc(timezone, PostTimeLocal);
-                var delay = nextRunUtc - DateTimeOffset.UtcNow;
+                var nowUtc = _timeProvider.GetUtcNow();
+                var nextRunUtc = ComputeNextOccurrenceUtc(_schedule, nowUtc);
+                var delay = nextRunUtc - nowUtc;
                 if (delay < TimeSpan.Zero)
                 {
                     delay = TimeSpan.Zero;
                 }
 
-                var chicagoNow = GetChicagoNow(timezone);
                 if (_logger.IsEnabled(LogLevel.Information))
                 {
-                    var nextLocal = TimeZoneInfo.ConvertTime(nextRunUtc, timezone)
+                    var nextLocal = TimeZoneInfo.ConvertTime(nextRunUtc, _schedule.TimeZone)
                         .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
                     var nextUtc = nextRunUtc.UtcDateTime
                         .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-                    var nowLocal = chicagoNow.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-                    BeanBotLog.PunScheduled(
+                    var nowLocal = TimeZoneInfo.ConvertTime(nowUtc, _schedule.TimeZone)
+                        .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                    PunScheduleLog.Scheduled(
                         _logger,
                         nextLocal,
+                        _schedule.TimeZoneId,
                         nextUtc,
                         nowLocal);
                 }
 
-                await Task.Delay(delay, token);
+                await Task.Delay(delay, _timeProvider, token);
 
-                await PostDailyAsync(timezone, token);
+                await PostDailyAsync(token);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
                 BeanBotLog.PunServiceShuttingDown(_logger);
             }
             catch (Exception ex)
             {
                 BeanBotLog.PunLoopFailed(_logger, ex);
-                await Task.Delay(TimeSpan.FromSeconds(30), token);
+                await Task.Delay(TimeSpan.FromSeconds(30), _timeProvider, token);
             }
         }
     }
 
-    private async Task PostDailyAsync(TimeZoneInfo timezone, CancellationToken token)
+    private async Task PostDailyAsync(CancellationToken token)
     {
-        var chicagoNow = GetChicagoNow(timezone);
-        BeanBotLog.PunPosting(_logger, chicagoNow);
+        var localNow = TimeZoneInfo.ConvertTime(_timeProvider.GetUtcNow(), _schedule.TimeZone);
+        PunScheduleLog.Posting(_logger, localNow, _schedule.TimeZoneId);
 
         var channel = _discordClient.GetChannel(_generalChannelId) as SocketTextChannel;
         if (channel is null)
@@ -206,56 +225,53 @@ public sealed class PunHandler : IAsyncDisposable
             TaskScheduler.Default);
     }
 
-    private static TimeZoneInfo GetChicagoTimeZone()
+    internal static DateTimeOffset ComputeNextOccurrenceUtc(
+        DailyPunSchedule schedule,
+        DateTimeOffset nowUtc)
     {
-        try
+        ArgumentNullException.ThrowIfNull(schedule);
+
+        var currentLocalTime = TimeZoneInfo.ConvertTime(nowUtc, schedule.TimeZone);
+        var tentativeNextPostTime = new DateTime(
+            currentLocalTime.Year,
+            currentLocalTime.Month,
+            currentLocalTime.Day,
+            schedule.LocalTime.Hours,
+            schedule.LocalTime.Minutes,
+            schedule.LocalTime.Seconds,
+            DateTimeKind.Unspecified);
+
+        var nextOccurrenceUtc = ResolveOccurrenceUtc(schedule.TimeZone, tentativeNextPostTime);
+        if (nextOccurrenceUtc <= nowUtc)
         {
-            // If on Linux or MacOS
-            return TimeZoneInfo.FindSystemTimeZoneById("America/Chicago");
+            nextOccurrenceUtc = ResolveOccurrenceUtc(
+                schedule.TimeZone,
+                tentativeNextPostTime.AddDays(1));
         }
-        catch (TimeZoneNotFoundException)
-        {
-            // If on Windows
-            return TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time");
-        }
+
+        return nextOccurrenceUtc;
     }
 
-    private static DateTimeOffset GetChicagoNow(TimeZoneInfo timezone)
-        => TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, timezone);
-
-
-    private static DateTimeOffset ComputeNextOccurenceUtc(TimeZoneInfo timezone, TimeSpan localTime)
+    private static DateTimeOffset ResolveOccurrenceUtc(
+        TimeZoneInfo timeZone,
+        DateTime localOccurrence)
     {
-        var currentChicagoTime = GetChicagoNow(timezone);
-        var tentativeNextPostTime = new DateTime(
-            currentChicagoTime.Year,
-            currentChicagoTime.Month,
-            currentChicagoTime.Day,
-            localTime.Hours,
-            localTime.Minutes,
-            localTime.Seconds,
-            DateTimeKind.Unspecified
-        );
-
-        if (currentChicagoTime.TimeOfDay >= localTime)
+        if (timeZone.IsInvalidTime(localOccurrence))
         {
-            tentativeNextPostTime = tentativeNextPostTime.AddDays(1);
+            localOccurrence = localOccurrence.AddHours(1);
+        }
+        else if (timeZone.IsAmbiguousTime(localOccurrence))
+        {
+            var offsets = timeZone.GetAmbiguousTimeOffsets(localOccurrence);
+            var preferredOffset = offsets.Contains(timeZone.BaseUtcOffset)
+                ? timeZone.BaseUtcOffset
+                : offsets.Min();
+            return new DateTimeOffset(localOccurrence, preferredOffset).ToUniversalTime();
         }
 
-        if (timezone.IsInvalidTime(tentativeNextPostTime))
-        {
-            tentativeNextPostTime = tentativeNextPostTime.AddHours(1);
-        }
-        else if (timezone.IsAmbiguousTime(tentativeNextPostTime))
-        {
-            return new DateTimeOffset(tentativeNextPostTime, timezone.GetAmbiguousTimeOffsets(tentativeNextPostTime)[0]);
-        }
-
-        var utc = TimeZoneInfo.ConvertTimeToUtc(tentativeNextPostTime, timezone);
-
+        var utc = TimeZoneInfo.ConvertTimeToUtc(localOccurrence, timeZone);
         return new DateTimeOffset(utc, TimeSpan.Zero);
     }
-
 
     public async ValueTask DisposeAsync()
     {

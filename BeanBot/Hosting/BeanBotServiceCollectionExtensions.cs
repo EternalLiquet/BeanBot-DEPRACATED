@@ -45,6 +45,7 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton(_ => new CommandService(new CommandServiceConfig
         {
             LogLevel = LogSeverity.Verbose,
+            DefaultRunMode = RunMode.Sync,
             CaseSensitiveCommands = false
         }));
 
@@ -52,6 +53,8 @@ internal static class BeanBotServiceCollectionExtensions
             new MongoClient(provider.GetRequiredService<BeanBotOptions>().MongoConnectionString));
         services.AddSingleton<IMongoDatabase>(provider =>
             provider.GetRequiredService<MongoClient>().GetDatabase("BeanBotDB"));
+        services.AddSingleton<IMongoReadinessProbe, MongoReadinessProbe>();
+        services.AddSingleton<MongoReadinessMonitor>();
 
         services.AddSingleton<DiscordConnectionHealth>();
         services.AddSingleton<DiscordLifecycleCoordinator>();
@@ -99,6 +102,7 @@ internal static class BeanBotServiceCollectionExtensions
             provider.GetRequiredService<DiscordOwnerErrorNotifier>());
         services.AddSingleton<DiscordOutageRecoveryNotifier>();
         services.AddSingleton<LogHandler>();
+        services.AddSingleton<LegacyCommandReplySender>();
         services.AddSingleton<DiscordLegacyCommandFeedbackDelivery>();
         services.AddSingleton<ILegacyCommandFeedbackDelivery>(provider =>
             provider.GetRequiredService<DiscordLegacyCommandFeedbackDelivery>());
@@ -122,6 +126,7 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<IPunProvider>(provider =>
             provider.GetRequiredService<PunProvider>());
         services.AddSingleton(ExternalMediaCommandOptions.Default);
+        services.AddSingleton<ExternalMediaAdmissionGuard>();
         services.AddSingleton<ExternalImageClient>();
         services.AddSingleton<IExternalImageClient>(provider =>
             provider.GetRequiredService<ExternalImageClient>());
@@ -144,6 +149,7 @@ internal static class BeanBotServiceCollectionExtensions
             provider.GetRequiredService<BeanBotOptions>().HealthCheck,
             provider.GetRequiredService<DiscordSocketClient>(),
             provider.GetRequiredService<DiscordConnectionHealth>(),
+            provider.GetRequiredService<MongoReadinessMonitor>(),
             provider.GetRequiredService<ILogger<HealthCheckServer>>()));
 
         services.AddSingleton<BeanBotRuntime>();

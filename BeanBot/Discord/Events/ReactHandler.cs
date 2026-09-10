@@ -12,6 +12,8 @@ public sealed class ReactHandler : IDisposable
     private readonly ILogger<ReactHandler> _logger;
     private bool _initialized;
 
+    internal bool HasPendingOperations => _roleService.HasPendingOperations;
+
     public ReactHandler(
         DiscordSocketClient discordClient,
         RoleReactService roleReactService,
@@ -46,5 +48,6 @@ public sealed class ReactHandler : IDisposable
         _discordClient.ReactionAdded -= _roleService.HandleReact;
         _discordClient.ReactionRemoved -= _roleService.HandleRemoveReact;
         _initialized = false;
+        _roleService.Dispose();
     }
 }

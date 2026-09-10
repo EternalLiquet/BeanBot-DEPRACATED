@@ -278,43 +278,95 @@ public class ReactionRoleMutationCoordinatorTests
         Assert.Equal(0, coordinator.ActiveKeyCount);
     }
 
-    [Fact]
-    public async Task Submit_TimedOutMutationReleasesKeyForLaterRealEvent()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Submit_LateMutationCannotOvertakeNewerOppositeState(bool firstState)
     {
-        var coordinator = CreateCoordinator();
+        var coordinator = CreateCoordinator(capacity: 1, timeout: TimeSpan.FromMilliseconds(25));
         var key = new ReactionRoleMutationKey(1, 2, 3);
-        var lateOperation = NewCompletion();
-
-        var timedOut = coordinator.Submit(
-            key,
-            42,
-            true,
-            (_, cancellationToken) => ReactionRoleMutationCoordinator.RunBoundedAsync(
-                _ => lateOperation.Task,
-                TimeSpan.FromMilliseconds(20),
-                cancellationToken),
-            CancellationToken.None);
-        Assert.NotNull(timedOut);
-        await timedOut!;
-        Assert.Equal(0, coordinator.ActiveKeyCount);
-
-        var freshMutationRan = false;
-        var fresh = coordinator.Submit(
-            key,
-            43,
-            false,
-            (_, _) =>
+        var release = NewCompletion();
+        var started = NewCompletion();
+        var states = new List<bool>();
+        var finalState = !firstState;
+        async Task Mutate(bool desired, CancellationToken _)
+        {
+            states.Add(desired);
+            if (states.Count == 1)
             {
-                freshMutationRan = true;
-                return Task.CompletedTask;
-            },
-            CancellationToken.None);
-        Assert.NotNull(fresh);
-        await fresh!;
+                started.TrySetResult();
+                await release.Task;
+            }
+            finalState = desired;
+        }
+        var owner = coordinator.Submit(key, 42, firstState, Mutate, CancellationToken.None)!;
+        await started.Task;
+        await Assert.ThrowsAsync<TimeoutException>(() => owner);
+        Assert.Equal(1, coordinator.ActiveKeyCount);
+        Assert.Null(coordinator.Submit(key, 43, !firstState, Mutate, CancellationToken.None));
+        Assert.Null(coordinator.Submit(new ReactionRoleMutationKey(1, 9, 3), 43, true,
+            (_, _) => throw new InvalidOperationException("capacity bypass"), CancellationToken.None));
+        Assert.Single(states);
+        var rawWorkers = coordinator.SnapshotOperations();
 
-        Assert.True(freshMutationRan);
-        lateOperation.SetException(new InvalidOperationException("late timeout failure"));
-        await Task.Yield();
+        release.SetResult();
+        await Task.WhenAll(rawWorkers).WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(new[] { firstState, !firstState }, states);
+        Assert.Equal(!firstState, finalState);
+        Assert.Equal(0, coordinator.ActiveKeyCount);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Submit_FailedRawAttemptFollowsNewerEventIncludingSameDirection(bool newerState)
+    {
+        var coordinator = CreateCoordinator(timeout: TimeSpan.FromMilliseconds(25));
+        var key = new ReactionRoleMutationKey(1, 2, 3);
+        var first = NewCompletion();
+        var started = NewCompletion();
+        var calls = new List<bool>();
+        var owner = coordinator.Submit(key, 42, true, async (state, _) =>
+        {
+            calls.Add(state);
+            started.SetResult();
+            await first.Task;
+        }, CancellationToken.None)!;
+        await started.Task;
+        await Assert.ThrowsAsync<TimeoutException>(() => owner);
+        Assert.Null(coordinator.Submit(key, 43, newerState, (state, _) =>
+        {
+            calls.Add(state);
+            return Task.CompletedTask;
+        }, CancellationToken.None));
+        var rawWorkers = coordinator.SnapshotOperations();
+
+        first.SetException(new InvalidOperationException("late REST failure"));
+        await Task.WhenAll(rawWorkers).WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(new[] { true, newerState }, calls);
+        Assert.Equal(0, coordinator.ActiveKeyCount);
+    }
+
+    [Fact]
+    public async Task Submit_LateFailureWithoutNewEventDoesNotRetry()
+    {
+        var coordinator = CreateCoordinator(timeout: TimeSpan.FromMilliseconds(25));
+        var first = NewCompletion();
+        var calls = 0;
+        var owner = coordinator.Submit(new ReactionRoleMutationKey(1, 2, 3), 42, true, (_, _) =>
+        {
+            calls++;
+            return first.Task;
+        }, CancellationToken.None)!;
+        await Assert.ThrowsAsync<TimeoutException>(() => owner);
+        Assert.Equal(1, coordinator.ActiveKeyCount);
+        var rawWorkers = coordinator.SnapshotOperations();
+        first.SetException(new InvalidOperationException("late REST failure"));
+        await Task.WhenAll(rawWorkers);
+        Assert.Equal(1, calls);
+        Assert.Equal(0, coordinator.ActiveKeyCount);
     }
 
     [Fact]
@@ -338,8 +390,10 @@ public class ReactionRoleMutationCoordinatorTests
         Assert.NotNull(owner);
         await started.Task;
 
+        var rawWorkers = coordinator.SnapshotOperations();
         stopping.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => owner!);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Task.WhenAll(rawWorkers));
         Assert.Equal(0, coordinator.ActiveKeyCount);
 
         var startedAfterShutdown = false;
@@ -357,43 +411,40 @@ public class ReactionRoleMutationCoordinatorTests
     }
 
     [Fact]
-    public async Task RunBoundedAsync_TimeoutDoesNotWaitForUnderlyingTaskToFinish()
+    public async Task Stop_CanceledCallerRetainsUncooperativeWorkerAndSuppressesFollowup()
     {
-        var operation = NewCompletion();
+        var coordinator = CreateCoordinator();
+        var key = new ReactionRoleMutationKey(1, 2, 3);
+        using var cancellation = new CancellationTokenSource();
+        var first = NewCompletion();
+        var started = NewCompletion();
+        var followupCalls = 0;
+        var owner = coordinator.Submit(key, 42, true, async (_, _) =>
+        {
+            started.SetResult();
+            await first.Task;
+        }, cancellation.Token)!;
+        await started.Task;
+        Assert.Null(coordinator.Submit(key, 43, false, (_, _) =>
+        {
+            followupCalls++;
+            return Task.CompletedTask;
+        }, cancellation.Token));
 
-        await Assert.ThrowsAsync<TimeoutException>(() =>
-            ReactionRoleMutationCoordinator.RunBoundedAsync(
-                _ => operation.Task,
-                TimeSpan.FromMilliseconds(20),
-                CancellationToken.None));
-
-        operation.SetException(new InvalidOperationException("late failure"));
-        await Task.Yield();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => owner);
+        var drain = coordinator.StopAsync();
+        Assert.False(drain.IsCompleted);
+        Assert.Equal(1, coordinator.ActiveKeyCount);
+        Assert.Null(coordinator.Submit(key, 44, true, (_, _) => Task.CompletedTask, CancellationToken.None));
+        first.SetResult();
+        await drain.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal(0, followupCalls);
+        Assert.Equal(0, coordinator.ActiveKeyCount);
     }
 
-    [Fact]
-    public async Task RunBoundedAsync_ShutdownCancellationIsNotReportedAsTimeout()
-    {
-        using var stopping = new CancellationTokenSource();
-        var operationStarted = NewCompletion();
-
-        var operation = ReactionRoleMutationCoordinator.RunBoundedAsync(
-            async operationCancellation =>
-            {
-                operationStarted.SetResult();
-                await Task.Delay(Timeout.InfiniteTimeSpan, operationCancellation);
-            },
-            TimeSpan.FromSeconds(1),
-            stopping.Token);
-        await operationStarted.Task;
-
-        stopping.Cancel();
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operation);
-    }
-
-    private static ReactionRoleMutationCoordinator CreateCoordinator(int capacity = 16)
-        => new(capacity, NullLogger.Instance);
+    private static ReactionRoleMutationCoordinator CreateCoordinator(int capacity = 16, TimeSpan? timeout = null)
+        => new(capacity, NullLogger.Instance, timeout);
 
     private static TaskCompletionSource NewCompletion()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);

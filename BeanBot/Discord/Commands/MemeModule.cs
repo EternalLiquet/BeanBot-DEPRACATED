@@ -12,6 +12,10 @@ namespace BeanBot.Discord.Commands;
 [Name("Meme Commands")]
 public class MemeModule : ModuleBase<SocketCommandContext>
 {
+    internal const string ExternalMediaBudgetKey = "external-media";
+    private const string ExternalMediaAdmissionRejectedMessage =
+        "That command is cooling down; try again in a few seconds.";
+
     private readonly BeanBotOptions _options;
     private readonly FortuneAnswerStore _fortuneAnswers;
     private readonly DiscordPaginatorService _paginator;
@@ -19,7 +23,9 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     private readonly IExternalImageClient _externalImageClient;
     private readonly IMemeProvider _memeProvider;
     private readonly ExternalMediaCommandOptions _mediaOptions;
+    private readonly ExternalMediaAdmissionGuard _mediaAdmissionGuard;
     private readonly IHostApplicationLifetime _applicationLifetime;
+    private readonly LegacyCommandReplySender _replySender;
     private readonly ILogger<MemeModule> _logger;
 
     public MemeModule(
@@ -30,7 +36,9 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         IExternalImageClient externalImageClient,
         IMemeProvider memeProvider,
         ExternalMediaCommandOptions mediaOptions,
+        ExternalMediaAdmissionGuard mediaAdmissionGuard,
         IHostApplicationLifetime applicationLifetime,
+        LegacyCommandReplySender replySender,
         ILogger<MemeModule> logger)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -40,7 +48,9 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         _externalImageClient = externalImageClient ?? throw new ArgumentNullException(nameof(externalImageClient));
         _memeProvider = memeProvider ?? throw new ArgumentNullException(nameof(memeProvider));
         _mediaOptions = mediaOptions ?? throw new ArgumentNullException(nameof(mediaOptions));
+        _mediaAdmissionGuard = mediaAdmissionGuard ?? throw new ArgumentNullException(nameof(mediaAdmissionGuard));
         _applicationLifetime = applicationLifetime ?? throw new ArgumentNullException(nameof(applicationLifetime));
+        _replySender = replySender ?? throw new ArgumentNullException(nameof(replySender));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -86,7 +96,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [RequireBotPermission(ChannelPermission.SendMessages)]
     public async Task McDonalds()
     {
-        await ReplyAsync("<:mcdonalds:661337575704887337>");
+        await _replySender.SendMessageAsync(Context, "<:mcdonalds:661337575704887337>");
     }
 
     [Command("fancy ocho ocho")]
@@ -104,7 +114,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [RequireBotPermission(ChannelPermission.SendMessages)]
     public async Task BlazeIt()
     {
-        await ReplyAsync("<:420stolfoit:675553715759087618>");
+        await _replySender.SendMessageAsync(Context, "<:420stolfoit:675553715759087618>");
     }
 
     [Command("toes")]
@@ -114,7 +124,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [RequireBotPermission(ChannelPermission.AttachFiles)]
     public async Task Toes()
     {
-        await SendImageFromUrl(_options.HatoeteImageUrl);
+        await RunExternalMediaCommandAsync(() => SendImageFromUrl(_options.HatoeteImageUrl));
     }
 
     [Command("yoshimaru")]
@@ -124,7 +134,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [RequireBotPermission(ChannelPermission.AttachFiles)]
     public async Task YoshiMaru()
     {
-        await SendImageFromUrl(_options.YoshimaruImageUrl);
+        await RunExternalMediaCommandAsync(() => SendImageFromUrl(_options.YoshimaruImageUrl));
     }
 
     [Command("echo")]
@@ -167,7 +177,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [RequireBotPermission(ChannelPermission.SendMessages)]
     public async Task Meme(string subreddit = "")
     {
-        await InvokeMemeApi(subreddit);
+        await RunExternalMediaCommandAsync(() => InvokeMemeApi(subreddit));
     }
 
     private async Task InvokeMemeApi(string subreddit)
@@ -190,7 +200,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
 
         if (meme == null)
         {
-            await ReplyAsync("The meme machine is down, quick, call 911!");
+            await _replySender.SendMessageAsync(Context, "The meme machine is down, quick, call 911!");
         }
         else
         {
@@ -200,7 +210,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
                 Description = $"/r/{meme.SubReddit}",
                 ImageUrl = meme.ImageUrl
             };
-            await ReplyAsync(embed: memeBuilder.Build());
+            await _replySender.SendMessageAsync(Context, embed: memeBuilder.Build());
         }
     }
 
@@ -210,7 +220,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [RequireBotPermission(ChannelPermission.SendMessages)]
     public async Task NationalBird()
     {
-        await ReplyAsync("The Texas Offical National Bird is the AR-15");
+        await _replySender.SendMessageAsync(Context, "The Texas Offical National Bird is the AR-15");
     }
 
     [Command("texasnationalflower")]
@@ -218,7 +228,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [Remarks("texasnationalflower")]
     public async Task NationalFlower()
     {
-        await ReplyAsync("The Texas Official National Flower is the Jimmy Dean breakfast taco");
+        await _replySender.SendMessageAsync(Context, "The Texas Official National Flower is the Jimmy Dean breakfast taco");
     }
 
     [Command("texasfacts")]
@@ -227,18 +237,18 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     public async Task TexasFacts()
     {
         var fact = TexasFactResponses[Random.Shared.Next(TexasFactResponses.Length)];
-        await ReplyAsync($"Did you know: {fact}");
+        await _replySender.SendMessageAsync(Context, $"Did you know: {fact}");
     }
 
     private async Task ChooseRandomPun()
     {
         if (!_punProvider.TryGetRandomPun(out var pun))
         {
-            await ReplyAsync("The PunMaster is temporarily out of material.");
+            await _replySender.SendMessageAsync(Context, "The PunMaster is temporarily out of material.");
             return;
         }
 
-        await ReplyAsync(pun);
+        await _replySender.SendMessageAsync(Context, pun);
     }
 
     private async Task ChooseRandomAnswer(string question)
@@ -289,10 +299,23 @@ public class MemeModule : ModuleBase<SocketCommandContext>
             var safeRejection = CreateMentionSafeReply(rejection);
             try
             {
-                await Context.Channel.SendFileAsync(
+                await _replySender.SendFileAsync(
+                    Context,
                     $"Resources/gordon{gordonGif}.gif",
                     safeRejection.Content,
-                    allowedMentions: safeRejection.AllowedMentions);
+                    safeRejection.AllowedMentions);
+            }
+            catch (LegacyCommandReplyTimeoutException)
+            {
+                throw;
+            }
+            catch (LegacyCommandReplyRejectedException)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception exception)
             {
@@ -334,6 +357,23 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     private bool IsPunMaster()
     {
         return (Context.Message.Author.Id == 262010462323998720);
+    }
+
+    private async Task RunExternalMediaCommandAsync(Func<Task> operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+
+        var result = await _mediaAdmissionGuard.RunAsync(
+            Context.Message.Author.Id,
+            ExternalMediaBudgetKey,
+            operation);
+        if (result == ExternalMediaAdmissionResult.Accepted)
+        {
+            return;
+        }
+
+        var rejection = CreateExternalMediaAdmissionReply();
+        await _replySender.SendMessageAsync(Context, rejection.Content, allowedMentions: rejection.AllowedMentions);
     }
 
     private async Task SendImageFromUrl(Uri url)
@@ -383,7 +423,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
             stage,
             GetSafeMediaSource(url),
             exception.GetType().Name);
-        await ReplyAsync("I couldn't download that image right now.");
+        await _replySender.SendMessageAsync(Context, "I couldn't download that image right now.");
     }
 
     internal static string GetSafeMediaSource(Uri url)
@@ -419,10 +459,16 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         return (content, AllowedMentions.None);
     }
 
+    internal static (string Content, AllowedMentions AllowedMentions) CreateExternalMediaAdmissionReply()
+        => (ExternalMediaAdmissionRejectedMessage, AllowedMentions.None);
+
     private Task<IUserMessage> ReplyWithReflectedContentAsync(string content)
     {
         var reply = CreateMentionSafeReply(content);
-        return ReplyAsync(reply.Content, allowedMentions: reply.AllowedMentions);
+        return _replySender.SendMessageAsync(
+            Context,
+            reply.Content,
+            allowedMentions: reply.AllowedMentions);
     }
 
     private async Task ReplyWithOchoOcho()
