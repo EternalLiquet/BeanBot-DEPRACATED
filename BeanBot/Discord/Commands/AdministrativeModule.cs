@@ -267,7 +267,9 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         var invokingUser = Context.User as SocketGuildUser ?? Context.Guild.GetUser(Context.User.Id);
         if (invokingUser == null)
         {
-            messages.Add(await ReplyAsync("Bean Bot could not verify your current role hierarchy. Please try again."));
+            messages.Add(await _replySender.SendMessageAsync(
+                Context,
+                "Bean Bot could not verify your current role hierarchy. Please try again."));
             return null;
         }
 
@@ -285,7 +287,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         var validationMessage = GetRoleValidationMessage(assignabilityStatus);
         if (validationMessage is not null)
         {
-            messages.Add(await ReplyAsync(validationMessage));
+            messages.Add(await _replySender.SendMessageAsync(Context, validationMessage));
             return null;
         }
 
