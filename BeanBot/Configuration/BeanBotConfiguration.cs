@@ -10,6 +10,8 @@ internal static class BeanBotConfiguration
     internal const string GeneralChannelVariable = "BEANBOT_GENERAL_CHANNEL_ID";
     internal const string HatoeteUrlVariable = "BEANBOT_HATOETE_URL";
     internal const string YoshimaruUrlVariable = "BEANBOT_YOSHIMARU_URL";
+    internal const string DailyPunTimeVariable = "BEANBOT_DAILY_PUN_TIME";
+    internal const string DailyPunTimeZoneVariable = "BEANBOT_DAILY_PUN_TIMEZONE";
     internal const string HealthCheckPortVariable = "BEANBOT_HEALTHCHECK_PORT";
     internal const string HealthCheckBindAddressVariable = "BEANBOT_HEALTHCHECK_BIND_ADDRESS";
     internal const string HealthCheckBearerTokenVariable = "BEANBOT_HEALTHCHECK_BEARER_TOKEN";
@@ -24,6 +26,12 @@ internal static class BeanBotConfiguration
         new(GeneralChannelVariable, "generalChannelId", "GeneralChannelId"),
         new(HatoeteUrlVariable, "hatoeteUrl", "HatoeteUrl"),
         new(YoshimaruUrlVariable, "yoshimaruUrl", "YoshimaruUrl")
+    ];
+
+    private static readonly ConfigurationKey[] DailyPunKeys =
+    [
+        new(DailyPunTimeVariable, "dailyPunTime", "DailyPun:Time"),
+        new(DailyPunTimeZoneVariable, "dailyPunTimezone", "DailyPun:TimeZone")
     ];
 
     private static readonly ConfigurationKey HealthCheckPort =
@@ -52,6 +60,11 @@ internal static class BeanBotConfiguration
 
         var normalizedValues = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var key in RequiredKeys)
+        {
+            AddNormalizedValue(configuration, normalizedValues, key);
+        }
+
+        foreach (var key in DailyPunKeys)
         {
             AddNormalizedValue(configuration, normalizedValues, key);
         }

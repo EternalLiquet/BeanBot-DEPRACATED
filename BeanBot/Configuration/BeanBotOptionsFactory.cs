@@ -15,6 +15,7 @@ internal static class BeanBotOptionsFactory
             ulong.Parse(settings.GeneralChannelId!, NumberStyles.None, CultureInfo.InvariantCulture),
             new Uri(settings.HatoeteUrl!, UriKind.Absolute),
             new Uri(settings.YoshimaruUrl!, UriKind.Absolute),
+            DailyPunSchedule.Create(settings.DailyPun),
             CreateHealthCheckOptions(settings.HealthCheck));
     }
 

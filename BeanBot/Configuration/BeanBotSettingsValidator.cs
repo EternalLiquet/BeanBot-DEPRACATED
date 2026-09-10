@@ -44,12 +44,32 @@ internal sealed class BeanBotSettingsValidator : IValidateOptions<BeanBotSetting
             "yoshimaruUrl",
             failures);
 
+        ValidateDailyPun(settings.DailyPun, failures);
         ValidateHealthCheck(settings.HealthCheck, failures);
         ValidateNewMemberWelcome(settings.NewMemberWelcome, failures);
 
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);
+    }
+
+    private static void ValidateDailyPun(
+        BeanBotDailyPunSettings settings,
+        List<string> failures)
+    {
+        if (!DailyPunSchedule.TryParseLocalTime(settings.Time, out _))
+        {
+            failures.Add(
+                $"Invalid value for {BeanBotConfiguration.DailyPunTimeVariable}. " +
+                "Expected a 24-hour local time in HH:mm format.");
+        }
+
+        if (!DailyPunSchedule.TryResolveTimeZone(settings.TimeZone, out _))
+        {
+            failures.Add(
+                $"Invalid value for {BeanBotConfiguration.DailyPunTimeZoneVariable}. " +
+                "Expected a recognized IANA or Windows timezone ID.");
+        }
     }
 
     private static void ValidateHealthCheck(

@@ -75,7 +75,7 @@ internal sealed class LegacyCommandFeedbackResponder
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(result);
 
-        if (result.IsSuccess)
+        if (result.IsSuccess || ShouldSuppressFeedback(result))
         {
             return;
         }
@@ -93,6 +93,18 @@ internal sealed class LegacyCommandFeedbackResponder
                 exception);
         }
     }
+
+    internal static bool ShouldSuppressFeedback(IResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        return result is ExecuteResult executeResult &&
+            ShouldSuppressFeedback(executeResult.Exception);
+    }
+
+    internal static bool ShouldSuppressFeedback(Exception? exception)
+        => exception is LegacyCommandReplyTimeoutException
+            or LegacyCommandReplyRejectedException
+            or OperationCanceledException;
 
     internal static string CreateFeedback(Optional<CommandInfo> command, IResult result)
     {

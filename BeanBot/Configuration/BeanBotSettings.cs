@@ -9,8 +9,15 @@ internal sealed class BeanBotSettings
     public string? GeneralChannelId { get; set; }
     public string? HatoeteUrl { get; set; }
     public string? YoshimaruUrl { get; set; }
+    public BeanBotDailyPunSettings DailyPun { get; set; } = new BeanBotDailyPunSettings();
     public BeanBotHealthCheckSettings HealthCheck { get; set; } = new BeanBotHealthCheckSettings();
     public BeanBotNewMemberWelcomeSettings NewMemberWelcome { get; set; } = new BeanBotNewMemberWelcomeSettings();
+}
+
+internal sealed class BeanBotDailyPunSettings
+{
+    public string? Time { get; set; } = DailyPunSchedule.DefaultTime;
+    public string? TimeZone { get; set; } = DailyPunSchedule.DefaultTimeZoneId;
 }
 
 internal sealed class BeanBotHealthCheckSettings
