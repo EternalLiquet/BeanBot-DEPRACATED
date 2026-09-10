@@ -20,6 +20,7 @@ public class RoleMenuInteractionServiceTests
 
         var administration = new RoleMenuAdministrationService(
             fixture.Service, discord, NullLogger<RoleMenuAdministrationService>.Instance);
+        var audit = new RoleMenuAuditService(fixture.Service, discord);
         var members = new RoleMenuMemberService(
             fixture.Service, discord, NullLogger<RoleMenuMemberService>.Instance);
 
@@ -27,16 +28,25 @@ public class RoleMenuInteractionServiceTests
             null!,
             discord,
             administration,
+            audit,
             NullLogger<RoleMenuAdminModule>.Instance));
         Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
             fixture.Service,
             discord,
             administration,
+            null!,
+            NullLogger<RoleMenuAdminModule>.Instance));
+        Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
+            fixture.Service,
+            discord,
+            administration,
+            audit,
             null!));
         _ = new RoleMenuAdminModule(
             fixture.Service,
             discord,
             administration,
+            audit,
             NullLogger<RoleMenuAdminModule>.Instance);
 
         Assert.Throws<ArgumentNullException>(() => new RoleMenuMemberModule(
