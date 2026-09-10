@@ -75,9 +75,10 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     }
 
     public bool HasActiveDiscordLifecycleOperation
-        => _discordLifecycleCoordinator.HasActiveSequence ||
-           _newMemberWelcomeService.HasActiveDiscordOperation ||
-           _commandReplySender.HasPendingOperations;
+        => _discordLifecycleCoordinator.HasActiveSequence
+            || _newMemberWelcomeService.HasActiveDiscordOperation
+            || _commandReplySender.HasPendingOperations
+            || _paginatorService.HasPendingOperations;
 
     public bool CanDisposeDiscordClient => _canDisposeDiscordClient;
 
