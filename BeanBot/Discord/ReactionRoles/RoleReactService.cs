@@ -247,11 +247,11 @@ public class RoleReactService : IDisposable, IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
         if (user is not null)
         {
-            if (addRole && !user.RoleIds.Contains(role.Id))
+            if (addRole)
             {
                 await user.AddRoleAsync(role, requestOptions);
             }
-            else if (!addRole && user.RoleIds.Contains(role.Id))
+            else
             {
                 await user.RemoveRoleAsync(role, requestOptions);
             }

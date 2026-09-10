@@ -1,12 +1,46 @@
 using System.Reflection;
 using BeanBot.Discord.ReactionRoles;
 using Discord;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace BeanBot.Tests.Discord.ReactionRoles;
 
 public class RoleReactServiceAssignabilityTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CoordinatedLateMutation_ConvergesDespiteStaleCachedMembership(bool firstAddsRole)
+    {
+        var guild = DispatchProxy.Create<IGuild, DiscordCallRecorder>();
+        var user = DispatchProxy.Create<IGuildUser, DiscordCallRecorder>();
+        var role = DispatchProxy.Create<IRole, DiscordCallRecorder>();
+        ((DiscordCallRecorder)guild).User = user;
+        var userRecorder = (DiscordCallRecorder)user;
+        userRecorder.RoleIds = firstAddsRole ? [] : [7];
+        var rawMutation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        userRecorder.Mutation = rawMutation.Task;
+        var coordinator = new ReactionRoleMutationCoordinator(1, NullLogger.Instance, TimeSpan.FromMilliseconds(25));
+        var key = new ReactionRoleMutationKey(1, 42, 7);
+        async Task Mutate(bool desired, CancellationToken token)
+            => await RoleReactService.ApplyRoleChangeAsync(
+                new ReactionRoleAssignabilityFacts(true, false, false, true, 1, 2), guild, role, 42, desired, token);
+        var owner = coordinator.Submit(key, 8, firstAddsRole, Mutate, CancellationToken.None)!;
+        await userRecorder.MutationStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await Assert.ThrowsAsync<TimeoutException>(() => owner);
+        Assert.Null(coordinator.Submit(key, 8, !firstAddsRole, Mutate, CancellationToken.None));
+        var workers = coordinator.SnapshotOperations();
+
+        rawMutation.SetResult();
+        await Task.WhenAll(workers).WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(firstAddsRole
+            ? new[] { "AddRoleAsync", "RemoveRoleAsync" }
+            : ["RemoveRoleAsync", "AddRoleAsync"], userRecorder.Calls);
+        Assert.Equal(0, coordinator.ActiveKeyCount);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -98,6 +132,8 @@ public class RoleReactServiceAssignabilityTests
         public List<string> Calls { get; } = [];
         public IGuildUser? User { get; set; }
         public Task<IGuildUser>? Lookup { get; set; }
+        public Task Mutation { get; set; } = Task.CompletedTask;
+        public TaskCompletionSource MutationStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public IReadOnlyCollection<ulong> RoleIds { get; set; } = [];
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
@@ -106,10 +142,11 @@ public class RoleReactServiceAssignabilityTests
             if (name == "get_Id") return 7UL;
             if (name == "get_RoleIds") return RoleIds;
             Calls.Add(name);
+            if (name is "AddRoleAsync" or "RemoveRoleAsync") MutationStarted.TrySetResult();
             return name switch
             {
                 "GetUserAsync" => Lookup ?? Task.FromResult(User!),
-                "AddRoleAsync" or "RemoveRoleAsync" => Task.CompletedTask,
+                "AddRoleAsync" or "RemoveRoleAsync" => Mutation,
                 _ => throw new NotSupportedException(name)
             };
         }
