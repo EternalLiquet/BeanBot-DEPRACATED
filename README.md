@@ -39,13 +39,15 @@ BEANBOT_HEALTHCHECK_RATE_LIMIT_SECONDS=90
 
 When `BEANBOT_HEALTHCHECK_PORT` is set, the bot exposes a Kestrel-hosted `GET /healthz` and `HEAD /healthz` endpoint on that port:
 
-- `200 OK`: process is up and the Discord gateway session is ready.
+- `200 OK`: process is up, the Discord gateway session is ready, and MongoDB passed a recent readiness probe.
 - `401 Unauthorized`: the bearer token is missing or invalid.
-- `503 Service Unavailable`: process is up, but Discord is not currently connected or ready.
+- `503 Service Unavailable`: process is up, but Discord is not ready or MongoDB is unavailable/stale.
 - `429 Too Many Requests`: the same client polled again before the configured rate limit expired.
 - no response / connection failure: the bot process is down or unreachable.
 
-Successful and unhealthy JSON responses also include the non-secret release version and Git commit SHA so an operator can identify the running image.
+Successful and unhealthy JSON responses include the non-secret release version and Git commit SHA, the existing Discord lifecycle fields, and sanitized `mongoReachable` / `mongoLastCheckedAtUtc` fields so an operator can distinguish Gateway and persistence readiness without exposing MongoDB connection details.
+
+Mongo readiness uses a lightweight single-flight ping. A completed result is reused for at most 10 seconds, and a stale result triggers a fresh probe. Each probe has a 2-second application-owned deadline. If the underlying driver call does not settle by that deadline, `/healthz` reports MongoDB unavailable while BeanBot retains ownership of that single late probe until it completes; later polls do not fan out additional Mongo operations. Recovery is reflected by the next probe after the cached unhealthy result expires, without restarting BeanBot.
 
 If you bind the endpoint to anything other than `127.0.0.1`, set `BEANBOT_HEALTHCHECK_BEARER_TOKEN` and send `Authorization: Bearer <token>` from Home Assistant.
 
@@ -71,7 +73,7 @@ BeanBot remains a single application project, organized by responsibility:
 
 - `Configuration` binds and validates runtime settings.
 - `Discord` contains commands, event handlers, gateway lifecycle, messaging helpers, and reaction-role behavior.
-- `Health` owns gateway health snapshots and the authenticated `/healthz` endpoint.
+- `Health` owns Gateway and MongoDB readiness snapshots and the authenticated `/healthz` endpoint.
 - `Hosting` composes the Generic Host and coordinates startup and shutdown.
 - `Logging` contains structured log messages and Discord owner-alert delivery.
 - `Persistence` contains runtime directory setup, persisted models, outage state, and MongoDB repositories.
