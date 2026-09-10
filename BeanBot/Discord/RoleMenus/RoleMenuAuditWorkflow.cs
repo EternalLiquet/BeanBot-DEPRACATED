@@ -294,18 +294,35 @@ internal static class RoleMenuAuditor
             LookupTimeout,
             cancellationToken);
 
-    internal static async Task<IReadOnlyList<RoleMenuAuditResult>> AuditManyAsync(
+    internal static Task<IReadOnlyList<RoleMenuAuditResult>> AuditManyAsync(
         DiscordRoleMenuClient discord,
         IReadOnlyList<RoleMenuSettings> settings,
         ulong guildId,
         ulong botUserId,
         ILogger logger,
         CancellationToken cancellationToken)
+        => AuditManyAsync(
+            settings,
+            guildId,
+            botUserId,
+            CreateOperations(discord),
+            logger,
+            LookupTimeout,
+            cancellationToken);
+
+    internal static async Task<IReadOnlyList<RoleMenuAuditResult>> AuditManyAsync(
+        IReadOnlyList<RoleMenuSettings> settings,
+        ulong guildId,
+        ulong botUserId,
+        RoleMenuAuditOperations operations,
+        ILogger logger,
+        TimeSpan lookupTimeout,
+        CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(discord);
         ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(operations);
         ArgumentNullException.ThrowIfNull(logger);
-        var operations = CreateOperations(discord);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(lookupTimeout, TimeSpan.Zero);
         var limitedSettings = settings.Take(RoleMenuConstants.MaximumListedMenus).ToList();
         var results = new List<RoleMenuAuditResult>(limitedSettings.Count);
         for (var offset = 0; offset < limitedSettings.Count; offset += MaximumConcurrentAudits)
@@ -323,7 +340,7 @@ internal static class RoleMenuAuditor
                     botUserId,
                     operations,
                     logger,
-                    LookupTimeout,
+                    lookupTimeout,
                     cancellationToken);
             }
 
@@ -465,7 +482,7 @@ internal static class RoleMenuAuditPresentation
 
         return new EmbedBuilder()
             .WithTitle("Role-menu audit")
-            .WithDescription(string.Join('\n', lines))
+            .WithDescription(string.Join("\n", lines))
             .Build();
     }
 
