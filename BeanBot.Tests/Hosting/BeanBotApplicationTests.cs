@@ -45,6 +45,7 @@ public class BeanBotApplicationTests
                 "stop-new-member",
                 "stop-edited-message",
                 "stop-command",
+                "stop-command-replies",
                 "stop-message-waiter",
                 "stop-paginator",
                 "unsubscribe-discord-log",
@@ -75,6 +76,23 @@ public class BeanBotApplicationTests
         Assert.DoesNotContain("dispose-discord", runtime.Calls);
         Assert.Equal(2, runtime.Calls.Count(call => call == "flush-alerts"));
         Assert.Contains("unsubscribe-events", runtime.Calls);
+    }
+
+    [Fact]
+    public async Task StopAsync_CommandReplyWorkSurvivesDrain_SkipsDiscordShutdownAndDisposal()
+    {
+        var runtime = new RecordingRuntime
+        {
+            KeepDiscordLifecycleOwnedAfterCommandReplies = true
+        };
+        var application = new BeanBotApplication(runtime, NullLogger<BeanBotApplication>.Instance);
+
+        await application.StopAsync(CancellationToken.None);
+
+        Assert.Contains("stop-command-replies", runtime.Calls);
+        Assert.DoesNotContain("stop-discord", runtime.Calls);
+        Assert.DoesNotContain("dispose-discord", runtime.Calls);
+        Assert.Equal(2, runtime.Calls.Count(call => call == "flush-alerts"));
     }
 
     [Fact]
@@ -154,7 +172,8 @@ public class BeanBotApplicationTests
     [InlineData("stop-reaction", "stop-new-member")]
     [InlineData("stop-new-member", "stop-edited-message")]
     [InlineData("stop-edited-message", "stop-command")]
-    [InlineData("stop-command", "stop-message-waiter")]
+    [InlineData("stop-command", "stop-command-replies")]
+    [InlineData("stop-command-replies", "stop-message-waiter")]
     [InlineData("stop-message-waiter", "stop-paginator")]
     [InlineData("stop-paginator", "unsubscribe-discord-log")]
     [InlineData("unsubscribe-discord-log", "stop-recovery")]
@@ -290,6 +309,7 @@ public class BeanBotApplicationTests
         await application.StopAsync(CancellationToken.None);
 
         Assert.Contains("stop-reaction", runtime.Calls);
+        Assert.Contains("stop-command-replies", runtime.Calls);
         Assert.Contains("stop-recovery", runtime.Calls);
         Assert.Contains("unsubscribe-events", runtime.Calls);
         Assert.Contains("stop-pun", runtime.Calls);
@@ -305,6 +325,7 @@ public class BeanBotApplicationTests
         public string? IncompleteOperation { get; init; }
         public TaskCompletionSource? IncompleteCompletion { get; init; }
         public bool ActivateDiscordLifecycleOnIncompleteOperation { get; init; }
+        public bool KeepDiscordLifecycleOwnedAfterCommandReplies { get; init; }
         public string? BlockingOperation { get; init; }
         public ManualResetEventSlim? BlockingRelease { get; init; }
         public CancellationTokenSource? ShutdownCancellation { get; init; }
@@ -327,6 +348,15 @@ public class BeanBotApplicationTests
         public void StopNewMemberEvents() => Record("stop-new-member");
         public Task StopEditedMessageEventsAsync() => RecordAsync("stop-edited-message");
         public void StopCommandServices() => Record("stop-command");
+        public Task StopCommandRepliesAsync()
+        {
+            if (KeepDiscordLifecycleOwnedAfterCommandReplies)
+            {
+                HasActiveDiscordLifecycleOperation = true;
+            }
+
+            return RecordAsync("stop-command-replies");
+        }
         public void StopMessageWaiter() => Record("stop-message-waiter");
         public void StopPaginator() => Record("stop-paginator");
         public void UnsubscribeDiscordLog() => Record("unsubscribe-discord-log");

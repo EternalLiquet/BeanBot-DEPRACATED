@@ -1,3 +1,4 @@
+using BeanBot.Discord.Commands;
 using BeanBot.Discord.Events;
 using BeanBot.Discord.Lifecycle;
 using BeanBot.Discord.Messaging;
@@ -19,6 +20,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     private readonly DiscordOwnerErrorNotifier _ownerErrorNotifier;
     private readonly HealthCheckServer _healthCheckServer;
     private readonly CommandHandler _commandHandler;
+    private readonly LegacyCommandReplySender _commandReplySender;
     private readonly PunHandler _punHandler;
     private readonly EditMessageHandler _editMessageHandler;
     private readonly NewMemberHandler _newMemberHandler;
@@ -39,6 +41,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         DiscordOwnerErrorNotifier ownerErrorNotifier,
         HealthCheckServer healthCheckServer,
         CommandHandler commandHandler,
+        LegacyCommandReplySender commandReplySender,
         PunHandler punHandler,
         EditMessageHandler editMessageHandler,
         NewMemberHandler newMemberHandler,
@@ -57,6 +60,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         _ownerErrorNotifier = ownerErrorNotifier ?? throw new ArgumentNullException(nameof(ownerErrorNotifier));
         _healthCheckServer = healthCheckServer ?? throw new ArgumentNullException(nameof(healthCheckServer));
         _commandHandler = commandHandler ?? throw new ArgumentNullException(nameof(commandHandler));
+        _commandReplySender = commandReplySender ?? throw new ArgumentNullException(nameof(commandReplySender));
         _punHandler = punHandler ?? throw new ArgumentNullException(nameof(punHandler));
         _editMessageHandler = editMessageHandler ?? throw new ArgumentNullException(nameof(editMessageHandler));
         _newMemberHandler = newMemberHandler ?? throw new ArgumentNullException(nameof(newMemberHandler));
@@ -69,7 +73,8 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
 
     public bool HasActiveDiscordLifecycleOperation
         => _discordLifecycleCoordinator.HasActiveSequence ||
-           _editMessageHandler.HasInFlightOperations;
+           _editMessageHandler.HasInFlightOperations ||
+           _commandReplySender.HasPendingOperations;
 
     public bool CanDisposeDiscordClient => _canDisposeDiscordClient;
 
@@ -111,6 +116,8 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     public Task StopEditedMessageEventsAsync() => _editMessageHandler.StopAsync();
 
     public void StopCommandServices() => _commandHandler.Dispose();
+
+    public Task StopCommandRepliesAsync() => _commandReplySender.StopAsync();
 
     public void StopMessageWaiter() => _messageWaiter.Dispose();
 
