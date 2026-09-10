@@ -1,5 +1,6 @@
 using BeanBot.Discord.Commands;
 using BeanBot.Discord.Events;
+using BeanBot.Discord.Interactions;
 using BeanBot.Discord.Lifecycle;
 using BeanBot.Discord.Messaging;
 using BeanBot.Health;
@@ -20,6 +21,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     private readonly DiscordOwnerErrorNotifier _ownerErrorNotifier;
     private readonly HealthCheckServer _healthCheckServer;
     private readonly CommandHandler _commandHandler;
+    private readonly InteractionHandler[] _interactionHandlers;
     private readonly LegacyCommandReplySender _commandReplySender;
     private readonly PunHandler _punHandler;
     private readonly EditMessageHandler _editMessageHandler;
@@ -42,6 +44,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         DiscordOwnerErrorNotifier ownerErrorNotifier,
         HealthCheckServer healthCheckServer,
         CommandHandler commandHandler,
+        IEnumerable<InteractionHandler> interactionHandlers,
         LegacyCommandReplySender commandReplySender,
         PunHandler punHandler,
         EditMessageHandler editMessageHandler,
@@ -62,6 +65,8 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         _ownerErrorNotifier = ownerErrorNotifier ?? throw new ArgumentNullException(nameof(ownerErrorNotifier));
         _healthCheckServer = healthCheckServer ?? throw new ArgumentNullException(nameof(healthCheckServer));
         _commandHandler = commandHandler ?? throw new ArgumentNullException(nameof(commandHandler));
+        // The core host can be composed without interactions; every registered handler owns teardown safety.
+        _interactionHandlers = interactionHandlers?.ToArray() ?? throw new ArgumentNullException(nameof(interactionHandlers));
         _commandReplySender = commandReplySender ?? throw new ArgumentNullException(nameof(commandReplySender));
         _punHandler = punHandler ?? throw new ArgumentNullException(nameof(punHandler));
         _editMessageHandler = editMessageHandler ?? throw new ArgumentNullException(nameof(editMessageHandler));
@@ -79,6 +84,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
             || _newMemberWelcomeService.HasActiveDiscordOperation
             || _editMessageHandler.HasInFlightOperations
             || _commandReplySender.HasPendingOperations
+            || _interactionHandlers.Any(handler => handler.HasPendingOperations)
             || _reactHandler.HasPendingOperations
             || _paginatorService.HasPendingOperations;
 

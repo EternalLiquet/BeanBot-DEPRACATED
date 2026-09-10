@@ -19,4 +19,21 @@ internal static partial class BeanBotLog
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Could not send the safe failure response for Discord interaction type {InteractionType}")]
     internal static partial void InteractionFailureResponseFailed(ILogger logger, InteractionType interactionType, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Discord interaction was canceled during shutdown. InteractionType={InteractionType}")]
+    internal static partial void InteractionCanceledForShutdown(ILogger logger, InteractionType interactionType);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Timed out after {DrainTimeout} draining {InFlightInteractionCount} Discord interaction(s) during shutdown")]
+    internal static partial void InteractionDrainTimedOut(
+        ILogger logger,
+        int inFlightInteractionCount,
+        TimeSpan drainTimeout);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "A Discord interaction failed while shutdown was draining in-flight work")]
+    internal static partial void InteractionDrainFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Discord interaction failure response was canceled or timed out. InteractionType={InteractionType}")]
+    internal static partial void InteractionFailureResponseCanceled(
+        ILogger logger,
+        InteractionType interactionType);
 }
