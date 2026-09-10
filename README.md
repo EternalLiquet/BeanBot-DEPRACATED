@@ -113,6 +113,7 @@ dotnet run --project BeanBot/BeanBot.csproj
 ```
 
 The bot requires access to the MongoDB instance configured by `BEANBOT_MONGO_CONNECTION_STRING`. If a `.env` file exists in the repo root, `dotnet run` loads it automatically.
+The scheduled daily pun also uses MongoDB for one bounded checkpoint document. BeanBot defaults to 16:20 America/Chicago, with a [configurable schedule](docs/daily-pun-schedule.md). If the process returns within 45 minutes after an occurrence and its local date has not yet been claimed, it performs a catch-up attempt. If the checkpoint cannot be trusted, the scheduler fails closed instead of risking a duplicate sequence.
 BeanBot runs through the .NET Generic Host, so Ctrl+C and normal process-stop signals trigger the same bounded graceful-shutdown path used in production.
 
 ## Docker
