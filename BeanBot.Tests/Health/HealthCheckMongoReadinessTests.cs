@@ -69,6 +69,38 @@ public class HealthCheckMongoReadinessTests
     }
 
     [Fact]
+    public async Task MongoUnavailable_ReadinessIs503WhileLivenessDoesNotProbeDependencies()
+    {
+        var discordSnapshotCalls = 0;
+        var mongoProbeCalls = 0;
+        await using var server = CreateServer(
+            () =>
+            {
+                Interlocked.Increment(ref discordSnapshotCalls);
+                return HealthyDiscordSnapshot;
+            },
+            _ =>
+            {
+                Interlocked.Increment(ref mongoProbeCalls);
+                return Task.FromResult(new MongoReadinessSnapshot(false, DateTimeOffset.UtcNow));
+            });
+        await server.StartAsync(CancellationToken.None);
+        using var client = CreateClient(server);
+
+        using var liveness = await client.GetAsync("/livez");
+
+        Assert.Equal(HttpStatusCode.OK, liveness.StatusCode);
+        Assert.Equal(0, Volatile.Read(ref discordSnapshotCalls));
+        Assert.Equal(0, Volatile.Read(ref mongoProbeCalls));
+
+        using var readiness = await client.GetAsync("/healthz");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, readiness.StatusCode);
+        Assert.Equal(1, Volatile.Read(ref discordSnapshotCalls));
+        Assert.Equal(1, Volatile.Read(ref mongoProbeCalls));
+    }
+
+    [Fact]
     public async Task Head_PreservesCombinedReadinessStatusWithoutBody()
     {
         await using var server = CreateServer(
