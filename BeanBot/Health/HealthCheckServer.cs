@@ -37,6 +37,7 @@ public sealed class HealthCheckServer : IAsyncDisposable
     private readonly object _syncRoot = new();
     private readonly HealthCheckOptions _options;
     private readonly Func<DiscordHealthSnapshot> _createHealthSnapshot;
+    private readonly Func<CancellationToken, Task<MongoReadinessSnapshot>> _getMongoReadinessSnapshot;
     private readonly TimeSpan _requestHeadersTimeout;
     private readonly TimeSpan _shutdownTimeout;
     private readonly int _maximumConcurrentClients;
@@ -50,10 +51,12 @@ public sealed class HealthCheckServer : IAsyncDisposable
         HealthCheckOptions options,
         DiscordSocketClient discordClient,
         DiscordConnectionHealth discordConnectionHealth,
+        MongoReadinessMonitor mongoReadinessMonitor,
         ILogger<HealthCheckServer> logger)
         : this(
             options,
             CreateSnapshotFactory(discordClient, discordConnectionHealth),
+            CreateMongoReadinessFactory(mongoReadinessMonitor),
             logger,
             DefaultRequestHeadersTimeout,
             DefaultMaximumConcurrentClients,
@@ -70,9 +73,31 @@ public sealed class HealthCheckServer : IAsyncDisposable
         int maximumConcurrentClients = DefaultMaximumConcurrentClients,
         int maximumTrackedRateLimitClients = DefaultMaximumTrackedRateLimitClients,
         TimeSpan? shutdownTimeout = null)
+        : this(
+            options,
+            createHealthSnapshot,
+            CreateAssumedMongoReadinessSnapshotAsync,
+            logger,
+            requestHeadersTimeout,
+            maximumConcurrentClients,
+            maximumTrackedRateLimitClients,
+            shutdownTimeout)
+    {
+    }
+
+    internal HealthCheckServer(
+        HealthCheckOptions options,
+        Func<DiscordHealthSnapshot> createHealthSnapshot,
+        Func<CancellationToken, Task<MongoReadinessSnapshot>> getMongoReadinessSnapshot,
+        ILogger<HealthCheckServer> logger,
+        TimeSpan? requestHeadersTimeout = null,
+        int maximumConcurrentClients = DefaultMaximumConcurrentClients,
+        int maximumTrackedRateLimitClients = DefaultMaximumTrackedRateLimitClients,
+        TimeSpan? shutdownTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(createHealthSnapshot);
+        ArgumentNullException.ThrowIfNull(getMongoReadinessSnapshot);
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumConcurrentClients);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumTrackedRateLimitClients);
@@ -84,6 +109,7 @@ public sealed class HealthCheckServer : IAsyncDisposable
 
         _options = options;
         _createHealthSnapshot = createHealthSnapshot;
+        _getMongoReadinessSnapshot = getMongoReadinessSnapshot;
         _logger = logger;
         _requestHeadersTimeout = effectiveRequestHeadersTimeout;
         _shutdownTimeout = effectiveShutdownTimeout;
@@ -224,6 +250,20 @@ public sealed class HealthCheckServer : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(discordClient);
         ArgumentNullException.ThrowIfNull(discordConnectionHealth);
         return () => discordConnectionHealth.CreateSnapshot(discordClient);
+    }
+
+    private static Func<CancellationToken, Task<MongoReadinessSnapshot>> CreateMongoReadinessFactory(
+        MongoReadinessMonitor mongoReadinessMonitor)
+    {
+        ArgumentNullException.ThrowIfNull(mongoReadinessMonitor);
+        return mongoReadinessMonitor.GetSnapshotAsync;
+    }
+
+    private static Task<MongoReadinessSnapshot> CreateAssumedMongoReadinessSnapshotAsync(
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(new MongoReadinessSnapshot(true, DateTimeOffset.UnixEpoch));
     }
 
     private WebApplication CreateApplication()
@@ -390,27 +430,45 @@ public sealed class HealthCheckServer : IAsyncDisposable
             return;
         }
 
-        var healthSnapshot = _createHealthSnapshot();
+        var discordSnapshot = _createHealthSnapshot();
+        var mongoSnapshot = await _getMongoReadinessSnapshot(context.RequestAborted);
+        var isHealthy = discordSnapshot.IsHealthy && mongoSnapshot.IsReachable;
         await WriteJsonResponseAsync(
             context,
-            healthSnapshot.IsHealthy
+            isHealthy
                 ? StatusCodes.Status200OK
                 : StatusCodes.Status503ServiceUnavailable,
             new
             {
-                status = healthSnapshot.IsHealthy ? "ok" : "unhealthy",
+                status = isHealthy ? "ok" : "unhealthy",
                 version = BuildIdentity.Current.Version,
                 commitSha = BuildIdentity.Current.CommitSha,
-                discordConnected = healthSnapshot.IsHealthy,
-                message = healthSnapshot.StatusMessage,
-                loginState = healthSnapshot.LoginState,
-                connectionState = healthSnapshot.ConnectionState,
-                lastReadyAtUtc = healthSnapshot.LastReadyAtUtc,
-                lastDisconnectedAtUtc = healthSnapshot.LastDisconnectedAtUtc,
-                unhealthySinceAtUtc = healthSnapshot.UnhealthySinceAtUtc,
-                mostRecentDisconnectReason = healthSnapshot.MostRecentDisconnectReason
+                discordConnected = discordSnapshot.IsHealthy,
+                mongoReachable = mongoSnapshot.IsReachable,
+                mongoLastCheckedAtUtc = mongoSnapshot.LastCheckedAtUtc,
+                message = GetStatusMessage(discordSnapshot, mongoSnapshot),
+                loginState = discordSnapshot.LoginState,
+                connectionState = discordSnapshot.ConnectionState,
+                lastReadyAtUtc = discordSnapshot.LastReadyAtUtc,
+                lastDisconnectedAtUtc = discordSnapshot.LastDisconnectedAtUtc,
+                unhealthySinceAtUtc = discordSnapshot.UnhealthySinceAtUtc,
+                mostRecentDisconnectReason = discordSnapshot.MostRecentDisconnectReason
             },
             isHeadRequest);
+    }
+
+    private static string GetStatusMessage(
+        DiscordHealthSnapshot discordSnapshot,
+        MongoReadinessSnapshot mongoSnapshot)
+    {
+        if (!discordSnapshot.IsHealthy)
+        {
+            return discordSnapshot.StatusMessage;
+        }
+
+        return mongoSnapshot.IsReachable
+            ? discordSnapshot.StatusMessage
+            : "MongoDB is not reachable.";
     }
 
     private bool IsAuthorized(HttpRequest request)
