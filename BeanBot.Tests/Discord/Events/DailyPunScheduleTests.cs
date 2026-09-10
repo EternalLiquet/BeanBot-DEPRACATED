@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using BeanBot.Configuration;
 using BeanBot.Discord.Commands;
 using BeanBot.Discord.Events;
+using BeanBot.Persistence.Repositories;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -82,6 +83,7 @@ public class DailyPunScheduleTests
             client,
             options,
             new UnavailablePunProvider(),
+            new UnusedClaimStore(),
             NullLogger<PunHandler>.Instance,
             new FrozenTimeProvider(new DateTimeOffset(2026, 1, 15, 12, 0, 0, TimeSpan.Zero)));
 
@@ -95,6 +97,12 @@ public class DailyPunScheduleTests
         Assert.True(DailyPunSchedule.TryParseLocalTime(localTime, out var parsedTime));
         Assert.True(DailyPunSchedule.TryResolveTimeZone(timeZoneId, out var timeZone));
         return new DailyPunSchedule(parsedTime, timeZoneId, timeZone!);
+    }
+
+    private sealed class UnusedClaimStore : IDailyPunClaimStore
+    {
+        public Task<DailyPunClaimResult> TryClaimAsync(DateOnly localDate, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("No claim is expected before the scheduled time.");
     }
 
     private sealed class FrozenTimeProvider(DateTimeOffset utcNow) : TimeProvider
