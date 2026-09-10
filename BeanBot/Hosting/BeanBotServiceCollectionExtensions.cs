@@ -7,6 +7,7 @@ using BeanBot.Discord.Media;
 using BeanBot.Discord.Messaging;
 using BeanBot.Discord.Puns;
 using BeanBot.Discord.ReactionRoles;
+using BeanBot.Discord.RoleMenus;
 using BeanBot.Health;
 using BeanBot.Logging;
 using BeanBot.Persistence;
@@ -149,6 +150,9 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<FortuneResponseEditService>();
         services.AddSingleton<ReactionRoleRepository>();
         services.AddSingleton<ReactionRoleService>();
+        services.AddSingleton<RoleMenuRepository>();
+        services.AddSingleton<RoleMenuDraftRegistry>();
+        services.AddSingleton(_ => new RoleMenuMutationCoordinator());
         services.AddSingleton<DiscordMessageCleanupService>();
 
         services.AddSingleton<CommandHandler>();
