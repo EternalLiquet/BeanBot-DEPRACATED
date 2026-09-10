@@ -141,7 +141,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
             var setupFailure = GetRoleValidationMessage(setupStatus);
             if (setupFailure is not null)
             {
-                messagesInInteraction.Add(await _replySender.SendMessageAsync(Context, setupFailure));
+                messagesInInteraction.Add(await SendRoleValidationMessageAsync(_replySender, Context, setupFailure));
             }
         }
         finally
@@ -163,6 +163,10 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
             _ => throw new ArgumentOutOfRangeException(nameof(result), result, null)
         };
     }
+
+    internal static Task<IUserMessage> SendRoleValidationMessageAsync(
+        LegacyCommandReplySender replySender, ICommandContext context, string message)
+        => replySender.SendMessageAsync(context, message, allowedMentions: AllowedMentions.None);
 
     internal static string? GetRoleValidationMessage(ReactionRoleAssignabilityStatus status)
     {
@@ -324,7 +328,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         var validationMessage = GetRoleValidationMessage(assignabilityStatus);
         if (validationMessage is not null)
         {
-            messages.Add(await _replySender.SendMessageAsync(Context, validationMessage));
+            messages.Add(await SendRoleValidationMessageAsync(_replySender, Context, validationMessage));
             return null;
         }
 
