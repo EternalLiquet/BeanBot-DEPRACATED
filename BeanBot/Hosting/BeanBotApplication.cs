@@ -18,6 +18,7 @@ internal interface IBeanBotRuntime
     void StopNewMemberEvents();
     void StopEditedMessageEvents();
     void StopCommandServices();
+    Task StopCommandRepliesAsync();
     void StopMessageWaiter();
     void StopPaginator();
     void UnsubscribeDiscordLog();
@@ -135,6 +136,7 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         await RunSynchronousStageAsync("new-member-events", _runtime.StopNewMemberEvents);
         await RunSynchronousStageAsync("edited-message-events", _runtime.StopEditedMessageEvents);
         await RunSynchronousStageAsync("command-services", _runtime.StopCommandServices);
+        await RunStageAsync("command-replies", _runtime.StopCommandRepliesAsync);
         await RunSynchronousStageAsync("message-waiter", _runtime.StopMessageWaiter);
         await RunSynchronousStageAsync("paginator", _runtime.StopPaginator);
         await RunSynchronousStageAsync("discord-log", _runtime.UnsubscribeDiscordLog);

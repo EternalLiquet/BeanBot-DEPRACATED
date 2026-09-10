@@ -30,17 +30,20 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
     private readonly RoleReactService _roleReactService;
     private readonly DiscordMessageCleanupService _messageCleanupService;
     private readonly DiscordMessageWaiter _messageWaiter;
+    private readonly LegacyCommandReplySender _replySender;
     private readonly ILogger<AdministrativeModule> _logger;
 
     public AdministrativeModule(
         RoleReactService roleReactService,
         DiscordMessageCleanupService messageCleanupService,
         DiscordMessageWaiter messageWaiter,
+        LegacyCommandReplySender replySender,
         ILogger<AdministrativeModule> logger)
     {
         _roleReactService = roleReactService ?? throw new ArgumentNullException(nameof(roleReactService));
         _messageCleanupService = messageCleanupService ?? throw new ArgumentNullException(nameof(messageCleanupService));
         _messageWaiter = messageWaiter ?? throw new ArgumentNullException(nameof(messageWaiter));
+        _replySender = replySender ?? throw new ArgumentNullException(nameof(replySender));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -64,12 +67,14 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
             var sessionFailureMessage = GetInteractionSessionFailureMessage(sessionResult);
             if (sessionFailureMessage is not null)
             {
-                messagesInInteraction.Add(await ReplyAsync(sessionFailureMessage));
+                messagesInInteraction.Add(await _replySender.SendMessageAsync(Context, sessionFailureMessage));
                 return;
             }
 
             var roleEmotePairs = new List<RoleEmotePair>();
-            messagesInInteraction.Add(await ReplyAsync($"How many roles do you wish to configure? (1-{MaximumRolesPerGroup})"));
+            messagesInInteraction.Add(await _replySender.SendMessageAsync(
+                Context,
+                $"How many roles do you wish to configure? (1-{MaximumRolesPerGroup})"));
             var amountMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
             var roleCountResult = await GetRoleCountAsync(messagesInInteraction, amountMessage);
             if (!roleCountResult.Success)
@@ -79,7 +84,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
 
             for (var index = 0; index < roleCountResult.RoleCount; index++)
             {
-                messagesInInteraction.Add(await ReplyAsync("Which role would you like to set up?"));
+                messagesInInteraction.Add(await _replySender.SendMessageAsync(Context, "Which role would you like to set up?"));
                 var roleMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
                 var role = await GetRoleAsync(messagesInInteraction, roleMessage);
                 if (role == null)
@@ -87,7 +92,9 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
                     return;
                 }
 
-                messagesInInteraction.Add(await ReplyAsync($"Which emote would you like to set up with the role {role.Name}?"));
+                messagesInInteraction.Add(await _replySender.SendMessageAsync(
+                    Context,
+                    $"Which emote would you like to set up with the role {role.Name}?"));
                 var emoteMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
                 var emote = await GetEmoteAsync(messagesInInteraction, emoteMessage);
                 if (emote == null)
@@ -99,7 +106,9 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
                     pair.RoleId == role.Id.ToString(CultureInfo.InvariantCulture)
                     || pair.EmojiId == emote.Id.ToString(CultureInfo.InvariantCulture)))
                 {
-                    messagesInInteraction.Add(await ReplyAsync("That role or emote is already being configured. Please start again."));
+                    messagesInInteraction.Add(await _replySender.SendMessageAsync(
+                        Context,
+                        "That role or emote is already being configured. Please start again."));
                     return;
                 }
 
@@ -108,11 +117,13 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
                     emote.Id.ToString(CultureInfo.InvariantCulture)));
             }
 
-            messagesInInteraction.Add(await ReplyAsync("Please label this group of roles (i.e. Games, Position, NSFW, etc)."));
+            messagesInInteraction.Add(await _replySender.SendMessageAsync(
+                Context,
+                "Please label this group of roles (i.e. Games, Position, NSFW, etc)."));
             var labelMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
             if (labelMessage == null)
             {
-                messagesInInteraction.Add(await ReplyAsync("Time has expired, please try again."));
+                messagesInInteraction.Add(await _replySender.SendMessageAsync(Context, "Time has expired, please try again."));
                 return;
             }
 
@@ -180,7 +191,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         }
 
         roleEmbed.WithFooter(footer => footer.Text = $"Role Group: {roleGroupLabel}");
-        return await ReplyAsync(embed: roleEmbed.Build());
+        return await _replySender.SendMessageAsync(Context, embed: roleEmbed.Build());
     }
 
     private async Task AddRoleReactionsAsync(IUserMessage messageToListen, IEnumerable<RoleEmotePair> roleEmotePairs)
@@ -199,14 +210,16 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
     {
         if (response == null)
         {
-            messages.Add(await ReplyAsync("Time has expired, please try again."));
+            messages.Add(await _replySender.SendMessageAsync(Context, "Time has expired, please try again."));
             return (false, 0);
         }
 
         messages.Add(response);
         if (!int.TryParse(response.Content, out var roleCount) || roleCount < 1 || roleCount > MaximumRolesPerGroup)
         {
-            messages.Add(await ReplyAsync($"Please enter a whole number from 1 to {MaximumRolesPerGroup}."));
+            messages.Add(await _replySender.SendMessageAsync(
+                Context,
+                $"Please enter a whole number from 1 to {MaximumRolesPerGroup}."));
             return (false, 0);
         }
 
@@ -217,7 +230,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
     {
         if (response == null)
         {
-            messages.Add(await ReplyAsync("Time has expired, please try again."));
+            messages.Add(await _replySender.SendMessageAsync(Context, "Time has expired, please try again."));
             return null;
         }
 
@@ -230,19 +243,23 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
 
         if (roleResolution.Status == RoleResolutionStatus.MultipleMentions)
         {
-            messages.Add(await ReplyAsync("Please mention only one role. Please start again."));
+            messages.Add(await _replySender.SendMessageAsync(Context, "Please mention only one role. Please start again."));
             return null;
         }
 
         if (roleResolution.Status == RoleResolutionStatus.AmbiguousName)
         {
-            messages.Add(await ReplyAsync("Multiple roles have that name. Please mention the role you want and start again."));
+            messages.Add(await _replySender.SendMessageAsync(
+                Context,
+                "Multiple roles have that name. Please mention the role you want and start again."));
             return null;
         }
 
         if (roleResolution.Status == RoleResolutionStatus.NotFound)
         {
-            messages.Add(await ReplyAsync($"The role {response.Content} does not exist. Please start again."));
+            messages.Add(await _replySender.SendMessageAsync(
+                Context,
+                $"The role {response.Content} does not exist. Please start again."));
             return null;
         }
 
@@ -321,7 +338,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
     {
         if (response == null)
         {
-            messages.Add(await ReplyAsync("Time has expired, please try again."));
+            messages.Add(await _replySender.SendMessageAsync(Context, "Time has expired, please try again."));
             return null;
         }
 
@@ -330,7 +347,9 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
             response.Content.Contains(candidate.Name, StringComparison.OrdinalIgnoreCase));
         if (emote == null)
         {
-            messages.Add(await ReplyAsync($"The emote {response.Content} does not exist. Please start again."));
+            messages.Add(await _replySender.SendMessageAsync(
+                Context,
+                $"The emote {response.Content} does not exist. Please start again."));
             return null;
         }
 

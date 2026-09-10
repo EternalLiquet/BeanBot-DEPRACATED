@@ -37,6 +37,7 @@ public class BeanBotServiceRegistrationTests
         AssertSingleton<IPunProvider>(services);
         AssertSingleton<EditMessageEventServices>(services);
         AssertSingleton<LogHandler>(services);
+        AssertSingleton<LegacyCommandReplySender>(services);
 
         var clientDescriptor = Assert.Single(
             services,
