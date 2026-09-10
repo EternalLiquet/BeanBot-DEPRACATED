@@ -128,7 +128,8 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
             }
 
             messagesInInteraction.Add(labelMessage);
-            await ReactionRoleSetupTransaction.ExecuteAsync(
+            var setupStatus = await ReactionRoleSetupTransaction.ExecuteIfAssignableAsync(
+                () => ValidateSelectedRoles(roleEmotePairs),
                 () => CreateRoleMessageAsync(roleEmotePairs, labelMessage.Content),
                 async messageToListen =>
                 {
@@ -137,6 +138,11 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
                 },
                 messageToListen => messageToListen.DeleteAsync(),
                 exception => BeanBotLog.IncompleteReactionRoleCleanupFailed(_logger, exception));
+            var setupFailure = GetRoleValidationMessage(setupStatus);
+            if (setupFailure is not null)
+            {
+                messagesInInteraction.Add(await _replySender.SendMessageAsync(Context, setupFailure));
+            }
         }
         finally
         {
@@ -177,6 +183,37 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
                 "That role is no longer available. Please choose another role and start again.",
             _ => throw new ArgumentOutOfRangeException(nameof(status), status, null)
         };
+    }
+
+    private ReactionRoleAssignabilityStatus ValidateSelectedRoles(IEnumerable<RoleEmotePair> pairs)
+    {
+        var invokingUser = Context.Guild.GetUser(Context.User.Id);
+        if (invokingUser is null)
+        {
+            return ReactionRoleAssignabilityStatus.InvokerHierarchyTooLow;
+        }
+
+        var botUser = Context.Guild.CurrentUser;
+        foreach (var pair in pairs)
+        {
+            var role = ulong.TryParse(pair.RoleId, out var roleId) ? Context.Guild.GetRole(roleId) : null;
+            var status = ReactionRoleAssignabilityPolicy.EvaluateForSetup(
+                new ReactionRoleAssignabilityFacts(
+                    RoleExists: role is not null,
+                    IsEveryoneRole: role?.Id == Context.Guild.Id,
+                    IsManagedRole: role?.IsManaged ?? false,
+                    BotCanManageRoles: botUser.GuildPermissions.ManageRoles,
+                    TargetRolePosition: role?.Position ?? 0,
+                    BotHierarchy: botUser.Hierarchy),
+                invokerIsGuildOwner: invokingUser.Id == Context.Guild.OwnerId,
+                invokerHierarchy: invokingUser.Hierarchy);
+            if (status != ReactionRoleAssignabilityStatus.Allowed)
+            {
+                return status;
+            }
+        }
+
+        return ReactionRoleAssignabilityStatus.Allowed;
     }
 
     private async Task<IUserMessage> CreateRoleMessageAsync(IEnumerable<RoleEmotePair> roleEmotePairs, string roleGroupLabel)
