@@ -8,6 +8,44 @@ namespace BeanBot.Tests.Discord.Events;
 public class NewMemberWelcomeServiceTests
 {
     [Fact]
+    public async Task StopBeforeStart_ClosesAdmissionPermanently()
+    {
+        var calls = 0;
+        await using var service = CreateService(new StubDelivery((_, _) =>
+        {
+            calls++;
+            return Task.CompletedTask;
+        }));
+
+        await service.StopAsync();
+        service.Start();
+
+        Assert.False(service.TryEnqueue(42, false));
+        await service.StopAsync();
+        Assert.Equal(0, calls);
+        Assert.Equal(0, service.OutstandingCount);
+    }
+
+    [Fact]
+    public async Task ConcurrentStartAndStop_AlwaysLeavesAdmissionClosed()
+    {
+        for (var iteration = 0; iteration < 32; iteration++)
+        {
+            await using var service = CreateService(new StubDelivery((_, _) => Task.CompletedTask));
+            var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var starting = Task.Run(async () => { await start.Task; service.Start(); });
+            var stopping = Task.Run(async () => { await start.Task; await service.StopAsync(); });
+            start.SetResult();
+
+            await Task.WhenAll(starting, stopping).WaitAsync(TimeSpan.FromSeconds(2));
+            service.Start();
+
+            Assert.False(service.TryEnqueue(42, false));
+            Assert.Equal(0, service.OutstandingCount);
+        }
+    }
+
+    [Fact]
     public async Task TryEnqueue_DeliversAcceptedHumanMemberOnce()
     {
         var delivered = new TaskCompletionSource<ulong>(TaskCreationOptions.RunContinuationsAsynchronously);

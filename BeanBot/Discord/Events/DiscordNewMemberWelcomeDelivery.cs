@@ -41,6 +41,7 @@ internal sealed class DiscordNewMemberWelcomeDelivery : INewMemberWelcomeDeliver
                         $"Discord user {userId} is no longer available for welcome delivery.");
                 }
 
+                requestOptions.CancelToken.ThrowIfCancellationRequested();
                 return await user.CreateDMChannelAsync(requestOptions);
             },
             async (channel, message, requestOptions) =>
@@ -94,6 +95,7 @@ internal sealed class DiscordNewMemberWelcomeDelivery : INewMemberWelcomeDeliver
         ulong userId,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!TryAcquireOperationSlot())
         {
             throw new InvalidOperationException(
@@ -103,6 +105,7 @@ internal sealed class DiscordNewMemberWelcomeDelivery : INewMemberWelcomeDeliver
         Task<T> operation;
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             operation = beginOperation();
         }
         catch
@@ -145,6 +148,7 @@ internal sealed class DiscordNewMemberWelcomeDelivery : INewMemberWelcomeDeliver
         ulong userId,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!TryAcquireOperationSlot())
         {
             throw new InvalidOperationException(
@@ -154,6 +158,7 @@ internal sealed class DiscordNewMemberWelcomeDelivery : INewMemberWelcomeDeliver
         Task operation;
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             operation = beginOperation();
         }
         catch

@@ -9,6 +9,70 @@ namespace BeanBot.Tests.Discord.Events;
 public class DiscordNewMemberWelcomeDeliveryTests
 {
     [Fact]
+    public async Task DeliverAsync_CanceledAsDmCreationCompletes_DoesNotInvokeSend()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var sends = 0;
+        var delivery = CreateDelivery(
+            (_, _) =>
+            {
+                cancellation.Cancel();
+                return Task.FromResult<IDMChannel>(null!);
+            },
+            (_, _, _) =>
+            {
+                sends++;
+                return Task.CompletedTask;
+            });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => delivery.DeliverAsync(42, cancellation.Token));
+
+        Assert.Equal(0, sends);
+        Assert.False(delivery.HasActiveOperation);
+    }
+
+    [Fact]
+    public async Task ServiceStop_AfterDeliveryTimeout_CancelsAndRetainsRawDiscordOperation()
+    {
+        var stalled = new TaskCompletionSource<IDMChannel>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken requestToken = default;
+        var sends = 0;
+        var options = RuntimeOptions(TimeSpan.FromMilliseconds(25));
+        var delivery = CreateDelivery(
+            (_, request) =>
+            {
+                requestToken = request.CancelToken;
+                started.TrySetResult();
+                return stalled.Task;
+            },
+            (_, _, _) => { sends++; return Task.CompletedTask; },
+            runtimeOptions: options);
+        await using var service = new NewMemberWelcomeService(delivery, new NewMemberWelcomeOptions(true, "welcome"),
+            options, NullLogger<NewMemberWelcomeService>.Instance);
+        try
+        {
+            service.Start();
+            Assert.True(service.TryEnqueue(42, false));
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            await WaitUntilAsync(() => service.OutstandingCount == 0);
+            Assert.True(delivery.HasActiveOperation);
+
+            await service.StopAsync().WaitAsync(TimeSpan.FromSeconds(1));
+
+            Assert.True(requestToken.IsCancellationRequested);
+            Assert.True(service.HasActiveDiscordOperation);
+            Assert.Equal(0, sends);
+            Assert.False(service.TryEnqueue(43, false));
+        }
+        finally
+        {
+            stalled.TrySetException(new InvalidOperationException("late welcome failure"));
+            await WaitUntilAsync(() => !delivery.HasActiveOperation);
+        }
+    }
+
+    [Fact]
     public async Task DeliverAsync_CreatesDmAndSendsConfiguredMessageOnce()
     {
         RequestOptions? createOptions = null;

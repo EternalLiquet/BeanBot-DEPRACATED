@@ -21,6 +21,7 @@ internal sealed class NewMemberWelcomeService : IAsyncDisposable
     private Task? _stopTask;
     private int _started;
     private int _accepting;
+    private bool _stopping;
 
     public NewMemberWelcomeService(
         INewMemberWelcomeDelivery delivery,
@@ -52,20 +53,24 @@ internal sealed class NewMemberWelcomeService : IAsyncDisposable
 
     internal void Start()
     {
-        if (Interlocked.Exchange(ref _started, 1) != 0)
+        lock (_stopLock)
         {
-            return;
-        }
+            if (_started != 0 || _stopping)
+            {
+                return;
+            }
+            _started = 1;
 
-        if (!_welcomeOptions.Enabled)
-        {
-            _queue.Writer.TryComplete();
-            return;
-        }
+            if (!_welcomeOptions.Enabled)
+            {
+                _queue.Writer.TryComplete();
+                return;
+            }
 
-        Volatile.Write(ref _accepting, 1);
-        _workers = [.. Enumerable.Range(0, _runtimeOptions.WorkerCount)
-            .Select(_ => Task.Run(() => ProcessQueueAsync(_shutdownCancellation.Token)))];
+            Volatile.Write(ref _accepting, 1);
+            _workers = [.. Enumerable.Range(0, _runtimeOptions.WorkerCount)
+                .Select(_ => Task.Run(() => ProcessQueueAsync(_shutdownCancellation.Token)))];
+        }
     }
 
     internal bool TryEnqueue(ulong userId, bool isBot)
@@ -99,12 +104,12 @@ internal sealed class NewMemberWelcomeService : IAsyncDisposable
 
     internal void StopAccepting()
     {
-        if (Interlocked.Exchange(ref _accepting, 0) == 0)
+        lock (_stopLock)
         {
-            return;
+            _stopping = true;
+            Volatile.Write(ref _accepting, 0);
+            _queue.Writer.TryComplete();
         }
-
-        _queue.Writer.TryComplete();
     }
 
     internal Task StopAsync()
@@ -123,6 +128,7 @@ internal sealed class NewMemberWelcomeService : IAsyncDisposable
         StopAccepting();
         if (_workers.Length == 0)
         {
+            _shutdownCancellation.Cancel();
             DrainPendingQueue();
             return;
         }
@@ -150,6 +156,7 @@ internal sealed class NewMemberWelcomeService : IAsyncDisposable
         }
         finally
         {
+            _shutdownCancellation.Cancel();
             DrainPendingQueue();
         }
     }
