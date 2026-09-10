@@ -11,6 +11,7 @@ internal sealed class BeanBotSettings
     public string? YoshimaruUrl { get; set; }
     public BeanBotDailyPunSettings DailyPun { get; set; } = new BeanBotDailyPunSettings();
     public BeanBotHealthCheckSettings HealthCheck { get; set; } = new BeanBotHealthCheckSettings();
+    public BeanBotNewMemberWelcomeSettings NewMemberWelcome { get; set; } = new BeanBotNewMemberWelcomeSettings();
 }
 
 internal sealed class BeanBotDailyPunSettings
@@ -25,4 +26,10 @@ internal sealed class BeanBotHealthCheckSettings
     public string? BindAddress { get; set; }
     public string? BearerToken { get; set; }
     public string? RateLimitSeconds { get; set; }
+}
+
+internal sealed class BeanBotNewMemberWelcomeSettings
+{
+    public string? Enabled { get; set; }
+    public string? Message { get; set; }
 }
