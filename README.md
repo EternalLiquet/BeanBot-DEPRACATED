@@ -97,7 +97,24 @@ BeanBot remains a single application project, organized by responsibility:
 - `Logging` contains structured log messages and Discord owner-alert delivery.
 - `Persistence` contains runtime directory setup, persisted models, outage state, and MongoDB repositories.
 
-Tests mirror these production responsibilities where useful, with cross-component scenarios kept under `BeanBot.Tests/Integration`.
+Within `Discord`, folders separate the command entry points from the behavior they call:
+
+| Folder | Responsibility |
+| --- | --- |
+| `Commands` | Prefix command modules, routing preconditions, and command feedback |
+| `Events` | Gateway event subscriptions and bounded event admission |
+| `Fortunes` | Fortune answers, overrides, question validation, and edited-response handling |
+| `Puns` | Pun data/provider and scheduled `DailyPunService` |
+| `Media` | External image/meme providers, request limits, and admission guards |
+| `Messaging` | Bounded sends, cleanup, message waiting, and pagination |
+| `ReactionRoles` | Legacy reaction-role assignment, cache, validation, and mutation coordination |
+| `RoleMenus` | Dropdown role-menu setup, member choices, publication, deletion, and reconciliation |
+| `Interactions` | Slash/component dispatch, registration, responses, and execution ownership |
+| `Lifecycle` | Discord startup, connection recovery, and outage notification |
+
+File names follow the main type they contain. Service and handler names describe their behavior: `ReactionRoleService`, `ReactionRoleHandler`, `FortuneResponseEditService`, and `FortuneMessageEditHandler`. Persistence uses `ReactionRoleSettings` and `ReactionRoleRepository`, distinguishing reaction roles from dropdown role menus while keeping existing stored collection and field names compatible.
+
+Tests mirror these production responsibilities where useful, with cross-component scenarios kept under `BeanBot.Tests/Integration`. Resources keep stable publish-relative names because those paths are part of the runtime contract.
 
 Repository-wide compiler settings are defined in `Directory.Build.props`, package
 versions in `Directory.Packages.props`, and formatting and naming conventions in

@@ -1,22 +1,21 @@
 using BeanBot.Configuration;
 using BeanBot.Discord.Commands;
 using BeanBot.Discord.Events;
+using BeanBot.Discord.Fortunes;
 using BeanBot.Discord.Interactions;
 using BeanBot.Discord.Lifecycle;
+using BeanBot.Discord.Puns;
 using BeanBot.Discord.ReactionRoles;
 using BeanBot.Discord.RoleMenus;
 using BeanBot.Hosting;
 using BeanBot.Logging;
 using BeanBot.Persistence.Outages;
 using BeanBot.Persistence.Repositories;
-
 using Discord.WebSocket;
-
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
-
 using Xunit;
 
 namespace BeanBot.Tests.Hosting;
@@ -37,13 +36,13 @@ public class BeanBotServiceRegistrationTests
         AssertSingleton<IBeanBotRuntime>(services);
         AssertSingleton<IBeanBotApplication>(services);
         AssertSingleton<BeanBotHostedService>(services);
-        AssertSingleton<RoleReactService>(services);
+        AssertSingleton<ReactionRoleService>(services);
         AssertSingleton<RoleMenuRepository>(services);
         AssertSingleton<RoleMenuDraftRegistry>(services);
         AssertSingleton<RoleMenuMutationCoordinator>(services);
         AssertSingleton<PunProvider>(services);
         AssertSingleton<IPunProvider>(services);
-        AssertSingleton<EditMessageEventServices>(services);
+        AssertSingleton<FortuneResponseEditService>(services);
         AssertSingleton<LogHandler>(services);
         AssertSingleton<LegacyCommandReplySender>(services);
 

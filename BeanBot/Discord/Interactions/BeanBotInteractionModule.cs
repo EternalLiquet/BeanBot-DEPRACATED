@@ -1,4 +1,4 @@
-using BeanBot.Discord.Commands;
+using BeanBot.Discord.Puns;
 using Discord;
 using Discord.Interactions;
 

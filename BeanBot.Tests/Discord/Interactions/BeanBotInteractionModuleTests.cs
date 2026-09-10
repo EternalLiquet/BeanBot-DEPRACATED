@@ -1,7 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
-using BeanBot.Discord.Commands;
 using BeanBot.Discord.Interactions;
+using BeanBot.Discord.Puns;
 using Discord.Interactions;
 using Xunit;
 

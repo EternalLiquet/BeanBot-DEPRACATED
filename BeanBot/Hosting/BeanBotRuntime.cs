@@ -3,6 +3,7 @@ using BeanBot.Discord.Events;
 using BeanBot.Discord.Interactions;
 using BeanBot.Discord.Lifecycle;
 using BeanBot.Discord.Messaging;
+using BeanBot.Discord.Puns;
 using BeanBot.Health;
 using BeanBot.Logging;
 using Discord.WebSocket;
@@ -23,11 +24,11 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     private readonly CommandHandler _commandHandler;
     private readonly InteractionHandler[] _interactionHandlers;
     private readonly LegacyCommandReplySender _commandReplySender;
-    private readonly PunHandler _punHandler;
-    private readonly EditMessageHandler _editMessageHandler;
+    private readonly DailyPunService _dailyPunService;
+    private readonly FortuneMessageEditHandler _fortuneMessageEditHandler;
     private readonly NewMemberHandler _newMemberHandler;
     private readonly NewMemberWelcomeService _newMemberWelcomeService;
-    private readonly ReactHandler _reactHandler;
+    private readonly ReactionRoleHandler _reactionRoleHandler;
     private readonly DiscordMessageWaiter _messageWaiter;
     private readonly DiscordPaginatorService _paginatorService;
     private readonly LogHandler _logHandler;
@@ -46,11 +47,11 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         CommandHandler commandHandler,
         IEnumerable<InteractionHandler> interactionHandlers,
         LegacyCommandReplySender commandReplySender,
-        PunHandler punHandler,
-        EditMessageHandler editMessageHandler,
+        DailyPunService dailyPunService,
+        FortuneMessageEditHandler fortuneMessageEditHandler,
         NewMemberHandler newMemberHandler,
         NewMemberWelcomeService newMemberWelcomeService,
-        ReactHandler reactHandler,
+        ReactionRoleHandler reactionRoleHandler,
         DiscordMessageWaiter messageWaiter,
         DiscordPaginatorService paginatorService,
         LogHandler logHandler,
@@ -68,11 +69,11 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         // The core host can be composed without interactions; every registered handler owns teardown safety.
         _interactionHandlers = interactionHandlers?.ToArray() ?? throw new ArgumentNullException(nameof(interactionHandlers));
         _commandReplySender = commandReplySender ?? throw new ArgumentNullException(nameof(commandReplySender));
-        _punHandler = punHandler ?? throw new ArgumentNullException(nameof(punHandler));
-        _editMessageHandler = editMessageHandler ?? throw new ArgumentNullException(nameof(editMessageHandler));
+        _dailyPunService = dailyPunService ?? throw new ArgumentNullException(nameof(dailyPunService));
+        _fortuneMessageEditHandler = fortuneMessageEditHandler ?? throw new ArgumentNullException(nameof(fortuneMessageEditHandler));
         _newMemberHandler = newMemberHandler ?? throw new ArgumentNullException(nameof(newMemberHandler));
         _newMemberWelcomeService = newMemberWelcomeService ?? throw new ArgumentNullException(nameof(newMemberWelcomeService));
-        _reactHandler = reactHandler ?? throw new ArgumentNullException(nameof(reactHandler));
+        _reactionRoleHandler = reactionRoleHandler ?? throw new ArgumentNullException(nameof(reactionRoleHandler));
         _messageWaiter = messageWaiter ?? throw new ArgumentNullException(nameof(messageWaiter));
         _paginatorService = paginatorService ?? throw new ArgumentNullException(nameof(paginatorService));
         _logHandler = logHandler ?? throw new ArgumentNullException(nameof(logHandler));
@@ -82,10 +83,10 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     public bool HasActiveDiscordLifecycleOperation
         => _discordLifecycleCoordinator.HasActiveSequence
             || _newMemberWelcomeService.HasActiveDiscordOperation
-            || _editMessageHandler.HasInFlightOperations
+            || _fortuneMessageEditHandler.HasInFlightOperations
             || _commandReplySender.HasPendingOperations
             || _interactionHandlers.Any(handler => handler.HasPendingOperations)
-            || _reactHandler.HasPendingOperations
+            || _reactionRoleHandler.HasPendingOperations
             || _paginatorService.HasPendingOperations;
 
     public bool CanDisposeDiscordClient => _canDisposeDiscordClient;
@@ -115,14 +116,14 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     public void StartEventAndBackgroundServices()
     {
         _discordClient.Log += _logHandler.LogMessages;
-        _punHandler.Start();
-        _editMessageHandler.InitializeEventListener();
+        _dailyPunService.Start();
+        _fortuneMessageEditHandler.InitializeEventListener();
         _newMemberWelcomeService.Start();
         _newMemberHandler.InitializeNewMembers();
-        _reactHandler.InitializeReactDependentServices();
+        _reactionRoleHandler.InitializeReactDependentServices();
     }
 
-    public void StopReactionServices() => _reactHandler.Dispose();
+    public void StopReactionServices() => _reactionRoleHandler.Dispose();
 
     public void StopNewMemberEvents()
     {
@@ -131,7 +132,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         _newMemberWelcomeService.StopAsync().GetAwaiter().GetResult();
     }
 
-    public Task StopEditedMessageEventsAsync() => _editMessageHandler.StopAsync();
+    public Task StopEditedMessageEventsAsync() => _fortuneMessageEditHandler.StopAsync();
 
     public async Task<bool> StopCommandServicesAsync()
     {
@@ -158,7 +159,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         TaskScheduler.UnobservedTaskException -= HandleUnobservedTaskException;
     }
 
-    public Task StopPunServiceAsync() => _punHandler.DisposeAsync().AsTask();
+    public Task StopPunServiceAsync() => _dailyPunService.DisposeAsync().AsTask();
 
     public Task StopHealthServerAsync(CancellationToken cancellationToken)
         => _healthCheckServer.StopAsync(cancellationToken);

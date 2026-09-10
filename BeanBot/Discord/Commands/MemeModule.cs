@@ -1,5 +1,8 @@
 using BeanBot.Configuration;
+using BeanBot.Discord.Fortunes;
+using BeanBot.Discord.Media;
 using BeanBot.Discord.Messaging;
+using BeanBot.Discord.Puns;
 using BeanBot.Logging;
 using Discord;
 using Discord.Commands;
