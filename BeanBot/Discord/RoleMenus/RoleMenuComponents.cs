@@ -136,14 +136,60 @@ internal static class RoleMenuComponents
             conflictingSingleSelection);
     }
 
+    internal static MessageComponent BuildEditSelector(
+        ulong userId,
+        IReadOnlyCollection<RoleMenuSettings> settings)
+        => BuildAdministrativeSelector(
+            RoleMenuCustomIds.EditSelect(userId),
+            "Choose a role menu to edit",
+            settings);
+
+    internal static Embed BuildEditSummaryEmbed(RoleMenuEditDraft draft)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        var roleMentions = string.Join(
+            " ",
+            draft.RoleIds.Select(roleId =>
+                $"<@&{roleId.ToString(CultureInfo.InvariantCulture)}>"));
+        var mode = draft.SelectionMode == RoleMenuSelectionMode.Exclusive
+            ? "Single selection"
+            : "Multiple selection";
+        return new EmbedBuilder()
+            .WithTitle(draft.Title)
+            .WithDescription(string.IsNullOrWhiteSpace(draft.Description)
+                ? DefaultDescription
+                : draft.Description)
+            .AddField("Roles", roleMentions)
+            .AddField("Mode", mode, inline: true)
+            .WithFooter($"Current values • ID: {draft.MenuId}")
+            .Build();
+    }
+
+    internal static MessageComponent BuildEditOpenComponents(Guid draftId)
+        => new ComponentBuilder()
+            .WithButton(
+                "Edit values",
+                RoleMenuCustomIds.EditOpen(draftId),
+                ButtonStyle.Primary)
+            .Build();
+
     internal static MessageComponent BuildDeleteSelector(
         ulong userId,
+        IReadOnlyCollection<RoleMenuSettings> settings)
+        => BuildAdministrativeSelector(
+            RoleMenuCustomIds.DeleteSelect(userId),
+            "Choose a role menu to delete",
+            settings);
+
+    private static MessageComponent BuildAdministrativeSelector(
+        string customId,
+        string placeholder,
         IReadOnlyCollection<RoleMenuSettings> settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
         var selector = new SelectMenuBuilder()
-            .WithCustomId(RoleMenuCustomIds.DeleteSelect(userId))
-            .WithPlaceholder("Choose a role menu to delete")
+            .WithCustomId(customId)
+            .WithPlaceholder(placeholder)
             .WithMinValues(1)
             .WithMaxValues(1);
         foreach (var menu in settings)
