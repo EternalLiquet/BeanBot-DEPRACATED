@@ -3,31 +3,12 @@ using BeanBot.Persistence.Models;
 using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
-using Microsoft.Extensions.Logging;
 using static BeanBot.Discord.RoleMenus.DiscordRoleMenuClient;
 
 namespace BeanBot.Discord.RoleMenus;
 
-[Group("role-menu", "Create and remove self-assignable role menus.")]
-[CommandContextType(InteractionContextType.Guild)]
-[RequireContext(ContextType.Guild)]
-[RequireUserPermission(GuildPermission.ManageRoles)]
-[DefaultMemberPermissions(GuildPermission.ManageRoles)]
-public sealed class RoleMenuEditAdminModule : RoleMenuModuleBase
+public sealed partial class RoleMenuAdminModule
 {
-    private readonly RoleMenuAdministrationService _administration;
-    private readonly ILogger<RoleMenuEditAdminModule> _logger;
-
-    public RoleMenuEditAdminModule(
-        RoleMenuInteractionService roleMenuService,
-        RoleMenuAdministrationService administration,
-        ILogger<RoleMenuEditAdminModule> logger)
-        : base(roleMenuService)
-    {
-        _administration = administration ?? throw new ArgumentNullException(nameof(administration));
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    }
-
     [SlashCommand(
         "edit",
         "Edit a published role menu in place.",
@@ -364,41 +345,5 @@ public sealed class RoleMenuEditAdminModule : RoleMenuModuleBase
             cancellationToken,
             RoleMenuComponents.BuildEditSummaryEmbed(draft),
             RoleMenuComponents.BuildEditOpenComponents(draft.Id));
-    }
-
-    private static bool IsValidPrivateComponent(
-        SocketMessageComponent component,
-        SocketGuild guild,
-        ComponentType expectedType,
-        string expectedCustomId,
-        string? selectedValue = null)
-    {
-        if (!IsEphemeral(component)
-            || component.Message.Author.Id != guild.CurrentUser.Id
-            || component.Data.Type != expectedType
-            || !string.Equals(
-                component.Data.CustomId,
-                expectedCustomId,
-                StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        var sourceComponent = component.Message.Components
-            .OfType<ActionRowComponent>()
-            .SelectMany(row => row.Components)
-            .OfType<IInteractableComponent>()
-            .FirstOrDefault(candidate => candidate.Type == expectedType
-                                         && string.Equals(
-                                             candidate.CustomId,
-                                             expectedCustomId,
-                                             StringComparison.Ordinal));
-        return sourceComponent is not null
-               && (selectedValue is null
-                   || sourceComponent is SelectMenuComponent selector
-                   && selector.Options.Any(option => string.Equals(
-                       option.Value,
-                       selectedValue,
-                       StringComparison.Ordinal)));
     }
 }
