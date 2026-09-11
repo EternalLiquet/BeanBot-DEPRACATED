@@ -10,17 +10,20 @@ public sealed class RoleMenuInteractionService
 {
     private readonly RoleMenuRepository _repository;
     private readonly RoleMenuDraftRegistry _draftRegistry;
+    private readonly RoleMenuEditDraftRegistry _editDraftRegistry;
     private readonly RoleMenuMutationCoordinator _mutationCoordinator;
     private readonly InteractionExecutionContext _executionContext;
 
     internal RoleMenuInteractionService(
         RoleMenuRepository repository,
         RoleMenuDraftRegistry draftRegistry,
+        RoleMenuEditDraftRegistry editDraftRegistry,
         RoleMenuMutationCoordinator mutationCoordinator,
         InteractionExecutionContext executionContext)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _draftRegistry = draftRegistry ?? throw new ArgumentNullException(nameof(draftRegistry));
+        _editDraftRegistry = editDraftRegistry ?? throw new ArgumentNullException(nameof(editDraftRegistry));
         _mutationCoordinator = mutationCoordinator ?? throw new ArgumentNullException(nameof(mutationCoordinator));
         _executionContext = executionContext ?? throw new ArgumentNullException(nameof(executionContext));
     }
@@ -101,6 +104,45 @@ public sealed class RoleMenuInteractionService
 
     internal void CompletePublish(Guid draftId, ulong guildId, ulong userId)
         => _draftRegistry.CompletePublish(draftId, guildId, userId);
+
+    internal RoleMenuEditDraftCreateStatus CreateEditDraft(
+        ObjectId menuId,
+        ulong guildId,
+        ulong userId,
+        string title,
+        string description,
+        IReadOnlyCollection<ulong> roleIds,
+        RoleMenuSelectionMode selectionMode,
+        out RoleMenuEditDraft? draft)
+        => _editDraftRegistry.Create(
+            menuId,
+            guildId,
+            userId,
+            title,
+            description,
+            roleIds,
+            selectionMode,
+            out draft);
+
+    internal RoleMenuEditDraftAccessStatus TryGetEditDraft(
+        Guid draftId,
+        ulong guildId,
+        ulong userId,
+        out RoleMenuEditDraft? draft)
+        => _editDraftRegistry.TryGet(draftId, guildId, userId, out draft);
+
+    internal RoleMenuEditDraftAccessStatus TryBeginEdit(
+        Guid draftId,
+        ulong guildId,
+        ulong userId,
+        out RoleMenuEditDraft? draft)
+        => _editDraftRegistry.TryBeginSubmit(draftId, guildId, userId, out draft);
+
+    internal void ReleaseEdit(Guid draftId, ulong guildId, ulong userId)
+        => _editDraftRegistry.Release(draftId, guildId, userId);
+
+    internal void CompleteEdit(Guid draftId, ulong guildId, ulong userId)
+        => _editDraftRegistry.Complete(draftId, guildId, userId);
 
     internal Task UpsertAsync(
         RoleMenuSettings settings,
