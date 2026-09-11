@@ -21,7 +21,7 @@ namespace BeanBot.Discord.RoleMenus;
 [RequireContext(ContextType.Guild)]
 [RequireUserPermission(GuildPermission.ManageRoles)]
 [DefaultMemberPermissions(GuildPermission.ManageRoles)]
-public sealed class RoleMenuAdminModule : RoleMenuModuleBase
+public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
 {
     private readonly DiscordRoleMenuClient _discord;
     private readonly RoleMenuAdministrationService _administration;

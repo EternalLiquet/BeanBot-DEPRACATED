@@ -3,39 +3,38 @@ using MongoDB.Bson;
 
 namespace BeanBot.Discord.RoleMenus;
 
-internal enum RoleMenuDraftCreateStatus
+internal enum RoleMenuEditDraftCreateStatus
 {
     Created,
     CapacityReached,
-    AlreadyPublishing
+    AlreadySubmitting
 }
 
-internal enum RoleMenuDraftAccessStatus
+internal enum RoleMenuEditDraftAccessStatus
 {
     Acquired,
     NotFound,
     WrongOwner,
-    AlreadyPublishing
+    AlreadySubmitting
 }
 
-internal sealed record RoleMenuDraft(
+internal sealed record RoleMenuEditDraft(
     Guid Id,
     ObjectId MenuId,
     ulong GuildId,
     ulong UserId,
-    ulong TargetChannelId,
     string Title,
     string Description,
     IReadOnlyList<ulong> RoleIds,
     RoleMenuSelectionMode SelectionMode,
     DateTimeOffset ExpiresAtUtc);
 
-internal sealed class RoleMenuDraftRegistry
+internal sealed class RoleMenuEditDraftRegistry
 {
     private sealed class DraftEntry
     {
-        public required RoleMenuDraft Draft { get; set; }
-        public bool IsPublishing { get; set; }
+        public required RoleMenuEditDraft Draft { get; set; }
+        public bool IsSubmitting { get; set; }
     }
 
     private readonly object _syncRoot = new();
@@ -44,9 +43,8 @@ internal sealed class RoleMenuDraftRegistry
     private readonly TimeProvider _timeProvider;
     private readonly int _capacity;
     private readonly TimeSpan _lifetime;
-    private readonly RoleMenuEditDraftRegistry _editDraftRegistry;
 
-    public RoleMenuDraftRegistry()
+    public RoleMenuEditDraftRegistry()
         : this(
             TimeProvider.System,
             RoleMenuConstants.MaximumDrafts,
@@ -54,7 +52,7 @@ internal sealed class RoleMenuDraftRegistry
     {
     }
 
-    internal RoleMenuDraftRegistry(
+    internal RoleMenuEditDraftRegistry(
         TimeProvider timeProvider,
         int capacity,
         TimeSpan lifetime)
@@ -64,19 +62,23 @@ internal sealed class RoleMenuDraftRegistry
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(lifetime, TimeSpan.Zero);
         _capacity = capacity;
         _lifetime = lifetime;
-        _editDraftRegistry = new RoleMenuEditDraftRegistry(timeProvider, capacity, lifetime);
     }
 
-    internal RoleMenuDraftCreateStatus Create(
+    internal RoleMenuEditDraftCreateStatus Create(
+        ObjectId menuId,
         ulong guildId,
         ulong userId,
-        ulong targetChannelId,
         string title,
         string description,
         IReadOnlyCollection<ulong> roleIds,
         RoleMenuSelectionMode selectionMode,
-        out RoleMenuDraft? draft)
+        out RoleMenuEditDraft? draft)
     {
+        if (menuId == ObjectId.Empty)
+        {
+            throw new ArgumentException("A role menu ID is required.", nameof(menuId));
+        }
+
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
         ArgumentNullException.ThrowIfNull(description);
         ArgumentNullException.ThrowIfNull(roleIds);
@@ -87,10 +89,10 @@ internal sealed class RoleMenuDraftRegistry
             var owner = (guildId, userId);
             if (_draftByOwner.TryGetValue(owner, out var existingId)
                 && _drafts.TryGetValue(existingId, out var existingEntry)
-                && existingEntry.IsPublishing)
+                && existingEntry.IsSubmitting)
             {
                 draft = null;
-                return RoleMenuDraftCreateStatus.AlreadyPublishing;
+                return RoleMenuEditDraftCreateStatus.AlreadySubmitting;
             }
 
             if (_draftByOwner.Remove(owner, out existingId))
@@ -101,16 +103,15 @@ internal sealed class RoleMenuDraftRegistry
             if (_drafts.Count >= _capacity)
             {
                 draft = null;
-                return RoleMenuDraftCreateStatus.CapacityReached;
+                return RoleMenuEditDraftCreateStatus.CapacityReached;
             }
 
             var now = _timeProvider.GetUtcNow();
-            draft = new RoleMenuDraft(
+            draft = new RoleMenuEditDraft(
                 Guid.NewGuid(),
-                ObjectId.GenerateNewId(),
+                menuId,
                 guildId,
                 userId,
-                targetChannelId,
                 title,
                 description,
                 [.. roleIds],
@@ -118,15 +119,15 @@ internal sealed class RoleMenuDraftRegistry
                 now.Add(_lifetime));
             _drafts[draft.Id] = new DraftEntry { Draft = draft };
             _draftByOwner[owner] = draft.Id;
-            return RoleMenuDraftCreateStatus.Created;
+            return RoleMenuEditDraftCreateStatus.Created;
         }
     }
 
-    internal RoleMenuDraftAccessStatus TryBeginPublish(
+    internal RoleMenuEditDraftAccessStatus TryGet(
         Guid draftId,
         ulong guildId,
         ulong userId,
-        out RoleMenuDraft? draft)
+        out RoleMenuEditDraft? draft)
     {
         lock (_syncRoot)
         {
@@ -134,50 +135,68 @@ internal sealed class RoleMenuDraftRegistry
             if (!_drafts.TryGetValue(draftId, out var entry))
             {
                 draft = null;
-                return RoleMenuDraftAccessStatus.NotFound;
+                return RoleMenuEditDraftAccessStatus.NotFound;
             }
 
             if (entry.Draft.GuildId != guildId || entry.Draft.UserId != userId)
             {
                 draft = null;
-                return RoleMenuDraftAccessStatus.WrongOwner;
+                return RoleMenuEditDraftAccessStatus.WrongOwner;
             }
 
-            if (entry.IsPublishing)
+            if (entry.IsSubmitting)
             {
                 draft = null;
-                return RoleMenuDraftAccessStatus.AlreadyPublishing;
+                return RoleMenuEditDraftAccessStatus.AlreadySubmitting;
             }
 
-            entry.IsPublishing = true;
             entry.Draft = entry.Draft with
             {
                 ExpiresAtUtc = _timeProvider.GetUtcNow().Add(_lifetime)
             };
             draft = entry.Draft;
-            return RoleMenuDraftAccessStatus.Acquired;
+            return RoleMenuEditDraftAccessStatus.Acquired;
         }
     }
 
-    internal bool Cancel(Guid draftId, ulong guildId, ulong userId)
+    internal RoleMenuEditDraftAccessStatus TryBeginSubmit(
+        Guid draftId,
+        ulong guildId,
+        ulong userId,
+        out RoleMenuEditDraft? draft)
     {
         lock (_syncRoot)
         {
             PurgeExpiredUnsafe();
-            if (!_drafts.TryGetValue(draftId, out var entry)
-                || entry.Draft.GuildId != guildId
-                || entry.Draft.UserId != userId
-                || entry.IsPublishing)
+            if (!_drafts.TryGetValue(draftId, out var entry))
             {
-                return false;
+                draft = null;
+                return RoleMenuEditDraftAccessStatus.NotFound;
             }
 
-            RemoveUnsafe(entry.Draft);
-            return true;
+            if (entry.Draft.GuildId != guildId || entry.Draft.UserId != userId)
+            {
+                draft = null;
+                return RoleMenuEditDraftAccessStatus.WrongOwner;
+            }
+
+            if (entry.IsSubmitting)
+            {
+                draft = null;
+                return RoleMenuEditDraftAccessStatus.AlreadySubmitting;
+            }
+
+            entry.IsSubmitting = true;
+            entry.Draft = entry.Draft with
+            {
+                ExpiresAtUtc = _timeProvider.GetUtcNow().Add(_lifetime)
+            };
+            draft = entry.Draft;
+            return RoleMenuEditDraftAccessStatus.Acquired;
         }
     }
 
-    internal void ReleasePublish(Guid draftId, ulong guildId, ulong userId)
+    internal void Release(Guid draftId, ulong guildId, ulong userId)
     {
         lock (_syncRoot)
         {
@@ -185,7 +204,7 @@ internal sealed class RoleMenuDraftRegistry
                 && entry.Draft.GuildId == guildId
                 && entry.Draft.UserId == userId)
             {
-                entry.IsPublishing = false;
+                entry.IsSubmitting = false;
                 entry.Draft = entry.Draft with
                 {
                     ExpiresAtUtc = _timeProvider.GetUtcNow().Add(_lifetime)
@@ -194,7 +213,7 @@ internal sealed class RoleMenuDraftRegistry
         }
     }
 
-    internal void CompletePublish(Guid draftId, ulong guildId, ulong userId)
+    internal void Complete(Guid draftId, ulong guildId, ulong userId)
     {
         lock (_syncRoot)
         {
@@ -207,50 +226,11 @@ internal sealed class RoleMenuDraftRegistry
         }
     }
 
-    internal RoleMenuEditDraftCreateStatus CreateEdit(
-        ObjectId menuId,
-        ulong guildId,
-        ulong userId,
-        string title,
-        string description,
-        IReadOnlyCollection<ulong> roleIds,
-        RoleMenuSelectionMode selectionMode,
-        out RoleMenuEditDraft? draft)
-        => _editDraftRegistry.Create(
-            menuId,
-            guildId,
-            userId,
-            title,
-            description,
-            roleIds,
-            selectionMode,
-            out draft);
-
-    internal RoleMenuEditDraftAccessStatus TryGetEdit(
-        Guid draftId,
-        ulong guildId,
-        ulong userId,
-        out RoleMenuEditDraft? draft)
-        => _editDraftRegistry.TryGet(draftId, guildId, userId, out draft);
-
-    internal RoleMenuEditDraftAccessStatus TryBeginEdit(
-        Guid draftId,
-        ulong guildId,
-        ulong userId,
-        out RoleMenuEditDraft? draft)
-        => _editDraftRegistry.TryBeginSubmit(draftId, guildId, userId, out draft);
-
-    internal void ReleaseEdit(Guid draftId, ulong guildId, ulong userId)
-        => _editDraftRegistry.Release(draftId, guildId, userId);
-
-    internal void CompleteEdit(Guid draftId, ulong guildId, ulong userId)
-        => _editDraftRegistry.Complete(draftId, guildId, userId);
-
     private void PurgeExpiredUnsafe()
     {
         var now = _timeProvider.GetUtcNow();
         foreach (var entry in _drafts.Values
-                     .Where(candidate => !candidate.IsPublishing
+                     .Where(candidate => !candidate.IsSubmitting
                                          && candidate.Draft.ExpiresAtUtc <= now)
                      .ToList())
         {
@@ -258,7 +238,7 @@ internal sealed class RoleMenuDraftRegistry
         }
     }
 
-    private void RemoveUnsafe(RoleMenuDraft draft)
+    private void RemoveUnsafe(RoleMenuEditDraft draft)
     {
         _drafts.Remove(draft.Id);
         var owner = (draft.GuildId, draft.UserId);

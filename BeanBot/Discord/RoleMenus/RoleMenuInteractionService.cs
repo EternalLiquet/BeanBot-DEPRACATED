@@ -102,6 +102,45 @@ public sealed class RoleMenuInteractionService
     internal void CompletePublish(Guid draftId, ulong guildId, ulong userId)
         => _draftRegistry.CompletePublish(draftId, guildId, userId);
 
+    internal RoleMenuEditDraftCreateStatus CreateEditDraft(
+        ObjectId menuId,
+        ulong guildId,
+        ulong userId,
+        string title,
+        string description,
+        IReadOnlyCollection<ulong> roleIds,
+        RoleMenuSelectionMode selectionMode,
+        out RoleMenuEditDraft? draft)
+        => _draftRegistry.CreateEdit(
+            menuId,
+            guildId,
+            userId,
+            title,
+            description,
+            roleIds,
+            selectionMode,
+            out draft);
+
+    internal RoleMenuEditDraftAccessStatus TryGetEditDraft(
+        Guid draftId,
+        ulong guildId,
+        ulong userId,
+        out RoleMenuEditDraft? draft)
+        => _draftRegistry.TryGetEdit(draftId, guildId, userId, out draft);
+
+    internal RoleMenuEditDraftAccessStatus TryBeginEdit(
+        Guid draftId,
+        ulong guildId,
+        ulong userId,
+        out RoleMenuEditDraft? draft)
+        => _draftRegistry.TryBeginEdit(draftId, guildId, userId, out draft);
+
+    internal void ReleaseEdit(Guid draftId, ulong guildId, ulong userId)
+        => _draftRegistry.ReleaseEdit(draftId, guildId, userId);
+
+    internal void CompleteEdit(Guid draftId, ulong guildId, ulong userId)
+        => _draftRegistry.CompleteEdit(draftId, guildId, userId);
+
     internal Task UpsertAsync(
         RoleMenuSettings settings,
         CancellationToken cancellationToken)

@@ -29,6 +29,23 @@ public class RoleMenuInteractionMetadataTests
     }
 
     [Fact]
+    public void AdminCommands_ShareOneGroupedInteractionModule()
+    {
+        var groupedRoleMenuModules = typeof(RoleMenuAdminModule).Assembly
+            .GetTypes()
+            .Where(type => !type.IsAbstract
+                           && typeof(RoleMenuModuleBase).IsAssignableFrom(type)
+                           && type.GetCustomAttribute<GroupAttribute>() is not null)
+            .ToList();
+
+        var module = Assert.Single(groupedRoleMenuModules);
+        Assert.Equal(typeof(RoleMenuAdminModule), module);
+        Assert.NotNull(module.GetMethod(nameof(RoleMenuAdminModule.CreateAsync)));
+        Assert.NotNull(module.GetMethod(nameof(RoleMenuAdminModule.EditAsync)));
+        Assert.NotNull(module.GetMethod(nameof(RoleMenuAdminModule.DeleteAsync)));
+    }
+
+    [Fact]
     public void CreateModal_UsesNativeBoundedRoleAndTextChannelSelectors()
     {
         var roles = Assert.IsAssignableFrom<PropertyInfo>(
@@ -88,6 +105,7 @@ public class RoleMenuInteractionMetadataTests
         {
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.HandleCreateModalAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.PublishAsync)),
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.HandleEditModalAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ConfirmDeleteAsync)),
             typeof(RoleMenuMemberModule).GetMethod(nameof(RoleMenuMemberModule.SaveAsync)),
             typeof(RoleMenuMemberModule).GetMethod(nameof(RoleMenuMemberModule.ClearAsync))

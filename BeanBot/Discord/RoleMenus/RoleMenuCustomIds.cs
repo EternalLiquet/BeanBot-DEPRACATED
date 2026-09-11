@@ -12,6 +12,9 @@ internal static class RoleMenuCustomIds
     internal const string ClearPattern = "role-menu:clear:*:*:*";
     internal const string PublishPattern = "role-menu:publish:*";
     internal const string CancelPublishPattern = "role-menu:cancel-publish:*";
+    internal const string EditSelectPattern = "role-menu:edit-select:*";
+    internal const string EditOpenPattern = "role-menu:edit-open:*";
+    internal const string EditModalPattern = "role-menu:edit-modal:*";
     internal const string DeleteSelectPattern = "role-menu:delete-select:*";
     internal const string DeleteConfirmPattern = "role-menu:delete-confirm:*:*";
     internal const string DeleteCancelPattern = "role-menu:delete-cancel:*";
@@ -36,6 +39,15 @@ internal static class RoleMenuCustomIds
 
     internal static string CancelPublish(Guid draftId)
         => EnsureValid($"role-menu:cancel-publish:{draftId:N}");
+
+    internal static string EditSelect(ulong userId)
+        => EnsureValid($"role-menu:edit-select:{userId.ToString(CultureInfo.InvariantCulture)}");
+
+    internal static string EditOpen(Guid draftId)
+        => EnsureValid($"role-menu:edit-open:{draftId:N}");
+
+    internal static string EditModal(Guid draftId)
+        => EnsureValid($"role-menu:edit-modal:{draftId:N}");
 
     internal static string DeleteSelect(ulong userId)
         => EnsureValid($"role-menu:delete-select:{userId.ToString(CultureInfo.InvariantCulture)}");
