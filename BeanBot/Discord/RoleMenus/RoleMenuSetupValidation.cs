@@ -31,8 +31,6 @@ internal static class RoleMenuSetupValidation
         selectionMode = default;
         roleValidation = null;
         if (!TryValidateEditableFields(
-                request.Title,
-                request.Description,
                 request.SelectionMode,
                 request.RoleIds,
                 administrator,
@@ -68,8 +66,6 @@ internal static class RoleMenuSetupValidation
         [NotNullWhen(true)] out RoleMenuRoleValidationResult? roleValidation,
         out string validationMessage)
         => TryValidateEditableFields(
-            request.Title,
-            request.Description,
             request.SelectionMode,
             request.RoleIds,
             administrator,
@@ -81,9 +77,7 @@ internal static class RoleMenuSetupValidation
             out validationMessage);
 
     private static bool TryValidateEditableFields(
-        string rawTitle,
-        string? rawDescription,
-        string rawSelectionMode,
+        string? rawSelectionMode,
         IReadOnlyCollection<ulong>? roleIds,
         IGuildUser administrator,
         IGuildUser bot,
@@ -93,8 +87,6 @@ internal static class RoleMenuSetupValidation
         [NotNullWhen(true)] out RoleMenuRoleValidationResult? roleValidation,
         out string validationMessage)
     {
-        ArgumentNullException.ThrowIfNull(rawTitle);
-        ArgumentNullException.ThrowIfNull(rawSelectionMode);
         selectionMode = default;
         roleValidation = null;
         if (string.IsNullOrWhiteSpace(title)
@@ -137,7 +129,7 @@ internal static class RoleMenuSetupValidation
     }
 
     internal static bool TryParseSelectionMode(
-        string value,
+        string? value,
         out RoleMenuSelectionMode selectionMode)
     {
         if (string.Equals(value, "multiple", StringComparison.Ordinal))
