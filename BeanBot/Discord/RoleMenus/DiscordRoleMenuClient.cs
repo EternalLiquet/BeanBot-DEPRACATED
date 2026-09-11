@@ -351,7 +351,7 @@ public sealed class DiscordRoleMenuClient
             await userMessage.ModifyAsync(
                 properties =>
                 {
-                    properties.Embeds =
+                    Embed[] embeds =
                     [
                         RoleMenuComponents.BuildPublicEmbed(
                             menuId,
@@ -359,6 +359,7 @@ public sealed class DiscordRoleMenuClient
                             replacement.Description,
                             replacement.SelectionMode)
                     ];
+                    properties.Embeds = embeds;
                     properties.Components = RoleMenuComponents.BuildPublicComponents(menuId);
                     properties.AllowedMentions = AllowedMentions.None;
                 },
