@@ -1,3 +1,4 @@
+using System.Globalization;
 using BeanBot.Discord.RoleMenus;
 using BeanBot.Persistence.Models;
 using MongoDB.Bson;
@@ -23,12 +24,12 @@ public class RoleMenuEditMemberRegressionTests
         var mutationCount = 0;
         var updatedSettings = new RoleMenuSettings(
             MenuId,
-            GuildId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ChannelId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            MessageId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            GuildId.ToString(CultureInfo.InvariantCulture),
+            ChannelId.ToString(CultureInfo.InvariantCulture),
+            MessageId.ToString(CultureInfo.InvariantCulture),
             "Updated menu",
             string.Empty,
-            [RemainingRoleId.ToString(System.Globalization.CultureInfo.InvariantCulture)],
+            [RemainingRoleId.ToString(CultureInfo.InvariantCulture)],
             RoleMenuSelectionMode.Multiple);
         var operations = new RoleMenuMemberOperations(
             (_, _, _) => Task.FromResult<RoleMenuSettings?>(updatedSettings),
@@ -59,8 +60,8 @@ public class RoleMenuEditMemberRegressionTests
                     ],
                     new RoleMenuActorSnapshot(
                         CanManageRoles: true,
-                        HighestRolePosition: 10,
-                        IsOwner: false))),
+                        Hierarchy: 10,
+                        IsGuildOwner: false))),
             (_, _, _) => Task.FromResult<RoleMenuMemberSnapshot?>(
                 new RoleMenuMemberSnapshot(GuildId, MemberUserId, [])),
             (_, _, _, _) =>
@@ -81,7 +82,7 @@ public class RoleMenuEditMemberRegressionTests
             BotUserId,
             MemberUserId,
             MessageId,
-            [RemovedRoleId.ToString(System.Globalization.CultureInfo.InvariantCulture)],
+            [RemovedRoleId.ToString(CultureInfo.InvariantCulture)],
             operations,
             CancellationToken.None);
 
