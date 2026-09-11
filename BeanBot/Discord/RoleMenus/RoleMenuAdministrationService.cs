@@ -45,7 +45,7 @@ public sealed class RoleMenuAdministrationService
             return new RoleMenuPreviewResult("Bean Bot couldn't refresh the current server role hierarchy. Try again in a moment.");
         }
 
-        var title = request.Title.Trim();
+        var title = request.Title?.Trim() ?? string.Empty;
         var description = request.Description?.Trim() ?? string.Empty;
         if (!TryParseAndValidateModal(
                 request,
@@ -225,7 +225,7 @@ public sealed class RoleMenuAdministrationService
                 "Bean Bot couldn't refresh the current server role hierarchy. Try again in a moment.");
         }
 
-        var title = request.Title.Trim();
+        var title = request.Title?.Trim() ?? string.Empty;
         var description = request.Description?.Trim() ?? string.Empty;
         if (!TryParseAndValidateEdit(
                 request,
