@@ -19,4 +19,12 @@ internal static partial class BeanBotLog
         ILogger logger,
         string menuId,
         Exception exception);
+
+    [LoggerMessage(
+        Level = LogLevel.Error,
+        Message = "Role-menu edit operation failed unexpectedly for menu {MenuId}")]
+    internal static partial void RoleMenuEditOperationFailed(
+        ILogger logger,
+        string menuId,
+        Exception exception);
 }
