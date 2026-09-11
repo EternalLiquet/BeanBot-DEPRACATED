@@ -300,6 +300,77 @@ public sealed class DiscordRoleMenuClient
         }
     }
 
+    internal async Task<RoleMenuPanelUpdateStatus> UpdatePanelAsync(
+        ulong guildId,
+        ObjectId menuId,
+        ulong channelId,
+        ulong messageId,
+        ulong botUserId,
+        RoleMenuSettings replacement,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(replacement);
+        var requestOptions = CreateRequestOptions(cancellationToken);
+        IChannel? channel;
+        try
+        {
+            channel = await _getChannel(channelId, requestOptions);
+        }
+        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
+        {
+            return RoleMenuPanelUpdateStatus.Missing;
+        }
+
+        if (channel is not ITextChannel textChannel || textChannel.GuildId != guildId)
+        {
+            return RoleMenuPanelUpdateStatus.UnexpectedMessage;
+        }
+
+        IMessage? message;
+        try
+        {
+            message = await textChannel.GetMessageAsync(
+                messageId,
+                CacheMode.AllowDownload,
+                requestOptions);
+        }
+        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
+        {
+            return RoleMenuPanelUpdateStatus.Missing;
+        }
+
+        if (message is not IUserMessage userMessage
+            || userMessage.Author.Id != botUserId
+            || !RoleMenuComponents.HasManageButton(userMessage, menuId))
+        {
+            return RoleMenuPanelUpdateStatus.UnexpectedMessage;
+        }
+
+        try
+        {
+            await userMessage.ModifyAsync(
+                properties =>
+                {
+                    properties.Embeds =
+                    [
+                        RoleMenuComponents.BuildPublicEmbed(
+                            menuId,
+                            replacement.Title,
+                            replacement.Description,
+                            replacement.SelectionMode)
+                    ];
+                    properties.Components = RoleMenuComponents.BuildPublicComponents(menuId);
+                    properties.AllowedMentions = AllowedMentions.None;
+                },
+                requestOptions);
+            return RoleMenuPanelUpdateStatus.Updated;
+        }
+        catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
+        {
+            return RoleMenuPanelUpdateStatus.Missing;
+        }
+    }
+
     internal async Task<RoleMenuPanelSnapshot?> ReadPanelSnapshotAsync(
         ulong guildId,
         ObjectId menuId,
