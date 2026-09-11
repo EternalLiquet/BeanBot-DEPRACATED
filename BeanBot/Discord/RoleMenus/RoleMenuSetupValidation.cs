@@ -30,6 +30,73 @@ internal static class RoleMenuSetupValidation
         targetChannelId = 0;
         selectionMode = default;
         roleValidation = null;
+        if (!TryValidateEditableFields(
+                request.Title,
+                request.Description,
+                request.SelectionMode,
+                request.RoleIds,
+                administrator,
+                bot,
+                title,
+                description,
+                out selectionMode,
+                out roleValidation,
+                out validationMessage))
+        {
+            return false;
+        }
+
+        if (request.TargetChannelId is null
+            || request.TargetChannelGuildId != guildId
+            || request.TargetChannelType != ChannelType.Text)
+        {
+            validationMessage = "Choose a normal text channel from this server.";
+            return false;
+        }
+
+        targetChannelId = request.TargetChannelId.Value;
+        return true;
+    }
+
+    internal static bool TryParseAndValidateEdit(
+        RoleMenuEditRequest request,
+        IGuildUser administrator,
+        IGuildUser bot,
+        string title,
+        string description,
+        out RoleMenuSelectionMode selectionMode,
+        [NotNullWhen(true)] out RoleMenuRoleValidationResult? roleValidation,
+        out string validationMessage)
+        => TryValidateEditableFields(
+            request.Title,
+            request.Description,
+            request.SelectionMode,
+            request.RoleIds,
+            administrator,
+            bot,
+            title,
+            description,
+            out selectionMode,
+            out roleValidation,
+            out validationMessage);
+
+    private static bool TryValidateEditableFields(
+        string rawTitle,
+        string? rawDescription,
+        string rawSelectionMode,
+        IReadOnlyCollection<ulong>? roleIds,
+        IGuildUser administrator,
+        IGuildUser bot,
+        string title,
+        string description,
+        out RoleMenuSelectionMode selectionMode,
+        [NotNullWhen(true)] out RoleMenuRoleValidationResult? roleValidation,
+        out string validationMessage)
+    {
+        ArgumentNullException.ThrowIfNull(rawTitle);
+        ArgumentNullException.ThrowIfNull(rawSelectionMode);
+        selectionMode = default;
+        roleValidation = null;
         if (string.IsNullOrWhiteSpace(title)
             || title.Length > RoleMenuConstants.MaximumTitleLength)
         {
@@ -45,32 +112,20 @@ internal static class RoleMenuSetupValidation
             return false;
         }
 
-        if (!TryParseSelectionMode(request.SelectionMode, out selectionMode))
+        if (!TryParseSelectionMode(rawSelectionMode, out selectionMode))
         {
             validationMessage = "Choose either single-selection or multiple-selection mode.";
             return false;
         }
 
-        if (request.TargetChannelId is null
-            || request.TargetChannelGuildId != guildId
-            || request.TargetChannelType != ChannelType.Text)
-        {
-            validationMessage = "Choose a normal text channel from this server.";
-            return false;
-        }
-
-        targetChannelId = request.TargetChannelId.Value;
-        if (request.RoleIds is not { Count: >= 1 and <= RoleMenuConstants.MaximumRoles })
+        if (roleIds is not { Count: >= 1 and <= RoleMenuConstants.MaximumRoles })
         {
             validationMessage =
                 $"Choose between 1 and {RoleMenuConstants.MaximumRoles} roles.";
             return false;
         }
 
-        roleValidation = ValidateRoles(
-            request.RoleIds,
-            administrator,
-            bot);
+        roleValidation = ValidateRoles(roleIds, administrator, bot);
         if (!roleValidation.IsValid)
         {
             validationMessage = FormatRoleValidationFailure(roleValidation);
