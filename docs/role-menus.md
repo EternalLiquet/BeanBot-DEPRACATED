@@ -91,7 +91,7 @@ Use a test server with BeanBot's role below one test role and above two other te
 
 ## Code organization
 
-`RoleMenuAdminModule`, `RoleMenuEditAdminModule`, and `RoleMenuMemberModule` validate Discord control bindings and acknowledge interactions before starting work. Their shared `RoleMenuModuleBase` handles private responses, mention suppression, and acknowledgement reconciliation.
+`RoleMenuAdminModule` owns the create, edit, and delete administrator interactions; its edit handlers are split into a partial-class source file to keep the feature readable without registering a second top-level Discord command module. `RoleMenuMemberModule` handles member-facing controls. Their shared `RoleMenuModuleBase` handles private responses, mention suppression, and acknowledgement reconciliation.
 
 `RoleMenuAdministrationService` prepares drafts and connects publication, editing, and deletion to persistence. `RoleMenuMemberService` loads selectors and applies member choices through the mutation coordinator. These services take IDs and submitted values, without an interaction context. Each member operation keeps its own Discord member reference, so concurrent requests cannot share a mutation target.
 
