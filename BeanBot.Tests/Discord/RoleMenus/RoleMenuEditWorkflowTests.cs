@@ -62,30 +62,17 @@ public class RoleMenuEditWorkflowTests
         Assert.Same(expected, failure.Exception);
     }
 
-    [Theory]
-    [InlineData(RoleMenuPanelUpdateStatus.Missing, RoleMenuEditCommitStatus.PanelMissing)]
-    [InlineData(RoleMenuPanelUpdateStatus.UnexpectedMessage, RoleMenuEditCommitStatus.PanelUnexpected)]
-    public async Task ExecuteAsync_DefinitePanelFailure_KeepsPersistedEdit(
-        RoleMenuPanelUpdateStatus panelStatus,
-        RoleMenuEditCommitStatus expectedStatus)
-    {
-        var persistCalls = 0;
-        var result = await RoleMenuEditWorkflow.ExecuteAsync(
-            CreateSettings(),
-            new RoleMenuEditCommitOperations(
-                (_, _) =>
-                {
-                    persistCalls++;
-                    return Task.CompletedTask;
-                },
-                (_, _) => Task.FromResult(panelStatus),
-                () => false),
-            CancellationToken.None);
+    [Fact]
+    public Task ExecuteAsync_MissingPanel_KeepsPersistedEdit()
+        => AssertDefinitePanelFailureAsync(
+            RoleMenuPanelUpdateStatus.Missing,
+            RoleMenuEditCommitStatus.PanelMissing);
 
-        Assert.Equal(expectedStatus, result.Status);
-        Assert.Equal(1, persistCalls);
-        Assert.Empty(result.Failures);
-    }
+    [Fact]
+    public Task ExecuteAsync_UnexpectedPanel_KeepsPersistedEdit()
+        => AssertDefinitePanelFailureAsync(
+            RoleMenuPanelUpdateStatus.UnexpectedMessage,
+            RoleMenuEditCommitStatus.PanelUnexpected);
 
     [Fact]
     public async Task ExecuteAsync_AmbiguousPanelFailure_DoesNotRetryOrRollbackPersistence()
@@ -171,6 +158,28 @@ public class RoleMenuEditWorkflowTests
                 CancellationToken.None));
 
         Assert.Equal(0, panelCalls);
+    }
+
+    private static async Task AssertDefinitePanelFailureAsync(
+        RoleMenuPanelUpdateStatus panelStatus,
+        RoleMenuEditCommitStatus expectedStatus)
+    {
+        var persistCalls = 0;
+        var result = await RoleMenuEditWorkflow.ExecuteAsync(
+            CreateSettings(),
+            new RoleMenuEditCommitOperations(
+                (_, _) =>
+                {
+                    persistCalls++;
+                    return Task.CompletedTask;
+                },
+                (_, _) => Task.FromResult(panelStatus),
+                () => false),
+            CancellationToken.None);
+
+        Assert.Equal(expectedStatus, result.Status);
+        Assert.Equal(1, persistCalls);
+        Assert.Empty(result.Failures);
     }
 
     private static RoleMenuSettings CreateSettings()
