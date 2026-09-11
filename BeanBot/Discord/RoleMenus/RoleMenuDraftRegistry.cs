@@ -44,6 +44,7 @@ internal sealed class RoleMenuDraftRegistry
     private readonly TimeProvider _timeProvider;
     private readonly int _capacity;
     private readonly TimeSpan _lifetime;
+    private readonly RoleMenuEditDraftRegistry _editDraftRegistry;
 
     public RoleMenuDraftRegistry()
         : this(
@@ -63,6 +64,7 @@ internal sealed class RoleMenuDraftRegistry
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(lifetime, TimeSpan.Zero);
         _capacity = capacity;
         _lifetime = lifetime;
+        _editDraftRegistry = new RoleMenuEditDraftRegistry(timeProvider, capacity, lifetime);
     }
 
     internal RoleMenuDraftCreateStatus Create(
@@ -204,6 +206,45 @@ internal sealed class RoleMenuDraftRegistry
             }
         }
     }
+
+    internal RoleMenuEditDraftCreateStatus CreateEdit(
+        ObjectId menuId,
+        ulong guildId,
+        ulong userId,
+        string title,
+        string description,
+        IReadOnlyCollection<ulong> roleIds,
+        RoleMenuSelectionMode selectionMode,
+        out RoleMenuEditDraft? draft)
+        => _editDraftRegistry.Create(
+            menuId,
+            guildId,
+            userId,
+            title,
+            description,
+            roleIds,
+            selectionMode,
+            out draft);
+
+    internal RoleMenuEditDraftAccessStatus TryGetEdit(
+        Guid draftId,
+        ulong guildId,
+        ulong userId,
+        out RoleMenuEditDraft? draft)
+        => _editDraftRegistry.TryGet(draftId, guildId, userId, out draft);
+
+    internal RoleMenuEditDraftAccessStatus TryBeginEdit(
+        Guid draftId,
+        ulong guildId,
+        ulong userId,
+        out RoleMenuEditDraft? draft)
+        => _editDraftRegistry.TryBeginSubmit(draftId, guildId, userId, out draft);
+
+    internal void ReleaseEdit(Guid draftId, ulong guildId, ulong userId)
+        => _editDraftRegistry.Release(draftId, guildId, userId);
+
+    internal void CompleteEdit(Guid draftId, ulong guildId, ulong userId)
+        => _editDraftRegistry.Complete(draftId, guildId, userId);
 
     private void PurgeExpiredUnsafe()
     {
