@@ -193,6 +193,6 @@ public class RoleMenuEditWorkflowTests
             ["404", "405"],
             RoleMenuSelectionMode.Multiple)
         {
-            CreatedAtUtc = new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero)
+            CreatedAtUtc = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc)
         };
 }
