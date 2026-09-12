@@ -79,6 +79,7 @@ public sealed class RoleMenuSettings
     public RoleMenuSelectionMode SelectionMode { get; init; }
 
     [BsonElement("migratedFromReactionRoleMessageId")]
+    [BsonDefaultValue("")]
     [BsonIgnoreIfDefault]
     [JsonPropertyName("migratedFromReactionRoleMessageId")]
     public string MigratedFromReactionRoleMessageId
