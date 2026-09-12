@@ -17,7 +17,7 @@ internal sealed record LegacyReactionRolePanelLookupResult(
     LegacyReactionRolePanelLookupStatus Status,
     string? SuggestedTitle = null);
 
-internal sealed class LegacyReactionRoleMigrationClient
+public sealed class LegacyReactionRoleMigrationClient
 {
     private readonly Func<ulong, RequestOptions, Task<IChannel?>> _getChannel;
 
