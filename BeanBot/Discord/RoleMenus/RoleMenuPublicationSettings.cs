@@ -19,7 +19,8 @@ internal static class RoleMenuPublicationSettings
             draft.Title,
             draft.Description,
             draft.RoleIds.Select(roleId => roleId.ToString(CultureInfo.InvariantCulture)),
-            draft.SelectionMode);
+            draft.SelectionMode,
+            draft.LegacyReactionRoleMessageId?.ToString(CultureInfo.InvariantCulture) ?? string.Empty);
         settings.CreatedAtUtc = existingCreatedAtUtc;
         return settings;
     }
@@ -47,6 +48,11 @@ internal static class RoleMenuPublicationSettings
                && string.Equals(settings.Title, draft.Title, StringComparison.Ordinal)
                && string.Equals(settings.Description, draft.Description, StringComparison.Ordinal)
                && settings.SelectionMode == draft.SelectionMode
+               && string.Equals(
+                   settings.MigratedFromReactionRoleMessageId,
+                   draft.LegacyReactionRoleMessageId?.ToString(CultureInfo.InvariantCulture)
+                       ?? string.Empty,
+                   StringComparison.Ordinal)
                && settings.RoleIds.SequenceEqual(
                    draft.RoleIds.Select(roleId => roleId.ToString(CultureInfo.InvariantCulture)),
                    StringComparer.Ordinal);

@@ -19,6 +19,7 @@ public sealed class RoleMenuSettings
     private string _messageId = string.Empty;
     private string _title = string.Empty;
     private string _description = string.Empty;
+    private string _migratedFromReactionRoleMessageId = string.Empty;
 
     [BsonId]
     [JsonPropertyName("id")]
@@ -77,6 +78,16 @@ public sealed class RoleMenuSettings
     [JsonPropertyName("selectionMode")]
     public RoleMenuSelectionMode SelectionMode { get; init; }
 
+    [BsonElement("migratedFromReactionRoleMessageId")]
+    [BsonDefaultValue("")]
+    [BsonIgnoreIfDefault]
+    [JsonPropertyName("migratedFromReactionRoleMessageId")]
+    public string MigratedFromReactionRoleMessageId
+    {
+        get => _migratedFromReactionRoleMessageId;
+        init => _migratedFromReactionRoleMessageId = value ?? string.Empty;
+    }
+
     [BsonElement("createdAtUtc")]
     [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
     [JsonPropertyName("createdAtUtc")]
@@ -97,7 +108,8 @@ public sealed class RoleMenuSettings
         string title,
         string description,
         IEnumerable<string> roleIds,
-        RoleMenuSelectionMode selectionMode)
+        RoleMenuSelectionMode selectionMode,
+        string migratedFromReactionRoleMessageId = "")
     {
         if (id == ObjectId.Empty)
         {
@@ -112,5 +124,7 @@ public sealed class RoleMenuSettings
         Description = description ?? throw new ArgumentNullException(nameof(description));
         RoleIds = [.. roleIds ?? throw new ArgumentNullException(nameof(roleIds))];
         SelectionMode = selectionMode;
+        MigratedFromReactionRoleMessageId = migratedFromReactionRoleMessageId
+            ?? throw new ArgumentNullException(nameof(migratedFromReactionRoleMessageId));
     }
 }

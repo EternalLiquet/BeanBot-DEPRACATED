@@ -28,7 +28,8 @@ internal sealed record RoleMenuDraft(
     string Description,
     IReadOnlyList<ulong> RoleIds,
     RoleMenuSelectionMode SelectionMode,
-    DateTimeOffset ExpiresAtUtc);
+    DateTimeOffset ExpiresAtUtc,
+    ulong? LegacyReactionRoleMessageId = null);
 
 internal sealed class RoleMenuDraftRegistry
 {
@@ -74,6 +75,59 @@ internal sealed class RoleMenuDraftRegistry
         IReadOnlyCollection<ulong> roleIds,
         RoleMenuSelectionMode selectionMode,
         out RoleMenuDraft? draft)
+        => CreateCore(
+            guildId,
+            userId,
+            targetChannelId,
+            title,
+            description,
+            roleIds,
+            selectionMode,
+            ObjectId.GenerateNewId(),
+            legacyReactionRoleMessageId: null,
+            out draft);
+
+    internal RoleMenuDraftCreateStatus CreateMigration(
+        ulong guildId,
+        ulong userId,
+        ulong targetChannelId,
+        string title,
+        string description,
+        IReadOnlyCollection<ulong> roleIds,
+        ObjectId menuId,
+        ulong legacyReactionRoleMessageId,
+        out RoleMenuDraft? draft)
+    {
+        if (menuId == ObjectId.Empty)
+        {
+            throw new ArgumentException("A deterministic menu ID is required.", nameof(menuId));
+        }
+
+        ArgumentOutOfRangeException.ThrowIfZero(legacyReactionRoleMessageId);
+        return CreateCore(
+            guildId,
+            userId,
+            targetChannelId,
+            title,
+            description,
+            roleIds,
+            RoleMenuSelectionMode.Multiple,
+            menuId,
+            legacyReactionRoleMessageId,
+            out draft);
+    }
+
+    private RoleMenuDraftCreateStatus CreateCore(
+        ulong guildId,
+        ulong userId,
+        ulong targetChannelId,
+        string title,
+        string description,
+        IReadOnlyCollection<ulong> roleIds,
+        RoleMenuSelectionMode selectionMode,
+        ObjectId menuId,
+        ulong? legacyReactionRoleMessageId,
+        out RoleMenuDraft? draft)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
         ArgumentNullException.ThrowIfNull(description);
@@ -105,7 +159,7 @@ internal sealed class RoleMenuDraftRegistry
             var now = _timeProvider.GetUtcNow();
             draft = new RoleMenuDraft(
                 Guid.NewGuid(),
-                ObjectId.GenerateNewId(),
+                menuId,
                 guildId,
                 userId,
                 targetChannelId,
@@ -113,7 +167,8 @@ internal sealed class RoleMenuDraftRegistry
                 description,
                 [.. roleIds],
                 selectionMode,
-                now.Add(_lifetime));
+                now.Add(_lifetime),
+                legacyReactionRoleMessageId);
             _drafts[draft.Id] = new DraftEntry { Draft = draft };
             _draftByOwner[owner] = draft.Id;
             return RoleMenuDraftCreateStatus.Created;

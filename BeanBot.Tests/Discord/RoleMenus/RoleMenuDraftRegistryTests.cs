@@ -1,5 +1,6 @@
 using BeanBot.Discord.RoleMenus;
 using BeanBot.Persistence.Models;
+using MongoDB.Bson;
 using Xunit;
 
 namespace BeanBot.Tests.Discord.RoleMenus;
@@ -43,6 +44,31 @@ public class RoleMenuDraftRegistryTests
 
         Assert.Equal(RoleMenuDraftCreateStatus.CapacityReached, status);
         Assert.Null(draft);
+    }
+
+    [Fact]
+    public void CreateMigration_PreservesDeterministicIdentityAndMultipleMode()
+    {
+        var registry = CreateRegistry();
+        var menuId = ObjectId.GenerateNewId();
+
+        var status = registry.CreateMigration(
+            1UL,
+            2UL,
+            3UL,
+            "Games",
+            "Migrated roles",
+            [4UL, 5UL],
+            menuId,
+            777UL,
+            out var created);
+
+        var draft = Assert.IsType<RoleMenuDraft>(created);
+        Assert.Equal(RoleMenuDraftCreateStatus.Created, status);
+        Assert.Equal(menuId, draft.MenuId);
+        Assert.Equal(777UL, draft.LegacyReactionRoleMessageId);
+        Assert.Equal(RoleMenuSelectionMode.Multiple, draft.SelectionMode);
+        Assert.Equal([4UL, 5UL], draft.RoleIds);
     }
 
     [Fact]
