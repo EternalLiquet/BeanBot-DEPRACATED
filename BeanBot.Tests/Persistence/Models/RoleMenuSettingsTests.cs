@@ -18,7 +18,8 @@ public class RoleMenuSettingsTests
             "Games",
             "Choose games",
             ["4", "5"],
-            RoleMenuSelectionMode.Exclusive)
+            RoleMenuSelectionMode.Exclusive,
+            "99")
         {
             CreatedAtUtc = new DateTime(2026, 8, 22, 12, 0, 0, DateTimeKind.Utc),
             UpdatedAtUtc = new DateTime(2026, 8, 22, 12, 1, 0, DateTimeKind.Utc)
@@ -28,6 +29,7 @@ public class RoleMenuSettingsTests
         var actual = BsonSerializer.Deserialize<RoleMenuSettings>(document);
 
         Assert.Equal("Exclusive", document["selectionMode"].AsString);
+        Assert.Equal("99", document["migratedFromReactionRoleMessageId"].AsString);
         Assert.Equal(expected.Id, actual.Id);
         Assert.Equal(expected.GuildId, actual.GuildId);
         Assert.Equal(expected.ChannelId, actual.ChannelId);
@@ -36,8 +38,29 @@ public class RoleMenuSettingsTests
         Assert.Equal(expected.Description, actual.Description);
         Assert.Equal(expected.RoleIds, actual.RoleIds);
         Assert.Equal(expected.SelectionMode, actual.SelectionMode);
+        Assert.Equal(expected.MigratedFromReactionRoleMessageId, actual.MigratedFromReactionRoleMessageId);
         Assert.Equal(DateTimeKind.Utc, actual.CreatedAtUtc.Kind);
         Assert.Equal(DateTimeKind.Utc, actual.UpdatedAtUtc.Kind);
+    }
+
+    [Fact]
+    public void BsonDeserialize_LegacyRoleMenuWithoutMigrationProvenanceDefaultsEmpty()
+    {
+        var document = new BsonDocument
+        {
+            ["_id"] = ObjectId.GenerateNewId(),
+            ["guildId"] = "1",
+            ["channelId"] = "2",
+            ["messageId"] = "3",
+            ["title"] = "Games",
+            ["description"] = string.Empty,
+            ["roleIds"] = new BsonArray(["4"]),
+            ["selectionMode"] = "Multiple"
+        };
+
+        var settings = BsonSerializer.Deserialize<RoleMenuSettings>(document);
+
+        Assert.Equal(string.Empty, settings.MigratedFromReactionRoleMessageId);
     }
 
     [Fact]
