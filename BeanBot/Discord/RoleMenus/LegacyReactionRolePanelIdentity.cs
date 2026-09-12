@@ -10,7 +10,7 @@ internal static class LegacyReactionRolePanelIdentity
     internal static bool TryRecognize(
         ulong authorId,
         ulong expectedBotUserId,
-        IReadOnlyCollection<Embed> embeds,
+        IReadOnlyCollection<IEmbed> embeds,
         IReadOnlyCollection<ulong> expectedRoleIds,
         out string? suggestedTitle)
     {
@@ -39,7 +39,7 @@ internal static class LegacyReactionRolePanelIdentity
             .Select(field => field.Value)
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .ToHashSet(StringComparer.Ordinal);
-        if (embed.Fields.Length != expectedMentions.Count
+        if (embed.Fields.Count != expectedMentions.Count
             || !actualMentions.SetEquals(expectedMentions))
         {
             return false;
