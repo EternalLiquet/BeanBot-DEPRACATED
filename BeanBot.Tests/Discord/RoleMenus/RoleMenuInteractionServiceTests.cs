@@ -11,7 +11,7 @@ namespace BeanBot.Tests.Discord.RoleMenus;
 public class RoleMenuInteractionServiceTests
 {
     [Fact]
-    public void ModuleConstructors_RequireFacadeAndLogger()
+    public void ModuleConstructors_RequireFacadesAndLogger()
     {
         var fixture = CreateFixture();
         var discord = new DiscordRoleMenuClient(
@@ -20,6 +20,15 @@ public class RoleMenuInteractionServiceTests
 
         var administration = new RoleMenuAdministrationService(
             fixture.Service, discord, NullLogger<RoleMenuAdministrationService>.Instance);
+        var migration = new RoleMenuMigrationService(
+            new ReactionRoleRepository(
+                new EmptyReactionRoleStore(),
+                NullLogger<ReactionRoleRepository>.Instance),
+            fixture.Service,
+            discord,
+            new LegacyReactionRoleMigrationClient(
+                (_, _) => Task.FromResult<global::Discord.IChannel?>(null)),
+            administration);
         var members = new RoleMenuMemberService(
             fixture.Service, discord, NullLogger<RoleMenuMemberService>.Instance);
 
@@ -27,16 +36,25 @@ public class RoleMenuInteractionServiceTests
             null!,
             discord,
             administration,
+            migration,
             NullLogger<RoleMenuAdminModule>.Instance));
         Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
             fixture.Service,
             discord,
             administration,
+            null!,
+            NullLogger<RoleMenuAdminModule>.Instance));
+        Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
+            fixture.Service,
+            discord,
+            administration,
+            migration,
             null!));
         _ = new RoleMenuAdminModule(
             fixture.Service,
             discord,
             administration,
+            migration,
             NullLogger<RoleMenuAdminModule>.Instance);
 
         Assert.Throws<ArgumentNullException>(() => new RoleMenuMemberModule(
@@ -343,6 +361,34 @@ public class RoleMenuInteractionServiceTests
             }
 
             return Task.FromResult(deleted);
+        }
+    }
+
+    private sealed class EmptyReactionRoleStore : IReactionRoleSettingsStore
+    {
+        public Task InsertAsync(
+            ReactionRoleSettings roleSettings,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+
+        public Task<List<ReactionRoleSettings>> GetRecentAsync(
+            DateTime oldestLastAccessedUtc,
+            int limit,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new List<ReactionRoleSettings>());
+        }
+
+        public Task<ReactionRoleSettings?> GetByMessageIdAsync(
+            string messageId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<ReactionRoleSettings?>(null);
         }
     }
 }
