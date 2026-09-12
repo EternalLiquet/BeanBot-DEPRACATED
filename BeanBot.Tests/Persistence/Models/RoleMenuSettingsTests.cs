@@ -44,6 +44,24 @@ public class RoleMenuSettingsTests
     }
 
     [Fact]
+    public void BsonSerialize_NonMigratedRoleMenuOmitsMigrationProvenance()
+    {
+        var settings = new RoleMenuSettings(
+            ObjectId.GenerateNewId(),
+            "1",
+            "2",
+            "3",
+            "Games",
+            string.Empty,
+            ["4"],
+            RoleMenuSelectionMode.Multiple);
+
+        var document = settings.ToBsonDocument();
+
+        Assert.False(document.Contains("migratedFromReactionRoleMessageId"));
+    }
+
+    [Fact]
     public void BsonDeserialize_LegacyRoleMenuWithoutMigrationProvenanceDefaultsEmpty()
     {
         var document = new BsonDocument
