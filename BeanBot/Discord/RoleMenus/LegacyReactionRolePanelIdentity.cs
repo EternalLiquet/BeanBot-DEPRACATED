@@ -39,7 +39,7 @@ internal static class LegacyReactionRolePanelIdentity
             .Select(field => field.Value)
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .ToHashSet(StringComparer.Ordinal);
-        if (embed.Fields.Count != expectedMentions.Count
+        if (embed.Fields.Count() != expectedMentions.Count
             || !actualMentions.SetEquals(expectedMentions))
         {
             return false;
