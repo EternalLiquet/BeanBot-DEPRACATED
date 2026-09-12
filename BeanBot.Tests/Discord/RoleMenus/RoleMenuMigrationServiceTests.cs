@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using BeanBot.Discord.Interactions;
 using BeanBot.Discord.RoleMenus;
@@ -128,14 +129,14 @@ public class RoleMenuMigrationServiceTests
         var menuId = RoleMenuMigrationIdentity.CreateMenuId(GuildId, LegacyMessageId);
         var existing = new RoleMenuSettings(
             menuId,
-            GuildId.ToString(),
-            ChannelId.ToString(),
+            GuildId.ToString(CultureInfo.InvariantCulture),
+            ChannelId.ToString(CultureInfo.InvariantCulture),
             "99",
             "Games",
             string.Empty,
             ["4", "5"],
             RoleMenuSelectionMode.Multiple,
-            LegacyMessageId.ToString());
+            LegacyMessageId.ToString(CultureInfo.InvariantCulture));
         fixture.RoleMenuStore.Settings = existing;
 
         var result = await fixture.Service.CreatePreviewAsync(
@@ -248,11 +249,11 @@ public class RoleMenuMigrationServiceTests
         params ulong[] roleIds)
         => new(
             [.. roleIds.Select((roleId, index) => new RoleEmotePair(
-                roleId.ToString(),
+                roleId.ToString(CultureInfo.InvariantCulture),
                 $"emoji-{index}"))],
-            guildId.ToString(),
-            channelId.ToString(),
-            messageId.ToString());
+            guildId.ToString(CultureInfo.InvariantCulture),
+            channelId.ToString(CultureInfo.InvariantCulture),
+            messageId.ToString(CultureInfo.InvariantCulture));
 
     private static IMessage CreateLegacyMessage(
         ulong messageId,
