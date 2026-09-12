@@ -9,7 +9,7 @@ public class LegacyReactionRolePanelIdentityTests
     [Fact]
     public void TryRecognize_AcceptsExactBeanBotLegacyPanelAndSuggestsLabel()
     {
-        IReadOnlyCollection<IEmbed> embeds =
+        IReadOnlyCollection<Embed> embeds =
         [
             new EmbedBuilder()
                 .AddField("😀", "<@&10>", inline: true)
@@ -32,7 +32,7 @@ public class LegacyReactionRolePanelIdentityTests
     [Fact]
     public void TryRecognize_RejectsWrongAuthorOrPanelShape()
     {
-        IReadOnlyCollection<IEmbed> embeds =
+        IReadOnlyCollection<Embed> embeds =
         [
             new EmbedBuilder()
                 .AddField("😀", "<@&10>", inline: true)
@@ -57,7 +57,7 @@ public class LegacyReactionRolePanelIdentityTests
     [Fact]
     public void TryRecognize_RejectsNonLegacyFooterAndDuplicateExpectedRoles()
     {
-        IReadOnlyCollection<IEmbed> embeds =
+        IReadOnlyCollection<Embed> embeds =
         [
             new EmbedBuilder()
                 .AddField("😀", "<@&10>", inline: true)
