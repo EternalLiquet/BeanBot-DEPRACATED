@@ -2,7 +2,6 @@ using System.Globalization;
 using BeanBot.Persistence.Models;
 using BeanBot.Persistence.Repositories;
 using Discord;
-using MongoDB.Bson;
 using static BeanBot.Discord.RoleMenus.DiscordRoleMenuClient;
 using static BeanBot.Discord.RoleMenus.RoleMenuPresentation;
 using static BeanBot.Discord.RoleMenus.RoleMenuSetupValidation;
@@ -37,7 +36,7 @@ internal sealed class RoleMenuMigrationService
     private readonly LegacyReactionRoleMigrationClient _legacyDiscord;
     private readonly RoleMenuAdministrationService _administration;
 
-    internal RoleMenuMigrationService(
+    public RoleMenuMigrationService(
         ReactionRoleRepository reactionRoles,
         RoleMenuInteractionService roleMenus,
         DiscordRoleMenuClient discord,
@@ -239,7 +238,7 @@ internal sealed class RoleMenuMigrationService
 
         var failure = publication.CanRetry
             ? "Bean Bot confirmed that the attempted role-menu panel was rolled back and no migration was saved. " +
-              "You may retry this preview after correcting the underlying problem."
+              "Run `/role-menu migrate` again after correcting the underlying problem."
             : FormatMigrationPublicationFailure(publication.Status);
         return new RoleMenuMigrationConfirmationResult(
             failure,
@@ -323,7 +322,6 @@ internal sealed class RoleMenuMigrationService
                 sourceChannelId,
                 roleIds,
                 roleValidation,
-                administrator,
                 bot,
                 panel.SuggestedTitle);
     }
@@ -413,18 +411,16 @@ internal sealed class RoleMenuMigrationService
         ulong SourceChannelId,
         IReadOnlyList<ulong>? RoleIds,
         RoleMenuRoleValidationResult? RoleValidation,
-        IGuildUser? Administrator,
         IGuildUser? Bot,
         string? SuggestedTitle)
     {
         internal static ValidatedLegacySource Invalid(string errorMessage)
-            => new(false, errorMessage, 0, null, null, null, null, null);
+            => new(false, errorMessage, 0, null, null, null, null);
 
         internal static ValidatedLegacySource Valid(
             ulong sourceChannelId,
             IReadOnlyList<ulong> roleIds,
             RoleMenuRoleValidationResult roleValidation,
-            IGuildUser administrator,
             IGuildUser bot,
             string? suggestedTitle)
             => new(
@@ -433,7 +429,6 @@ internal sealed class RoleMenuMigrationService
                 sourceChannelId,
                 roleIds,
                 roleValidation,
-                administrator,
                 bot,
                 suggestedTitle);
     }
