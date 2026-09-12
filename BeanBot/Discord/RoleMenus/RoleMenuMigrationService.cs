@@ -28,7 +28,7 @@ internal sealed record RoleMenuMigrationConfirmationResult(
     bool Completed,
     RoleMenuPublicationResult? Publication = null);
 
-internal sealed class RoleMenuMigrationService
+public sealed class RoleMenuMigrationService
 {
     private readonly ReactionRoleRepository _reactionRoles;
     private readonly RoleMenuInteractionService _roleMenus;
