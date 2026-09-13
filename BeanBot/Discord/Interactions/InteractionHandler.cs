@@ -21,6 +21,7 @@ internal sealed class InteractionHandler : IAsyncDisposable
     private readonly DiscordSocketClient _discordClient;
     private readonly InteractionService _interactionService;
     private readonly IServiceProvider _services;
+    private readonly InteractionCommandRegistrationTarget _registrationTarget;
     private readonly InteractionCommandRegistration _registration;
     private readonly InteractionExecutionContext _executionContext;
     private readonly InteractionOperationTracker _operationTracker;
@@ -34,6 +35,7 @@ internal sealed class InteractionHandler : IAsyncDisposable
         InteractionService interactionService,
         IServiceProvider services,
         InteractionExecutionContext executionContext,
+        InteractionCommandRegistrationTarget registrationTarget,
         IHostApplicationLifetime applicationLifetime,
         ILogger<InteractionHandler> logger,
         TimeSpan? shutdownDrainTimeout = null,
@@ -43,6 +45,7 @@ internal sealed class InteractionHandler : IAsyncDisposable
         _interactionService = interactionService ?? throw new ArgumentNullException(nameof(interactionService));
         _services = services ?? throw new ArgumentNullException(nameof(services));
         _executionContext = executionContext ?? throw new ArgumentNullException(nameof(executionContext));
+        _registrationTarget = registrationTarget ?? throw new ArgumentNullException(nameof(registrationTarget));
         ArgumentNullException.ThrowIfNull(applicationLifetime);
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _shutdownDrainTimeout = shutdownDrainTimeout ?? ShutdownDrainTimeout;
@@ -57,7 +60,10 @@ internal sealed class InteractionHandler : IAsyncDisposable
             MaximumConcurrentBusyResponses,
             applicationLifetime.ApplicationStopping);
         _registration = registration ?? new InteractionCommandRegistration(
-            () => _interactionService.RegisterCommandsGloballyAsync(deleteMissing: true),
+            () => _registrationTarget.RegisterAsync(
+                deleteMissing => _interactionService.RegisterCommandsGloballyAsync(deleteMissing),
+                (guildId, deleteMissing) =>
+                    _interactionService.RegisterCommandsToGuildAsync(guildId, deleteMissing)),
             RegistrationTimeout,
             applicationLifetime.ApplicationStopping);
     }
@@ -80,6 +86,11 @@ internal sealed class InteractionHandler : IAsyncDisposable
         {
             return;
         }
+
+        BeanBotLog.InteractionCommandRegistrationScopeSelected(
+            _logger,
+            _registrationTarget.ScopeName,
+            _registrationTarget.GuildId);
 
         await _interactionService.AddModulesAsync(
             Assembly.GetEntryAssembly() ?? typeof(InteractionHandler).Assembly,
@@ -163,7 +174,10 @@ internal sealed class InteractionHandler : IAsyncDisposable
         {
             if (await _registration.EnsureRegisteredAsync())
             {
-                BeanBotLog.InteractionCommandsRegistered(_logger);
+                BeanBotLog.InteractionCommandsRegistered(
+                    _logger,
+                    _registrationTarget.ScopeName,
+                    _registrationTarget.GuildId);
             }
         }
         catch (Exception exception)
