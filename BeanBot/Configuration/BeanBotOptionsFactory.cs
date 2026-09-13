@@ -16,8 +16,14 @@ internal static class BeanBotOptionsFactory
             new Uri(settings.HatoeteUrl!, UriKind.Absolute),
             new Uri(settings.YoshimaruUrl!, UriKind.Absolute),
             DailyPunSchedule.Create(settings.DailyPun),
-            CreateHealthCheckOptions(settings.HealthCheck));
+            CreateHealthCheckOptions(settings.HealthCheck),
+            ParseInteractionGuildId(settings.InteractionGuildId));
     }
+
+    private static ulong? ParseInteractionGuildId(string? guildId)
+        => string.IsNullOrWhiteSpace(guildId)
+            ? null
+            : ulong.Parse(guildId, NumberStyles.None, CultureInfo.InvariantCulture);
 
     private static HealthCheckOptions CreateHealthCheckOptions(BeanBotHealthCheckSettings settings)
     {
