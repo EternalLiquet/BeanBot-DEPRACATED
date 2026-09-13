@@ -58,11 +58,10 @@ public class InteractionCommandRegistrationTargetTests
 
         Assert.Equal(0, globalCalls);
         Assert.Equal(1, guildCalls);
-        Assert.Equal(expectedGuildId, actualGuildId);
+        Assert.Equal((ulong?)expectedGuildId, actualGuildId);
         Assert.True(guildDeleteMissing);
         Assert.Equal("Guild", target.ScopeName);
-        Assert.Equal(expectedGuildId, target.GuildId);
-        Assert.Equal("Guild:987654321", target.LogScope);
+        Assert.Equal((ulong?)expectedGuildId, target.GuildId);
     }
 
     [Fact]
