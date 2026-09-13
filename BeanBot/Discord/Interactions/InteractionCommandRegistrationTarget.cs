@@ -38,7 +38,7 @@ internal sealed record InteractionCommandRegistrationTarget
         ArgumentNullException.ThrowIfNull(registerGuild);
 
         return GuildId is ulong guildId
-            ? registerGuild(guildId, deleteMissing: true)
-            : registerGlobal(deleteMissing: true);
+            ? registerGuild(guildId, true)
+            : registerGlobal(true);
     }
 }
