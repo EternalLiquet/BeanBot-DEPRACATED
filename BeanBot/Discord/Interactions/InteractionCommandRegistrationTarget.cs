@@ -1,8 +1,6 @@
-using System.Globalization;
-
 namespace BeanBot.Discord.Interactions;
 
-internal sealed record InteractionCommandRegistrationTarget
+internal sealed class InteractionCommandRegistrationTarget
 {
     private InteractionCommandRegistrationTarget(ulong? guildId)
     {
@@ -16,10 +14,6 @@ internal sealed record InteractionCommandRegistrationTarget
     internal bool IsGlobal => GuildId is null;
 
     internal string ScopeName => IsGlobal ? "Global" : "Guild";
-
-    internal string LogScope => GuildId is ulong guildId
-        ? $"Guild:{guildId.ToString(CultureInfo.InvariantCulture)}"
-        : "Global";
 
     internal static InteractionCommandRegistrationTarget FromGuildId(ulong? guildId)
         => guildId is ulong value ? ForGuild(value) : Global;
