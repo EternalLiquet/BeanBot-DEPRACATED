@@ -304,7 +304,6 @@ internal static class LegacyReactionRoleRetirementWorkflow
                 LegacyReactionRoleRetirementStatus.InvalidSavedConfiguration);
         }
 
-        Exception? reconciledPanelDeletionFailure = null;
         LegacyReactionRolePanelLookupResult lookup;
         try
         {
@@ -351,27 +350,19 @@ internal static class LegacyReactionRoleRetirementWorkflow
             }
             catch (Exception exception)
             {
-                var reconciliation = await ReconcilePanelAsync(
+                return await ReconcilePanelAsync(
                     source,
                     operations,
                     exception);
-                if (reconciliation.Status != LegacyReactionRoleRetirementStatus.Retired)
-                {
-                    return reconciliation;
-                }
-
-                sourceWasMissing = true;
-                reconciledPanelDeletionFailure = exception;
             }
         }
 
-        var persistenceResult = await DeleteSettingsAsync(
+        return await DeleteSettingsAsync(
             messageId,
             guildId,
             sourceWasMissing,
             operations,
             cancellationToken);
-        return AttachPriorFailure(persistenceResult, reconciledPanelDeletionFailure);
     }
 
     private static async Task<LegacyReactionRoleRetirementResult> ReconcilePanelAsync(
@@ -390,7 +381,7 @@ internal static class LegacyReactionRoleRetirementWorkflow
                 or LegacyReactionRolePanelLookupStatus.MessageMissing)
             {
                 return new LegacyReactionRoleRetirementResult(
-                    LegacyReactionRoleRetirementStatus.Retired,
+                    LegacyReactionRoleRetirementStatus.PanelOutcomeUnknown,
                     SourceWasMissing: true,
                     Failure: deletionFailure);
             }
@@ -484,25 +475,6 @@ internal static class LegacyReactionRoleRetirementWorkflow
                 Failure: deletionFailure,
                 ReconciliationFailure: reconciliationFailure);
         }
-    }
-
-    private static LegacyReactionRoleRetirementResult AttachPriorFailure(
-        LegacyReactionRoleRetirementResult result,
-        Exception? priorFailure)
-    {
-        if (priorFailure is null)
-        {
-            return result;
-        }
-
-        if (result.Failure is null)
-        {
-            return result with { Failure = priorFailure };
-        }
-
-        return result.ReconciliationFailure is null
-            ? result with { ReconciliationFailure = priorFailure }
-            : result;
     }
 
     private static void ValidateOperations(LegacyReactionRoleRetirementOperations operations)

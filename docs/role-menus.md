@@ -57,8 +57,8 @@ At confirmation time BeanBot rechecks the administrator's current **Manage Roles
 Failure handling is intentionally conservative:
 
 - if Discord definitely refuses deletion or the source no longer matches the expected legacy panel, saved configuration is kept;
-- if a Discord delete times out or fails after it may have been sent, BeanBot does **not** retry the delete automatically and performs only a bounded read to reconcile the source;
-- if the panel is confirmed gone but MongoDB cleanup fails, the panel stays gone and rerunning the same command finishes the stale persistence/cache cleanup;
+- if a Discord delete times out or fails after it may have been sent, BeanBot does **not** retry the delete automatically; it may perform one bounded read to aid reconciliation, but it keeps saved configuration and requires an administrator to inspect Discord and rerun the command before persistence cleanup;
+- if the panel is confirmed gone on a later run but MongoDB cleanup fails, the panel stays gone and rerunning the same command finishes the stale persistence/cache cleanup;
 - if MongoDB's delete outcome is uncertain, BeanBot performs one bounded exact-key read rather than assuming success;
 - if either system remains ambiguous, the response tells the administrator to inspect the exact source and rerun the same command. No replacement message is created.
 

@@ -159,7 +159,7 @@ public class LegacyReactionRoleRetirementWorkflowTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_AmbiguousDiscordDelete_ReconcilesByReadWithoutRetryingDelete()
+    public async Task ExecuteAsync_AmbiguousDiscordDelete_ReconcilesByReadButKeepsPersistence()
     {
         var panelReads = 0;
         var panelDeletes = 0;
@@ -192,11 +192,11 @@ public class LegacyReactionRoleRetirementWorkflowTests
             operations,
             CancellationToken.None);
 
-        Assert.Equal(LegacyReactionRoleRetirementStatus.Retired, result.Status);
+        Assert.Equal(LegacyReactionRoleRetirementStatus.PanelOutcomeUnknown, result.Status);
         Assert.True(result.SourceWasMissing);
         Assert.Equal(2, panelReads);
         Assert.Equal(1, panelDeletes);
-        Assert.Equal(1, settingsDeletes);
+        Assert.Equal(0, settingsDeletes);
         Assert.IsType<OperationCanceledException>(result.Failure);
     }
 
