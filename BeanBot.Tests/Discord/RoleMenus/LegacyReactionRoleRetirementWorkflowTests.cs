@@ -271,6 +271,51 @@ public class LegacyReactionRoleRetirementWorkflowTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_PersistenceDeleteReturnedFalseAndRecordRemains_ReportsPartialRetirement()
+    {
+        var settingsReads = 0;
+        var operations = CreateOperations(
+            readSettings: (_, _) =>
+            {
+                settingsReads++;
+                return Task.FromResult<ReactionRoleSettings?>(CreateSettings());
+            },
+            deleteSettings: (_, _, _) => Task.FromResult(false));
+
+        var result = await LegacyReactionRoleRetirementWorkflow.ExecuteAsync(
+            MessageId,
+            GuildId,
+            operations,
+            CancellationToken.None);
+
+        Assert.Equal(LegacyReactionRoleRetirementStatus.PersistenceKept, result.Status);
+        Assert.Equal(2, settingsReads);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PersistenceDeleteReturnedFalseButRecordIsGone_ReconcilesSuccess()
+    {
+        var settingsReads = 0;
+        var operations = CreateOperations(
+            readSettings: (_, _) =>
+            {
+                settingsReads++;
+                return Task.FromResult<ReactionRoleSettings?>(
+                    settingsReads == 1 ? CreateSettings() : null);
+            },
+            deleteSettings: (_, _, _) => Task.FromResult(false));
+
+        var result = await LegacyReactionRoleRetirementWorkflow.ExecuteAsync(
+            MessageId,
+            GuildId,
+            operations,
+            CancellationToken.None);
+
+        Assert.Equal(LegacyReactionRoleRetirementStatus.Retired, result.Status);
+        Assert.Equal(2, settingsReads);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_UncertainPersistenceDelete_ReconcilesConfirmedAbsence()
     {
         var settingsReads = 0;

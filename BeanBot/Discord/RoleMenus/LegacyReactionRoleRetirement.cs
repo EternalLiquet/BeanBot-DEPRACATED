@@ -304,6 +304,7 @@ internal static class LegacyReactionRoleRetirementWorkflow
                 LegacyReactionRoleRetirementStatus.InvalidSavedConfiguration);
         }
 
+        Exception? reconciledPanelDeletionFailure = null;
         LegacyReactionRolePanelLookupResult lookup;
         try
         {
@@ -360,15 +361,17 @@ internal static class LegacyReactionRoleRetirementWorkflow
                 }
 
                 sourceWasMissing = true;
+                reconciledPanelDeletionFailure = exception;
             }
         }
 
-        return await DeleteSettingsAsync(
+        var persistenceResult = await DeleteSettingsAsync(
             messageId,
             guildId,
             sourceWasMissing,
             operations,
             cancellationToken);
+        return AttachPriorFailure(persistenceResult, reconciledPanelDeletionFailure);
     }
 
     private static async Task<LegacyReactionRoleRetirementResult> ReconcilePanelAsync(
@@ -418,10 +421,19 @@ internal static class LegacyReactionRoleRetirementWorkflow
     {
         try
         {
-            await operations.DeleteSettings(messageId, guildId, cancellationToken);
-            return new LegacyReactionRoleRetirementResult(
-                LegacyReactionRoleRetirementStatus.Retired,
-                sourceWasMissing);
+            var deleted = await operations.DeleteSettings(messageId, guildId, cancellationToken);
+            if (deleted)
+            {
+                return new LegacyReactionRoleRetirementResult(
+                    LegacyReactionRoleRetirementStatus.Retired,
+                    sourceWasMissing);
+            }
+
+            return await ReconcileSettingsDeletionAsync(
+                messageId,
+                sourceWasMissing,
+                operations,
+                deletionFailure: null);
         }
         catch (OperationCanceledException) when (operations.IsShuttingDown())
         {
@@ -429,36 +441,68 @@ internal static class LegacyReactionRoleRetirementWorkflow
         }
         catch (Exception exception)
         {
-            using var reconciliationCancellation = new CancellationTokenSource(
-                RoleMenuConstants.CleanupTimeout);
-            try
-            {
-                var remaining = await operations.ReadSettings(
-                    messageId,
-                    reconciliationCancellation.Token);
-                return remaining is null
-                    ? new LegacyReactionRoleRetirementResult(
-                        LegacyReactionRoleRetirementStatus.Retired,
-                        sourceWasMissing,
-                        Failure: exception)
-                    : new LegacyReactionRoleRetirementResult(
-                        LegacyReactionRoleRetirementStatus.PersistenceKept,
-                        sourceWasMissing,
-                        Failure: exception);
-            }
-            catch (OperationCanceledException) when (operations.IsShuttingDown())
-            {
-                throw;
-            }
-            catch (Exception reconciliationFailure)
-            {
-                return new LegacyReactionRoleRetirementResult(
-                    LegacyReactionRoleRetirementStatus.PersistenceOutcomeUnknown,
-                    sourceWasMissing,
-                    Failure: exception,
-                    ReconciliationFailure: reconciliationFailure);
-            }
+            return await ReconcileSettingsDeletionAsync(
+                messageId,
+                sourceWasMissing,
+                operations,
+                exception);
         }
+    }
+
+    private static async Task<LegacyReactionRoleRetirementResult> ReconcileSettingsDeletionAsync(
+        ulong messageId,
+        bool sourceWasMissing,
+        LegacyReactionRoleRetirementOperations operations,
+        Exception? deletionFailure)
+    {
+        using var reconciliationCancellation = new CancellationTokenSource(
+            RoleMenuConstants.CleanupTimeout);
+        try
+        {
+            var remaining = await operations.ReadSettings(
+                messageId,
+                reconciliationCancellation.Token);
+            return remaining is null
+                ? new LegacyReactionRoleRetirementResult(
+                    LegacyReactionRoleRetirementStatus.Retired,
+                    sourceWasMissing,
+                    Failure: deletionFailure)
+                : new LegacyReactionRoleRetirementResult(
+                    LegacyReactionRoleRetirementStatus.PersistenceKept,
+                    sourceWasMissing,
+                    Failure: deletionFailure);
+        }
+        catch (OperationCanceledException) when (operations.IsShuttingDown())
+        {
+            throw;
+        }
+        catch (Exception reconciliationFailure)
+        {
+            return new LegacyReactionRoleRetirementResult(
+                LegacyReactionRoleRetirementStatus.PersistenceOutcomeUnknown,
+                sourceWasMissing,
+                Failure: deletionFailure,
+                ReconciliationFailure: reconciliationFailure);
+        }
+    }
+
+    private static LegacyReactionRoleRetirementResult AttachPriorFailure(
+        LegacyReactionRoleRetirementResult result,
+        Exception? priorFailure)
+    {
+        if (priorFailure is null)
+        {
+            return result;
+        }
+
+        if (result.Failure is null)
+        {
+            return result with { Failure = priorFailure };
+        }
+
+        return result.ReconciliationFailure is null
+            ? result with { ReconciliationFailure = priorFailure }
+            : result;
     }
 
     private static void ValidateOperations(LegacyReactionRoleRetirementOperations operations)
