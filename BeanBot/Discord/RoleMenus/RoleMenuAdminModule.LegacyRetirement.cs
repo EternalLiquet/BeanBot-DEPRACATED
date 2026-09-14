@@ -268,11 +268,19 @@ public sealed partial class RoleMenuAdminModule
             return null;
         }
 
+        var mappings = source.RoleIds
+            .Zip(
+                settings.RoleEmotePairs,
+                (roleId, pair) => new LegacyReactionRoleRetirementMapping(
+                    roleId,
+                    pair.EmojiId))
+            .ToArray();
         return new LegacyReactionRoleRetirementPreview(
             source,
             lookup.SuggestedTitle,
             lookup.Status is LegacyReactionRolePanelLookupStatus.ChannelMissing
-                or LegacyReactionRolePanelLookupStatus.MessageMissing);
+                or LegacyReactionRolePanelLookupStatus.MessageMissing,
+            mappings);
     }
 
     private LegacyReactionRoleRetirementOperations CreateLegacyRetirementOperations(

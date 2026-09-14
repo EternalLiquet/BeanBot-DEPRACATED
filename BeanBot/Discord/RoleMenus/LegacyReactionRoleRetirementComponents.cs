@@ -3,10 +3,15 @@ using Discord;
 
 namespace BeanBot.Discord.RoleMenus;
 
+internal sealed record LegacyReactionRoleRetirementMapping(
+    ulong RoleId,
+    string EmojiId);
+
 internal sealed record LegacyReactionRoleRetirementPreview(
     LegacyReactionRoleSource Source,
     string? Label,
-    bool SourceWasMissing);
+    bool SourceWasMissing,
+    IReadOnlyList<LegacyReactionRoleRetirementMapping> Mappings);
 
 internal static class LegacyReactionRoleRetirementCustomIds
 {
@@ -37,6 +42,8 @@ internal static class LegacyReactionRoleRetirementCustomIds
 
 internal static class LegacyReactionRoleRetirementComponents
 {
+    private const int MappingsPerField = 5;
+
     internal static Embed BuildConfirmationEmbed(LegacyReactionRoleRetirementPreview preview)
     {
         ArgumentNullException.ThrowIfNull(preview);
@@ -44,23 +51,31 @@ internal static class LegacyReactionRoleRetirementComponents
         var label = string.IsNullOrWhiteSpace(preview.Label)
             ? "Unlabeled legacy panel"
             : preview.Label;
-        var roles = string.Join(
-            " ",
-            source.RoleIds.Select(roleId =>
-                $"<@&{roleId.ToString(CultureInfo.InvariantCulture)}>"));
         var sourceText = preview.SourceWasMissing
             ? "The saved channel/message is already missing. Confirming removes only the stale saved configuration."
             : $"[Open legacy panel](https://discord.com/channels/{source.GuildId}/{source.ChannelId}/{source.MessageId})";
-
-        return new EmbedBuilder()
+        var builder = new EmbedBuilder()
             .WithTitle("Retire legacy reaction-role panel?")
             .WithDescription(
                 $"**{RoleMenuText.TruncateWithEllipsis(label, RoleMenuConstants.MaximumTitleLength)}**\n\n" +
                 $"{sourceText}\n\n" +
                 "Bean Bot will revalidate the source, delete the matching legacy panel first, then remove its saved configuration. Existing member roles are not changed.")
-            .AddField("Configured roles", roles)
-            .WithColor(Color.Red)
-            .Build();
+            .WithColor(Color.Red);
+
+        for (var index = 0; index < preview.Mappings.Count; index += MappingsPerField)
+        {
+            var value = string.Join(
+                "\n",
+                preview.Mappings
+                    .Skip(index)
+                    .Take(MappingsPerField)
+                    .Select(FormatMapping));
+            builder.AddField(
+                index == 0 ? "Configured role / emote mappings" : "More mappings",
+                value);
+        }
+
+        return builder.Build();
     }
 
     internal static MessageComponent BuildConfirmationComponents(ulong userId, ulong messageId)
@@ -102,5 +117,17 @@ internal static class LegacyReactionRoleRetirementComponents
                 "The legacy Discord panel is gone, but Bean Bot could not confirm whether the saved configuration was removed. Run the retirement command again to reconcile the exact source record.",
             _ => throw new ArgumentOutOfRangeException(nameof(result), result.Status, null)
         };
+    }
+
+    private static string FormatMapping(LegacyReactionRoleRetirementMapping mapping)
+    {
+        var emoji = ulong.TryParse(
+            mapping.EmojiId,
+            NumberStyles.None,
+            CultureInfo.InvariantCulture,
+            out var emojiId)
+            ? emojiId.ToString(CultureInfo.InvariantCulture)
+            : "invalid saved emote ID";
+        return $"`{emoji}` → <@&{mapping.RoleId.ToString(CultureInfo.InvariantCulture)}>";
     }
 }
