@@ -101,6 +101,18 @@ internal sealed class ReactionRoleSettingsLifecycleCoordinator
         .. Enumerable.Range(0, StripeCount).Select(_ => new AsyncReaderWriterStripe())
     ];
 
+    internal async Task RunReadAsync(
+        ulong messageId,
+        Func<CancellationToken, Task> operation,
+        CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(messageId);
+        ArgumentNullException.ThrowIfNull(operation);
+
+        using var lease = await GetStripe(messageId).AcquireReadAsync(cancellationToken);
+        await operation(cancellationToken);
+    }
+
     internal async Task<T> RunReadAsync<T>(
         ulong messageId,
         Func<CancellationToken, Task<T>> operation,
