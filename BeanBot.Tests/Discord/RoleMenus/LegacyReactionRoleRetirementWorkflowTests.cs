@@ -77,39 +77,15 @@ public class LegacyReactionRoleRetirementWorkflowTests
         Assert.Equal(1, deleteSettingsCalls);
     }
 
-    [Theory]
-    [InlineData(LegacyReactionRolePanelLookupStatus.Unrecognized)]
-    [InlineData(LegacyReactionRolePanelLookupStatus.UnexpectedChannel)]
-    public async Task ExecuteAsync_UnsafeSourceNeverDeletesAnything(
-        LegacyReactionRolePanelLookupStatus lookupStatus)
-    {
-        var deletePanelCalls = 0;
-        var deleteSettingsCalls = 0;
-        var operations = CreateOperations(
-            readSettings: (_, _) => Task.FromResult<ReactionRoleSettings?>(CreateSettings()),
-            readPanel: (_, _) => Task.FromResult(
-                new LegacyReactionRolePanelLookupResult(lookupStatus)),
-            deletePanel: (_, _, _) =>
-            {
-                deletePanelCalls++;
-                return Task.FromResult(true);
-            },
-            deleteSettings: (_, _, _) =>
-            {
-                deleteSettingsCalls++;
-                return Task.FromResult(true);
-            });
+    [Fact]
+    public Task ExecuteAsync_UnrecognizedSourceNeverDeletesAnything()
+        => AssertUnsafeSourceNeverDeletesAnythingAsync(
+            LegacyReactionRolePanelLookupStatus.Unrecognized);
 
-        var result = await LegacyReactionRoleRetirementWorkflow.ExecuteAsync(
-            MessageId,
-            GuildId,
-            operations,
-            CancellationToken.None);
-
-        Assert.Equal(LegacyReactionRoleRetirementStatus.UnsafeSource, result.Status);
-        Assert.Equal(0, deletePanelCalls);
-        Assert.Equal(0, deleteSettingsCalls);
-    }
+    [Fact]
+    public Task ExecuteAsync_UnexpectedChannelNeverDeletesAnything()
+        => AssertUnsafeSourceNeverDeletesAnythingAsync(
+            LegacyReactionRolePanelLookupStatus.UnexpectedChannel);
 
     [Fact]
     public async Task ExecuteAsync_PermissionLossAtConfirmationStopsBeforeSourceRead()
@@ -339,6 +315,37 @@ public class LegacyReactionRoleRetirementWorkflowTests
                 "2",
                 "3"),
             out _));
+    }
+
+    private static async Task AssertUnsafeSourceNeverDeletesAnythingAsync(
+        LegacyReactionRolePanelLookupStatus lookupStatus)
+    {
+        var deletePanelCalls = 0;
+        var deleteSettingsCalls = 0;
+        var operations = CreateOperations(
+            readSettings: (_, _) => Task.FromResult<ReactionRoleSettings?>(CreateSettings()),
+            readPanel: (_, _) => Task.FromResult(
+                new LegacyReactionRolePanelLookupResult(lookupStatus)),
+            deletePanel: (_, _, _) =>
+            {
+                deletePanelCalls++;
+                return Task.FromResult(true);
+            },
+            deleteSettings: (_, _, _) =>
+            {
+                deleteSettingsCalls++;
+                return Task.FromResult(true);
+            });
+
+        var result = await LegacyReactionRoleRetirementWorkflow.ExecuteAsync(
+            MessageId,
+            GuildId,
+            operations,
+            CancellationToken.None);
+
+        Assert.Equal(LegacyReactionRoleRetirementStatus.UnsafeSource, result.Status);
+        Assert.Equal(0, deletePanelCalls);
+        Assert.Equal(0, deleteSettingsCalls);
     }
 
     private static LegacyReactionRoleRetirementOperations CreateOperations(
