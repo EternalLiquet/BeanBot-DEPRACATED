@@ -14,6 +14,13 @@ internal interface IReactionRoleSettingsStore
         int limit,
         CancellationToken cancellationToken);
     Task<ReactionRoleSettings?> GetByMessageIdAsync(string messageId, CancellationToken cancellationToken);
+
+    Task<bool> DeleteByMessageIdAndGuildIdAsync(
+        string messageId,
+        string guildId,
+        CancellationToken cancellationToken)
+        => Task.FromException<bool>(
+            new NotSupportedException("This reaction-role settings store does not support deletion."));
 }
 
 internal sealed class MongoReactionRoleSettingsStore : IReactionRoleSettingsStore
@@ -50,6 +57,18 @@ internal sealed class MongoReactionRoleSettingsStore : IReactionRoleSettingsStor
         var filter = Builders<ReactionRoleSettings>.Filter.Where(
             document => document.MessageId == messageId);
         return await _roleSettings.Find(filter).FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<bool> DeleteByMessageIdAndGuildIdAsync(
+        string messageId,
+        string guildId,
+        CancellationToken cancellationToken)
+    {
+        var filter = Builders<ReactionRoleSettings>.Filter.And(
+            Builders<ReactionRoleSettings>.Filter.Eq(document => document.MessageId, messageId),
+            Builders<ReactionRoleSettings>.Filter.Eq(document => document.GuildId, guildId));
+        var result = await _roleSettings.DeleteOneAsync(filter, cancellationToken);
+        return result.DeletedCount > 0;
     }
 }
 
@@ -102,6 +121,20 @@ public sealed class ReactionRoleRepository
         cancellationToken.ThrowIfCancellationRequested();
         return _reactionRoleSettingsStore.GetByMessageIdAsync(
             messageId.ToString(CultureInfo.InvariantCulture),
+            cancellationToken);
+    }
+
+    public Task<bool> DeleteRoleSetting(
+        ulong messageId,
+        ulong guildId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(messageId);
+        ArgumentOutOfRangeException.ThrowIfZero(guildId);
+        cancellationToken.ThrowIfCancellationRequested();
+        return _reactionRoleSettingsStore.DeleteByMessageIdAndGuildIdAsync(
+            messageId.ToString(CultureInfo.InvariantCulture),
+            guildId.ToString(CultureInfo.InvariantCulture),
             cancellationToken);
     }
 }
