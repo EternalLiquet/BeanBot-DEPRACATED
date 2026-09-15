@@ -47,13 +47,7 @@ internal static class RoleMenuComponents
         ArgumentNullException.ThrowIfNull(draft);
         ArgumentNullException.ThrowIfNull(roles);
 
-        var roleMentions = string.Join(
-            " ",
-            roles.Select(role => $"<@&{role.Id.ToString(CultureInfo.InvariantCulture)}>"));
-        if (roleMentions.Length == 0)
-        {
-            roleMentions = "No valid roles remain.";
-        }
+        var roleMentions = FormatRoleMentions(roles);
         var selectionMode = draft.SelectionMode == RoleMenuSelectionMode.Exclusive
             ? "Single selection"
             : "Multiple selection";
@@ -81,6 +75,47 @@ internal static class RoleMenuComponents
             .WithButton(
                 "Cancel",
                 RoleMenuCustomIds.CancelPublish(draftId),
+                ButtonStyle.Secondary)
+            .Build();
+
+    internal static Embed BuildMigrationPreviewEmbed(
+        RoleMenuDraft draft,
+        IReadOnlyCollection<RoleMenuRoleSnapshot> roles,
+        string sourceMessageLink)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        ArgumentNullException.ThrowIfNull(roles);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceMessageLink);
+
+        return new EmbedBuilder()
+            .WithTitle(draft.Title)
+            .WithDescription(string.IsNullOrWhiteSpace(draft.Description)
+                ? DefaultDescription
+                : draft.Description)
+            .AddField("Legacy source", sourceMessageLink)
+            .AddField("Roles", FormatRoleMentions(roles))
+            .AddField("Mode", "Multiple selection", inline: true)
+            .AddField(
+                "Target channel",
+                $"<#{draft.TargetChannelId.ToString(CultureInfo.InvariantCulture)}>",
+                inline: true)
+            .AddField(
+                "Retirement",
+                "The legacy reaction-role panel and saved configuration stay unchanged. " +
+                "Retire them manually only after verifying this replacement.")
+            .WithFooter("Migration preview • Not published")
+            .Build();
+    }
+
+    internal static MessageComponent BuildMigrationPreviewComponents(Guid draftId)
+        => new ComponentBuilder()
+            .WithButton(
+                "Publish migration",
+                RoleMenuCustomIds.MigrateConfirm(draftId),
+                ButtonStyle.Success)
+            .WithButton(
+                "Cancel",
+                RoleMenuCustomIds.MigrateCancel(draftId),
                 ButtonStyle.Secondary)
             .Build();
 
@@ -212,5 +247,13 @@ internal static class RoleMenuComponents
                 button.CustomId,
                 expectedCustomId,
                 StringComparison.Ordinal));
+    }
+
+    private static string FormatRoleMentions(IReadOnlyCollection<RoleMenuRoleSnapshot> roles)
+    {
+        var roleMentions = string.Join(
+            " ",
+            roles.Select(role => $"<@&{role.Id.ToString(CultureInfo.InvariantCulture)}>"));
+        return roleMentions.Length == 0 ? "No valid roles remain." : roleMentions;
     }
 }
