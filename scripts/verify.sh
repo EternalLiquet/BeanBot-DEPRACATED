@@ -44,6 +44,11 @@ self_test_workflow() {
   run_stage "Test verification orchestration" scripts/test-verification.sh
   run_stage "Test branch integrity guard" scripts/test-branch-integrity.sh
   run_stage "Test resumable release transaction" scripts/test-release-resume.sh
+  run_stage "Test multi-platform index validation" python3 scripts/test-release-index.py
+  run_stage "Test multi-platform release transaction" scripts/test-release-multiarch.sh
+  run_stage "Test multi-platform release workflow" python3 scripts/test-multiarch-workflow.py
+  run_stage "Test multi-platform release metadata" scripts/test-release-metadata.sh
+  run_stage "Test multi-platform release SBOM index" python3 scripts/test-release-sbom-index.py
   run_stage "Test portable release checksums" scripts/test-release-checksums.sh
   run_stage "Test release provenance" scripts/test-release-provenance.sh
 }

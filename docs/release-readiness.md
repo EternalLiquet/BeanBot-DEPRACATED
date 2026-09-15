@@ -33,11 +33,35 @@ Enable GitHub dependency graph, Dependabot alerts/security updates, CodeQL code 
 5. Open the intentional `develop` to `master` promotion PR and repeat the required exact-head checks.
 6. After promotion, run **Intentional BeanBot Release** on the exact current `master` commit and supply a stable `MAJOR.MINOR.PATCH` version. Normal promotions normally increment the minor version; an emergency compatible hotfix increments the patch version.
 
-The release workflow rebuilds nothing after verification: it builds and smoke-tests one image, pushes that same image to GHCR using the commit SHA and version tags, produces an SPDX SBOM and checksums, creates GitHub attestations, and then creates the GitHub Release with generated notes. A newly staged digest receives build provenance from that attempt. A reused digest never receives misleading fresh build provenance; its existing OCI provenance must verify against this repository, `.github/workflows/autorelease.yml`, the exact `master` commit and ref, and the selected image digest before evidence or tags can be published.
+The release workflow publishes one immutable OCI image index with exactly `linux/amd64` and `linux/arm64` children. Full repository verification still builds and smoke-tests the native amd64 image first. The release transaction then builds both platform children from the same exact `master` checkout and explicit BeanBot version/commit identity, validates each child platform and OCI build-identity labels, and runs the hardened container smoke plus SIGTERM shutdown test against the selected amd64 child and the selected arm64 child. ARM64 runtime validation uses QEMU on the GitHub-hosted amd64 runner and is time-bounded; failure blocks publication.
 
-Release evidence uses the stable workflow-run artifact name `release-evidence-${{ github.run_id }}`. Re-running only the failed release job therefore downloads the evidence produced by the already-successful image job even though `github.run_attempt` increased. A complete workflow rerun intentionally replaces that workflow-run artifact through the pinned upload action's explicit `overwrite: true` behavior, after regenerating and verifying the complete evidence payload. A retry may reuse a version tag or release only when it already resolves to the same verified commit/digest; conflicting or unproven immutable identity fails the run. Deploy by immutable digest from `release-metadata.json`, not by a mutable tag.
+The authoritative release digest is the OCI index digest. Both the commit-SHA tag and SemVer tag must resolve to that same immutable index. Release reconciliation rejects indexes with missing, duplicate, or unexpected platforms, conflicting child digests, or child images whose build labels do not match the requested commit/version. Promotion preflights both public aliases before mutating either one, so a conflict on the second alias cannot partially publish the first.
+
+The Dockerfile remains digest-pinned for both .NET base images. The release's two-platform Buildx build is also the release-time proof that those pinned bases and the locked application dependency graph resolve for both supported architectures; a base pin that stops exposing either target architecture fails before release evidence or immutable promotion.
+
+A newly staged index receives build provenance for the authoritative index digest. Because that digest cryptographically binds the exact child manifests, provenance identifies the complete multi-platform release. Release evidence additionally contains explicit `beanbot-amd64.spdx.json` and `beanbot-arm64.spdx.json` child SBOMs plus `beanbot.spdx.json`, an SPDX release document that cryptographically references both child SBOM files by SHA-256 and records the index/child digest mapping. That release SPDX document is attested to the authoritative index digest in GHCR, while all three SPDX documents and the platform metadata are included in the checksummed GitHub Release evidence. This keeps both children inside the release trust chain without pretending an index reference is itself a single filesystem to scan. A reused index never receives misleading fresh build provenance; its existing OCI provenance must verify against this repository, `.github/workflows/autorelease.yml`, the exact `master` commit and ref, and the selected index digest before evidence or tags can be published.
+
+Release evidence uses the stable workflow-run artifact name `release-evidence-${{ github.run_id }}`. Re-running only the failed release job therefore downloads the evidence produced by the already-successful image job even though `github.run_attempt` increased. A complete workflow rerun intentionally replaces that workflow-run artifact through the pinned upload action's explicit `overwrite: true` behavior, after regenerating and verifying the complete evidence payload. A retry may reuse a version tag or release only when it already resolves to the same verified index and platform children; conflicting or unproven immutable identity fails the run.
 
 When intentionally updating packages, edit `Directory.Packages.props`, run `dotnet restore BeanBot.sln --use-lock-file --force-evaluate`, review both `packages.lock.json` files, and rerun full verification.
+
+## Inspecting a multi-platform release
+
+Supported production platforms are exactly:
+
+- `linux/amd64`
+- `linux/arm64`
+
+Docker automatically selects the matching child when a normal SemVer or commit-SHA image tag is pulled on either supported Linux architecture. BeanBot has no architecture-specific application configuration.
+
+For troubleshooting, inspect the immutable index and its platform children without changing tags:
+
+```bash
+docker buildx imagetools inspect ghcr.io/eternalliquet/beanbot-depracated:VERSION
+docker buildx imagetools inspect --raw ghcr.io/eternalliquet/beanbot-depracated:VERSION | jq .
+```
+
+`release-metadata.json` records the authoritative index digest plus the exact `linux/amd64` and `linux/arm64` child digests. Unsupported architectures are intentionally absent and should fail instead of receiving an untested image. For a forensic deployment, use the immutable index digest from release metadata; Docker still selects the matching child from that index.
 
 ## Release-candidate smoke test
 
@@ -62,6 +86,8 @@ Perform this checklist against the exact final `develop` commit using non-produc
 
 BeanBot's image runs as the .NET application UID and writes persistent data only beneath `/app/BeanBotFiles`. A new named volume inherits the image directory ownership. For a host bind mount, create the directory and grant UID `1654` write access before starting the container.
 
+The same release index digest is valid on supported amd64 and arm64 Linux hosts; Docker selects the matching child manifest automatically.
+
 ```bash
 docker run -d \
   --name beanbot \
@@ -74,7 +100,7 @@ docker run -d \
   --security-opt no-new-privileges \
   -p 8080:8080 \
   -v beanbot-data:/app/BeanBotFiles \
-  ghcr.io/eternalliquet/beanbot-depracated@sha256:RELEASE_DIGEST
+  ghcr.io/eternalliquet/beanbot-depracated@sha256:RELEASE_INDEX_DIGEST
 ```
 
 The 130-second container grace period is intentionally longer than BeanBot's
@@ -86,7 +112,7 @@ For Docker Compose, use the same deadline explicitly:
 ```yaml
 services:
   beanbot:
-    image: ghcr.io/eternalliquet/beanbot-depracated@sha256:RELEASE_DIGEST
+    image: ghcr.io/eternalliquet/beanbot-depracated@sha256:RELEASE_INDEX_DIGEST
     stop_grace_period: 2m10s
 ```
 
@@ -94,6 +120,6 @@ services:
 
 1. Retain the existing data volume; do not rewrite or delete outage or reaction-role state.
 2. Stop the failed container within the normal shutdown budget.
-3. Start the preceding known-good image by its immutable digest with the same environment and volume.
+3. Start the preceding known-good release by its immutable **index** digest with the same environment and volume. The host selects its matching amd64/arm64 child automatically.
 4. Confirm the logged/health build identity, Discord `Ready`, `/healthz`, reaction roles, and outage recovery.
-5. Record the failed and restored digests in an incident issue. Fix forward through `develop`, except for a critical production hotfix PR from `master`, followed immediately by its `develop` backport.
+5. Record the failed/restored index digests and, when architecture-specific diagnosis matters, the selected child digest from each release's metadata in an incident issue. Fix forward through `develop`, except for a critical production hotfix PR from `master`, followed immediately by its `develop` backport.

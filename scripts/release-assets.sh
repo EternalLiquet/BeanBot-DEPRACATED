@@ -44,6 +44,19 @@ validate_target() {
     || { echo "Existing release $tag targets '$target', not '$commit_sha'." >&2; exit 1; }
 }
 
+validate_multiarch_metadata() {
+  local metadata_path="$1" amd64_digest arm64_digest
+  jq -e '
+    (.platforms | type) == "object" and
+    (.platforms | keys | sort) == ["linux/amd64", "linux/arm64"]
+  ' "$metadata_path" >/dev/null \
+    || { echo "Release metadata has an invalid supported-platform set." >&2; return 1; }
+  amd64_digest="$(jq -er '.platforms["linux/amd64"]' "$metadata_path")"
+  arm64_digest="$(jq -er '.platforms["linux/arm64"]' "$metadata_path")"
+  [[ "$amd64_digest" =~ ^sha256:[0-9a-f]{64}$ && "$arm64_digest" =~ ^sha256:[0-9a-f]{64}$ && "$amd64_digest" != "$arm64_digest" ]] \
+    || { echo "Release metadata contains invalid platform child digests." >&2; return 1; }
+}
+
 case "$command_name" in
   inspect)
     [[ $# -eq 4 || $# -eq 6 ]] || { usage; exit 2; }
@@ -60,7 +73,7 @@ case "$command_name" in
         while IFS=$'\t' read -r asset state size; do
           [[ -n "$asset" ]] || continue
           case "$asset" in
-            release-metadata.json|beanbot.spdx.json|SHA256SUMS)
+            release-metadata.json|beanbot.spdx.json|beanbot-amd64.spdx.json|beanbot-arm64.spdx.json|SHA256SUMS)
               if [[ "$state" == "uploaded" ]]; then
                 [[ "$asset" != "release-metadata.json" ]] || metadata_uploaded=true
               elif [[ "$state" != "starter" || "$size" != "0" ]]; then
@@ -74,17 +87,24 @@ case "$command_name" in
         if [[ "$metadata_uploaded" == "true" ]]; then
           gh release download "$tag" --repo "$repository" \
             --pattern release-metadata.json --dir "$temporary_directory"
+          metadata_path="$temporary_directory/release-metadata.json"
           release_digest="$(jq -er \
             --arg version "$version" \
             --arg commitSha "$commit_sha" \
             --arg image "$image_name" \
             'select(.version == $version and .commitSha == $commitSha and .image == $image) | .digest' \
-            "$temporary_directory/release-metadata.json")" \
+            "$metadata_path")" \
             || { echo "Existing release metadata conflicts with the requested transaction." >&2; exit 1; }
           [[ "$release_digest" =~ ^sha256:[0-9a-f]{64}$ ]] \
             || { echo "Existing release metadata contains an invalid image digest." >&2; exit 1; }
           echo "release-digest=$release_digest" >>"$output_file"
-        elif awk -F '\t' '$1 == "beanbot.spdx.json" || $1 == "SHA256SUMS" { if ($2 == "uploaded") found=1 } END { exit !found }' \
+
+          if jq -e 'has("platforms")' "$metadata_path" >/dev/null; then
+            validate_multiarch_metadata "$metadata_path"
+            echo "release-amd64-digest=$(jq -r '.platforms["linux/amd64"]' "$metadata_path")" >>"$output_file"
+            echo "release-arm64-digest=$(jq -r '.platforms["linux/arm64"]' "$metadata_path")" >>"$output_file"
+          fi
+        elif awk -F '\t' '$1 == "beanbot.spdx.json" || $1 == "beanbot-amd64.spdx.json" || $1 == "beanbot-arm64.spdx.json" || $1 == "SHA256SUMS" { if ($2 == "uploaded") found=1 } END { exit !found }' \
             <<<"$asset_inventory"; then
           echo "Existing release evidence is missing its authoritative metadata." >&2
           exit 1
@@ -100,11 +120,18 @@ case "$command_name" in
     asset_directory="$5"
     image_name="$6"
     image_digest="$7"
-    assets=(release-metadata.json beanbot.spdx.json SHA256SUMS)
-    for asset in "${assets[@]}"; do
-      [[ -s "$asset_directory/$asset" ]] \
-        || { echo "Required release asset $asset is missing or empty." >&2; exit 1; }
-    done
+
+    [[ -s "$asset_directory/release-metadata.json" && -s "$asset_directory/beanbot.spdx.json" && -s "$asset_directory/SHA256SUMS" ]] \
+      || { echo "Required release evidence is missing or empty." >&2; exit 1; }
+
+    payload_assets=(release-metadata.json beanbot.spdx.json)
+    if jq -e 'has("platforms")' "$asset_directory/release-metadata.json" >/dev/null; then
+      validate_multiarch_metadata "$asset_directory/release-metadata.json"
+      [[ -s "$asset_directory/beanbot-amd64.spdx.json" && -s "$asset_directory/beanbot-arm64.spdx.json" ]] \
+        || { echo "Multi-platform release evidence is missing a platform SBOM." >&2; exit 1; }
+      payload_assets+=(beanbot-amd64.spdx.json beanbot-arm64.spdx.json)
+    fi
+    assets=("${payload_assets[@]}" SHA256SUMS)
 
     if release_target="$(probe_release_target)"; then
       validate_target "$release_target"
@@ -130,23 +157,26 @@ case "$command_name" in
       --jq '.assets[] | [.name, .state, (.size | tostring)] | @tsv')"
     while IFS=$'\t' read -r asset state size; do
       [[ -n "$asset" ]] || continue
-      if [[ "$state" == "starter" && "$size" == "0" && \
-          ( "$asset" == "release-metadata.json" || "$asset" == "beanbot.spdx.json" || "$asset" == "SHA256SUMS" ) ]]; then
-        # GitHub can leave an empty starter asset after a failed upload. It is
-        # incomplete transaction debris, not published evidence, and GitHub's
-        # documented recovery is to delete it before retrying the same name.
-        gh release delete-asset "$tag" "$asset" --repo "$repository" --yes
-      elif [[ "$state" != "uploaded" ]]; then
-        echo "Release asset $asset has unsupported state '$state'; refusing to mutate it." >&2
-        exit 1
-      fi
+      case "$asset" in
+        release-metadata.json|beanbot.spdx.json|beanbot-amd64.spdx.json|beanbot-arm64.spdx.json|SHA256SUMS)
+          if [[ "$state" == "starter" && "$size" == "0" ]]; then
+            gh release delete-asset "$tag" "$asset" --repo "$repository" --yes
+          elif [[ "$state" != "uploaded" ]]; then
+            echo "Release asset $asset has unsupported state '$state'; refusing to mutate it." >&2
+            exit 1
+          fi
+          ;;
+        *)
+          if [[ "$state" != "uploaded" ]]; then
+            echo "Release asset $asset has unsupported state '$state'; refusing to mutate it." >&2
+            exit 1
+          fi
+          ;;
+      esac
     done <<<"$asset_inventory"
     existing_assets="$(gh release view "$tag" --repo "$repository" --json assets --jq '.assets[].name')"
 
-    # Assets already attached to this exact release target are durable transaction
-    # state. Reuse them rather than assuming generators such as SPDX are byte-stable
-    # across fresh runners.
-    for asset in release-metadata.json beanbot.spdx.json; do
+    for asset in "${payload_assets[@]}"; do
       if grep -Fxq "$asset" <<<"$existing_assets"; then
         gh release download "$tag" --repo "$repository" --pattern "$asset" --dir "$working_directory"
       else
@@ -162,10 +192,13 @@ case "$command_name" in
       '.version == $version and .commitSha == $commitSha and .image == $image and .digest == $digest' \
       "$working_directory/release-metadata.json" >/dev/null \
       || { echo "Release metadata does not match the requested transaction identity." >&2; exit 1; }
+    if jq -e 'has("platforms")' "$working_directory/release-metadata.json" >/dev/null; then
+      validate_multiarch_metadata "$working_directory/release-metadata.json"
+    fi
 
     (
       cd "$working_directory"
-      sha256sum beanbot.spdx.json release-metadata.json >SHA256SUMS
+      sha256sum "${payload_assets[@]}" >SHA256SUMS
       sha256sum -c SHA256SUMS
     )
     if grep -Fxq SHA256SUMS <<<"$existing_assets"; then

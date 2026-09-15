@@ -4,12 +4,19 @@ set -Eeuo pipefail
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repository_root"
 
-if [[ $# -ne 1 || -z "$1" ]]; then
-  echo "Usage: $0 IMAGE_TAG" >&2
+if [[ $# -lt 1 || $# -gt 2 || -z "$1" ]]; then
+  echo "Usage: $0 IMAGE_TAG [PLATFORM]" >&2
   exit 2
 fi
 
 image_tag="$1"
+platform="${2:-}"
+platform_args=()
+if [[ -n "$platform" ]]; then
+  [[ "$platform" =~ ^linux/(amd64|arm64)$ ]] \
+    || { echo "Unsupported smoke-test platform: $platform" >&2; exit 2; }
+  platform_args=(--platform "$platform")
+fi
 configured_user="$(docker image inspect --format '{{.Config.User}}' "$image_tag")"
 if [[ -z "$configured_user" || "$configured_user" == "0" || "$configured_user" == "root" ]]; then
   echo "Container image must configure a non-root default user." >&2
@@ -24,6 +31,7 @@ cleanup() {
 trap cleanup EXIT
 
 docker run --rm \
+  "${platform_args[@]}" \
   --network none \
   --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=16m \
@@ -40,6 +48,7 @@ cleanup_container() {
 trap 'cleanup_container; cleanup' EXIT
 
 docker run --detach \
+  "${platform_args[@]}" \
   --name "$container_name" \
   --stop-timeout 5 \
   --network none \

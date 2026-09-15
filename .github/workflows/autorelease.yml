@@ -20,7 +20,7 @@ jobs:
     name: Verify and publish immutable image
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
@@ -66,6 +66,14 @@ jobs:
           echo "IMAGE_NAME=$image_name" >>"$GITHUB_ENV"
           echo "RELEASE_VERSION=$RELEASE_VERSION" >>"$GITHUB_ENV"
 
+      - name: Set up QEMU for ARM64 runtime validation
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -86,10 +94,25 @@ jobs:
         id: existing-image
         env:
           RELEASE_DIGEST: ${{ steps.existing-release.outputs.release-digest }}
+          RELEASE_AMD64_DIGEST: ${{ steps.existing-release.outputs.release-amd64-digest }}
+          RELEASE_ARM64_DIGEST: ${{ steps.existing-release.outputs.release-arm64-digest }}
         run: |
-          ./scripts/release-image.sh inspect \
-            "$IMAGE_NAME" "$GITHUB_SHA" "$RELEASE_VERSION" "$GITHUB_OUTPUT" \
-            "$RELEASE_DIGEST"
+          if [[ -n "$RELEASE_AMD64_DIGEST" || -n "$RELEASE_ARM64_DIGEST" ]]; then
+            [[ -n "$RELEASE_DIGEST" && -n "$RELEASE_AMD64_DIGEST" && -n "$RELEASE_ARM64_DIGEST" ]] || {
+              echo "Durable release metadata contains an incomplete multi-platform identity." >&2
+              exit 1
+            }
+            BEANBOT_RELEASE_MULTIARCH=1 ./scripts/release-image.sh inspect \
+              "$IMAGE_NAME" "$GITHUB_SHA" "$RELEASE_VERSION" "$GITHUB_OUTPUT" \
+              "$RELEASE_DIGEST" "$RELEASE_AMD64_DIGEST" "$RELEASE_ARM64_DIGEST"
+          elif [[ -n "$RELEASE_DIGEST" ]]; then
+            BEANBOT_RELEASE_MULTIARCH=1 ./scripts/release-image.sh inspect \
+              "$IMAGE_NAME" "$GITHUB_SHA" "$RELEASE_VERSION" "$GITHUB_OUTPUT" \
+              "$RELEASE_DIGEST"
+          else
+            BEANBOT_RELEASE_MULTIARCH=1 ./scripts/release-image.sh inspect \
+              "$IMAGE_NAME" "$GITHUB_SHA" "$RELEASE_VERSION" "$GITHUB_OUTPUT"
+          fi
 
       - name: Full release-quality verification
         run: |
@@ -102,7 +125,7 @@ jobs:
         if: steps.existing-image.outputs.reuse != 'true'
         id: staged-image
         run: |
-          ./scripts/release-image.sh stage \
+          BEANBOT_RELEASE_MULTIARCH=1 ./scripts/release-image.sh stage \
             "$IMAGE_NAME" "$GITHUB_SHA" "$RELEASE_VERSION" "$GITHUB_OUTPUT" \
             "$IMAGE_NAME:$GITHUB_SHA"
 
@@ -116,6 +139,29 @@ jobs:
             "$IMAGE_NAME" "$EXISTING_DIGEST" "$STAGED_DIGEST" \
             "$RELEASE_VERSION" "$GITHUB_OUTPUT"
           mkdir -p .artifacts/release
+
+      - name: Validate selected multi-platform image
+        id: selected-platforms
+        run: |
+          ./scripts/release-multiarch.sh validate \
+            "$IMAGE_NAME" "$GITHUB_SHA" "$RELEASE_VERSION" \
+            "${{ steps.selected-image.outputs.image-digest }}" "$GITHUB_OUTPUT"
+
+      - name: Smoke test selected amd64 release child
+        env:
+          BEANBOT_PLATFORM_SMOKE_TIMEOUT_SECONDS: 120
+        run: |
+          ./scripts/release-multiarch.sh smoke-platform \
+            "$IMAGE_NAME" "$GITHUB_SHA" "$RELEASE_VERSION" \
+            "${{ steps.selected-image.outputs.image-digest }}" linux/amd64
+
+      - name: Smoke test selected ARM64 release child
+        env:
+          BEANBOT_PLATFORM_SMOKE_TIMEOUT_SECONDS: 120
+        run: |
+          ./scripts/release-multiarch.sh smoke-platform \
+            "$IMAGE_NAME" "$GITHUB_SHA" "$RELEASE_VERSION" \
+            "${{ steps.selected-image.outputs.image-digest }}" linux/arm64
 
       - name: Generate build provenance
         if: steps.selected-image.outputs.provenance-action == 'generate'
@@ -136,14 +182,31 @@ jobs:
             "$IMAGE_NAME" "$IMAGE_DIGEST" "$GITHUB_REPOSITORY" \
             "$GITHUB_SHA" "refs/heads/master"
 
-      - name: Generate SPDX SBOM
+      - name: Generate amd64 SPDX SBOM
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
-          image: ${{ steps.selected-image.outputs.image-name }}@${{ steps.selected-image.outputs.image-digest }}
+          image: ${{ steps.selected-image.outputs.image-name }}@${{ steps.selected-platforms.outputs.amd64-digest }}
           format: spdx-json
-          output-file: .artifacts/release/beanbot.spdx.json
+          output-file: .artifacts/release/beanbot-amd64.spdx.json
           upload-artifact: false
           upload-release-assets: false
+
+      - name: Generate arm64 SPDX SBOM
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          image: ${{ steps.selected-image.outputs.image-name }}@${{ steps.selected-platforms.outputs.arm64-digest }}
+          format: spdx-json
+          output-file: .artifacts/release/beanbot-arm64.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate SPDX SBOM
+        run: |
+          ./scripts/create-release-sbom-index.py \
+            "$RELEASE_VERSION" "${{ steps.selected-image.outputs.image-digest }}" \
+            "${{ steps.selected-platforms.outputs.amd64-digest }}" .artifacts/release/beanbot-amd64.spdx.json \
+            "${{ steps.selected-platforms.outputs.arm64-digest }}" .artifacts/release/beanbot-arm64.spdx.json \
+            .artifacts/release/beanbot.spdx.json
 
       - name: Attest image SBOM
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -156,13 +219,12 @@ jobs:
 
       - name: Create release metadata and checksums
         run: |
-          jq -n \
-            --arg version "$RELEASE_VERSION" \
-            --arg commitSha "$GITHUB_SHA" \
-            --arg image "$IMAGE_NAME" \
-            --arg digest "${{ steps.selected-image.outputs.image-digest }}" \
-            '{version:$version,commitSha:$commitSha,image:$image,digest:$digest}' \
-            >.artifacts/release/release-metadata.json
+          ./scripts/create-release-metadata.sh \
+            "$RELEASE_VERSION" "$GITHUB_SHA" "$IMAGE_NAME" \
+            "${{ steps.selected-image.outputs.image-digest }}" \
+            "${{ steps.selected-platforms.outputs.amd64-digest }}" \
+            "${{ steps.selected-platforms.outputs.arm64-digest }}" \
+            .artifacts/release/release-metadata.json
           ./scripts/create-release-checksums.sh
 
       - name: Upload release evidence
@@ -178,7 +240,7 @@ jobs:
 
       - name: Promote immutable image tags
         run: |
-          ./scripts/release-image.sh promote \
+          BEANBOT_RELEASE_MULTIARCH=1 ./scripts/release-image.sh promote \
             "$IMAGE_NAME" "$GITHUB_SHA" "$RELEASE_VERSION" \
             "${{ steps.selected-image.outputs.image-digest }}"
 

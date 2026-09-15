@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+if [[ "${BEANBOT_RELEASE_MULTIARCH:-0}" == "1" ]]; then
+  exec "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/release-multiarch.sh" "$@"
+fi
+
 usage() {
   echo "Usage: $0 {inspect|stage|promote} IMAGE SHA VERSION OUTPUT_OR_DIGEST [LOCAL_TAG]" >&2
 }

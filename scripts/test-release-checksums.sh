@@ -24,4 +24,22 @@ if grep -Fq '.artifacts/release/' "$clean_directory/SHA256SUMS"; then
   exit 1
 fi
 
+printf 'amd64 sbom\n' >"$temporary_directory/.artifacts/release/beanbot-amd64.spdx.json"
+printf 'arm64 sbom\n' >"$temporary_directory/.artifacts/release/beanbot-arm64.spdx.json"
+"$repository_root/scripts/create-release-checksums.sh" \
+  "$temporary_directory/.artifacts/release"
+grep -Fq 'beanbot-amd64.spdx.json' "$temporary_directory/.artifacts/release/SHA256SUMS"
+grep -Fq 'beanbot-arm64.spdx.json' "$temporary_directory/.artifacts/release/SHA256SUMS"
+(
+  cd "$temporary_directory/.artifacts/release"
+  sha256sum -c SHA256SUMS
+)
+
+rm "$temporary_directory/.artifacts/release/beanbot-arm64.spdx.json"
+if "$repository_root/scripts/create-release-checksums.sh" \
+  "$temporary_directory/.artifacts/release"; then
+  echo "Checksums unexpectedly accepted a partial platform SBOM set." >&2
+  exit 1
+fi
+
 echo "Release checksum tests passed."
