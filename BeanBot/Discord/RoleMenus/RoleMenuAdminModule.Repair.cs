@@ -117,6 +117,14 @@ public sealed partial class RoleMenuAdminModule
             return;
         }
 
+        if (!currentAdministrator.GuildPermissions.ManageRoles)
+        {
+            await ReplaceResponseAsync(
+                "You need the current **Manage Roles** permission to repair this menu.",
+                cancellation.Token);
+            return;
+        }
+
         var validation = ValidateRoles(parsed.RoleIds, currentAdministrator, currentBot);
         if (!validation.IsValid)
         {
@@ -323,6 +331,11 @@ public sealed partial class RoleMenuAdminModule
         if (currentAdministrator is null || currentBot is null)
         {
             return "Bean Bot couldn't refresh the current server role hierarchy. No replacement was posted.";
+        }
+
+        if (!currentAdministrator.GuildPermissions.ManageRoles)
+        {
+            return "You no longer have the **Manage Roles** permission. No replacement was posted.";
         }
 
         var targetChannel = await _discord.GetGuildTextChannelAsync(
