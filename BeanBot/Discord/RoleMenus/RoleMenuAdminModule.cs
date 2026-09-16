@@ -16,12 +16,12 @@ using static BeanBot.Discord.RoleMenus.RoleMenuSetupValidation;
 
 namespace BeanBot.Discord.RoleMenus;
 
-[Group("role-menu", "Create and remove self-assignable role menus.")]
+[Group("role-menu", "Create, repair, and remove self-assignable role menus.")]
 [CommandContextType(InteractionContextType.Guild)]
 [RequireContext(ContextType.Guild)]
 [RequireUserPermission(GuildPermission.ManageRoles)]
 [DefaultMemberPermissions(GuildPermission.ManageRoles)]
-public sealed class RoleMenuAdminModule : RoleMenuModuleBase
+public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
 {
     private readonly DiscordRoleMenuClient _discord;
     private readonly RoleMenuAdministrationService _administration;
