@@ -86,10 +86,7 @@ internal static class RoleMenuRepairWorkflow
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(parsed);
-        if (targetChannelId == 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(targetChannelId));
-        }
+        ArgumentOutOfRangeException.ThrowIfZero(targetChannelId);
 
         return new RoleMenuDraft(
             Guid.NewGuid(),
