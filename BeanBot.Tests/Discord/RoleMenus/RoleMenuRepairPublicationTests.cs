@@ -37,7 +37,7 @@ public class RoleMenuRepairPublicationTests
             draft,
             BotUserId,
             new RoleMenuPublicationOperations(
-                (_, _, _) => Task.FromResult(stored),
+                (_, _, _) => Task.FromResult<RoleMenuSettings?>(stored),
                 (_, _, _) =>
                 {
                     exactReadCount++;
@@ -95,7 +95,7 @@ public class RoleMenuRepairPublicationTests
             draft,
             BotUserId,
             new RoleMenuPublicationOperations(
-                (_, _, _) => Task.FromResult(stored),
+                (_, _, _) => Task.FromResult<RoleMenuSettings?>(stored),
                 (_, _, _) => Task.FromResult<RoleMenuPanelSnapshot?>(null),
                 (_, _, _) =>
                 {
@@ -150,7 +150,7 @@ public class RoleMenuRepairPublicationTests
             draft,
             BotUserId,
             new RoleMenuPublicationOperations(
-                (_, _, _) => Task.FromResult(stored),
+                (_, _, _) => Task.FromResult<RoleMenuSettings?>(stored),
                 (_, _, _) => Task.FromResult<RoleMenuPanelSnapshot?>(null),
                 (_, _, _) => Task.FromResult<IReadOnlyList<RoleMenuPanelSnapshot>>([]),
                 (_, _) => Task.FromResult(replacement),
