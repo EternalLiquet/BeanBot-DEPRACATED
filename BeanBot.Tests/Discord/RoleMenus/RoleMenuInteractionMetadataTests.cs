@@ -82,12 +82,31 @@ public class RoleMenuInteractionMetadataTests
     }
 
     [Fact]
+    public void RepairCommand_IsPartOfExistingAdminGroupAndUsesOptionalTextChannelTarget()
+    {
+        var method = Assert.IsAssignableFrom<MethodInfo>(
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.RepairAsync)));
+        var command = method.GetCustomAttribute<SlashCommandAttribute>();
+        var parameters = method.GetParameters();
+
+        Assert.NotNull(command);
+        Assert.Equal("repair", command.Name);
+        Assert.Equal(RunMode.Sync, command.RunMode);
+        Assert.Equal(2, parameters.Length);
+        Assert.Equal(typeof(string), parameters[0].ParameterType);
+        Assert.Equal(typeof(ITextChannel), parameters[1].ParameterType);
+        Assert.True(parameters[1].HasDefaultValue);
+        Assert.Null(parameters[1].DefaultValue);
+    }
+
+    [Fact]
     public void MutatingHandlers_UseSynchronousInteractionRunMode()
     {
         var methods = new[]
         {
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.HandleCreateModalAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.PublishAsync)),
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ConfirmRepairAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ConfirmDeleteAsync)),
             typeof(RoleMenuMemberModule).GetMethod(nameof(RoleMenuMemberModule.SaveAsync)),
             typeof(RoleMenuMemberModule).GetMethod(nameof(RoleMenuMemberModule.ClearAsync))
