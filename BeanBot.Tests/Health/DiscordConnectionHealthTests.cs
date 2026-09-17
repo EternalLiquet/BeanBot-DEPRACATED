@@ -87,4 +87,34 @@ public class DiscordConnectionHealthTests
         Assert.NotNull(snapshot.LastReadyAtUtc);
         Assert.NotNull(snapshot.LastDisconnectedAtUtc);
     }
+
+    [Fact]
+    public async Task ConcurrentMetricsReads_DoNotLoseGatewayTransitionAccounting()
+    {
+        using var discordClient = new DiscordSocketClient();
+        var health = new DiscordConnectionHealth();
+        const int transitionCycles = 100;
+
+        var readers = Enumerable.Range(0, 4)
+            .Select(_ => Task.Run(() =>
+            {
+                for (var attempt = 0; attempt < 500; attempt++)
+                {
+                    _ = health.CreateMetricsSnapshot(discordClient);
+                }
+            }))
+            .ToArray();
+
+        for (var cycle = 0; cycle < transitionCycles; cycle++)
+        {
+            health.MarkReady();
+            health.MarkDisconnected(null);
+        }
+
+        await Task.WhenAll(readers);
+        var snapshot = health.CreateMetricsSnapshot(discordClient);
+
+        Assert.Equal(transitionCycles, snapshot.ReadyTransitionCount);
+        Assert.Equal(transitionCycles, snapshot.DisconnectTransitionCount);
+    }
 }
