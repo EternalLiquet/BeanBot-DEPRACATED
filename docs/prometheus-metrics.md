@@ -45,8 +45,8 @@ The initial metric set is intentionally small:
 - `beanbot_discord_ready` — current Discord readiness as 0/1.
 - `beanbot_discord_ready_transitions_total` — transitions into Gateway Ready.
 - `beanbot_discord_disconnect_transitions_total` — transitions into disconnected state.
-- `beanbot_discord_last_ready_timestamp_seconds` — Unix timestamp of the most recent Ready observation, or 0 when none has occurred.
-- `beanbot_discord_last_disconnect_timestamp_seconds` — Unix timestamp of the most recent disconnect observation, or 0 when none has occurred.
+- `beanbot_discord_last_ready_timestamp_seconds` — Unix timestamp of the most recent transition into Ready, or 0 when none has occurred.
+- `beanbot_discord_last_disconnect_timestamp_seconds` — Unix timestamp of the most recent transition into disconnected state, or 0 when none has occurred.
 - `beanbot_mongo_reachable` — last observed MongoDB reachability as 0/1. Check `beanbot_mongo_state_known` before interpreting it.
 - `beanbot_mongo_state_known` — 1 after BeanBot owns a completed or timed-out Mongo readiness result; 0 before the first observation.
 - `beanbot_mongo_state_fresh` — whether the last observed Mongo readiness result remains inside the readiness freshness window.
@@ -66,7 +66,7 @@ Metrics do not contain guild, channel, message, user, or role IDs; disconnect-re
 - create a polling/background task;
 - contact a collector or telemetry service.
 
-Discord transition counters are updated by the existing Gateway lifecycle state owner. Mongo counters and last-known state are updated only when the existing readiness monitor owns a probe result. Repeated scrapes only read those snapshots.
+Discord transition counters and transition timestamps are updated by the existing Gateway lifecycle state owner. Mongo counters and last-known state are updated only when the existing readiness monitor owns a probe result. Repeated scrapes only read those snapshots.
 
 Before the first Mongo readiness result, Mongo metrics explicitly report an unknown/unfresh state instead of triggering a probe or assuming success.
 
