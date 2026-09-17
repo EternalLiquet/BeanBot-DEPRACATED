@@ -12,6 +12,8 @@ public sealed class DiscordConnectionHealth
     private long _disconnectTransitionCount;
     private DateTimeOffset? _lastReadyAtUtc;
     private DateTimeOffset? _lastDisconnectedAtUtc;
+    private DateTimeOffset? _lastReadyTransitionAtUtc;
+    private DateTimeOffset? _lastDisconnectedTransitionAtUtc;
     private DateTimeOffset? _unhealthySinceAtUtc;
     private string? _mostRecentDisconnectReason;
 
@@ -19,14 +21,16 @@ public sealed class DiscordConnectionHealth
     {
         lock (_syncRoot)
         {
+            var readyAtUtc = DateTimeOffset.UtcNow;
             if (!_hasObservedGatewayState || !_gatewayReady)
             {
                 _readyTransitionCount++;
+                _lastReadyTransitionAtUtc = readyAtUtc;
             }
 
             _hasObservedGatewayState = true;
             _gatewayReady = true;
-            _lastReadyAtUtc = DateTimeOffset.UtcNow;
+            _lastReadyAtUtc = readyAtUtc;
             _unhealthySinceAtUtc = null;
         }
     }
@@ -39,6 +43,7 @@ public sealed class DiscordConnectionHealth
             if (!_hasObservedGatewayState || _gatewayReady)
             {
                 _disconnectTransitionCount++;
+                _lastDisconnectedTransitionAtUtc = disconnectedAtUtc;
             }
 
             _hasObservedGatewayState = true;
@@ -79,8 +84,8 @@ public sealed class DiscordConnectionHealth
                 IsHealthy(discordClient.LoginState, discordClient.ConnectionState),
                 _readyTransitionCount,
                 _disconnectTransitionCount,
-                _lastReadyAtUtc,
-                _lastDisconnectedAtUtc);
+                _lastReadyTransitionAtUtc,
+                _lastDisconnectedTransitionAtUtc);
         }
     }
 
