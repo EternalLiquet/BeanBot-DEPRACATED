@@ -7,6 +7,9 @@ public sealed class DiscordConnectionHealth
 {
     private readonly object _syncRoot = new();
     private bool _gatewayReady;
+    private bool _hasObservedGatewayState;
+    private long _readyTransitionCount;
+    private long _disconnectTransitionCount;
     private DateTimeOffset? _lastReadyAtUtc;
     private DateTimeOffset? _lastDisconnectedAtUtc;
     private DateTimeOffset? _unhealthySinceAtUtc;
@@ -16,6 +19,12 @@ public sealed class DiscordConnectionHealth
     {
         lock (_syncRoot)
         {
+            if (!_hasObservedGatewayState || !_gatewayReady)
+            {
+                _readyTransitionCount++;
+            }
+
+            _hasObservedGatewayState = true;
             _gatewayReady = true;
             _lastReadyAtUtc = DateTimeOffset.UtcNow;
             _unhealthySinceAtUtc = null;
@@ -27,6 +36,12 @@ public sealed class DiscordConnectionHealth
         lock (_syncRoot)
         {
             var disconnectedAtUtc = DateTimeOffset.UtcNow;
+            if (!_hasObservedGatewayState || _gatewayReady)
+            {
+                _disconnectTransitionCount++;
+            }
+
+            _hasObservedGatewayState = true;
             _gatewayReady = false;
             _lastDisconnectedAtUtc = disconnectedAtUtc;
             _unhealthySinceAtUtc ??= disconnectedAtUtc;
@@ -40,9 +55,7 @@ public sealed class DiscordConnectionHealth
         {
             var loginState = discordClient.LoginState;
             var connectionState = discordClient.ConnectionState;
-            var isHealthy = loginState == LoginState.LoggedIn
-                && connectionState == ConnectionState.Connected
-                && _gatewayReady;
+            var isHealthy = IsHealthy(loginState, connectionState);
 
             return new DiscordHealthSnapshot(
                 isHealthy,
@@ -55,6 +68,26 @@ public sealed class DiscordConnectionHealth
                 _mostRecentDisconnectReason);
         }
     }
+
+    internal DiscordMetricsSnapshot CreateMetricsSnapshot(DiscordSocketClient discordClient)
+    {
+        ArgumentNullException.ThrowIfNull(discordClient);
+
+        lock (_syncRoot)
+        {
+            return new DiscordMetricsSnapshot(
+                IsHealthy(discordClient.LoginState, discordClient.ConnectionState),
+                _readyTransitionCount,
+                _disconnectTransitionCount,
+                _lastReadyAtUtc,
+                _lastDisconnectedAtUtc);
+        }
+    }
+
+    private bool IsHealthy(LoginState loginState, ConnectionState connectionState)
+        => loginState == LoginState.LoggedIn
+            && connectionState == ConnectionState.Connected
+            && _gatewayReady;
 
     private string GetStatusMessage(LoginState loginState, ConnectionState connectionState)
     {
@@ -81,6 +114,13 @@ public sealed class DiscordConnectionHealth
         return $"Discord connection state is {connectionState}.";
     }
 }
+
+internal readonly record struct DiscordMetricsSnapshot(
+    bool IsReady,
+    long ReadyTransitionCount,
+    long DisconnectTransitionCount,
+    DateTimeOffset? LastReadyAtUtc,
+    DateTimeOffset? LastDisconnectedAtUtc);
 
 public sealed class DiscordHealthSnapshot
 {

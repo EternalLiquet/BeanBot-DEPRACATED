@@ -27,6 +27,8 @@ public sealed class HealthCheckServer : IAsyncDisposable
     internal const int DefaultMaximumConcurrentClients = 64;
     internal const int DefaultMaximumTrackedRateLimitClients = 4096;
     internal const string LivenessPath = "/livez";
+    internal const string MetricsPath = "/metrics";
+    private const string PrometheusContentType = "text/plain; version=0.0.4; charset=utf-8";
     private static readonly TimeSpan DefaultRequestHeadersTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DefaultShutdownTimeout = TimeSpan.FromSeconds(1);
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -38,6 +40,8 @@ public sealed class HealthCheckServer : IAsyncDisposable
     private readonly HealthCheckOptions _options;
     private readonly Func<DiscordHealthSnapshot> _createHealthSnapshot;
     private readonly Func<CancellationToken, Task<MongoReadinessSnapshot>> _getMongoReadinessSnapshot;
+    private readonly Func<DiscordMetricsSnapshot> _createDiscordMetricsSnapshot;
+    private readonly Func<MongoReadinessMetricsSnapshot> _createMongoMetricsSnapshot;
     private readonly TimeSpan _requestHeadersTimeout;
     private readonly TimeSpan _shutdownTimeout;
     private readonly int _maximumConcurrentClients;
@@ -61,7 +65,9 @@ public sealed class HealthCheckServer : IAsyncDisposable
             DefaultRequestHeadersTimeout,
             DefaultMaximumConcurrentClients,
             DefaultMaximumTrackedRateLimitClients,
-            DefaultShutdownTimeout)
+            DefaultShutdownTimeout,
+            CreateDiscordMetricsFactory(discordClient, discordConnectionHealth),
+            mongoReadinessMonitor.CreateMetricsSnapshot)
     {
     }
 
@@ -72,7 +78,9 @@ public sealed class HealthCheckServer : IAsyncDisposable
         TimeSpan? requestHeadersTimeout = null,
         int maximumConcurrentClients = DefaultMaximumConcurrentClients,
         int maximumTrackedRateLimitClients = DefaultMaximumTrackedRateLimitClients,
-        TimeSpan? shutdownTimeout = null)
+        TimeSpan? shutdownTimeout = null,
+        Func<DiscordMetricsSnapshot>? createDiscordMetricsSnapshot = null,
+        Func<MongoReadinessMetricsSnapshot>? createMongoMetricsSnapshot = null)
         : this(
             options,
             createHealthSnapshot,
@@ -81,7 +89,9 @@ public sealed class HealthCheckServer : IAsyncDisposable
             requestHeadersTimeout,
             maximumConcurrentClients,
             maximumTrackedRateLimitClients,
-            shutdownTimeout)
+            shutdownTimeout,
+            createDiscordMetricsSnapshot,
+            createMongoMetricsSnapshot)
     {
     }
 
@@ -93,7 +103,9 @@ public sealed class HealthCheckServer : IAsyncDisposable
         TimeSpan? requestHeadersTimeout = null,
         int maximumConcurrentClients = DefaultMaximumConcurrentClients,
         int maximumTrackedRateLimitClients = DefaultMaximumTrackedRateLimitClients,
-        TimeSpan? shutdownTimeout = null)
+        TimeSpan? shutdownTimeout = null,
+        Func<DiscordMetricsSnapshot>? createDiscordMetricsSnapshot = null,
+        Func<MongoReadinessMetricsSnapshot>? createMongoMetricsSnapshot = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(createHealthSnapshot);
@@ -110,6 +122,8 @@ public sealed class HealthCheckServer : IAsyncDisposable
         _options = options;
         _createHealthSnapshot = createHealthSnapshot;
         _getMongoReadinessSnapshot = getMongoReadinessSnapshot;
+        _createDiscordMetricsSnapshot = createDiscordMetricsSnapshot ?? CreateEmptyDiscordMetricsSnapshot;
+        _createMongoMetricsSnapshot = createMongoMetricsSnapshot ?? CreateEmptyMongoMetricsSnapshot;
         _logger = logger;
         _requestHeadersTimeout = effectiveRequestHeadersTimeout;
         _shutdownTimeout = effectiveShutdownTimeout;
@@ -252,6 +266,15 @@ public sealed class HealthCheckServer : IAsyncDisposable
         return () => discordConnectionHealth.CreateSnapshot(discordClient);
     }
 
+    private static Func<DiscordMetricsSnapshot> CreateDiscordMetricsFactory(
+        DiscordSocketClient discordClient,
+        DiscordConnectionHealth discordConnectionHealth)
+    {
+        ArgumentNullException.ThrowIfNull(discordClient);
+        ArgumentNullException.ThrowIfNull(discordConnectionHealth);
+        return () => discordConnectionHealth.CreateMetricsSnapshot(discordClient);
+    }
+
     private static Func<CancellationToken, Task<MongoReadinessSnapshot>> CreateMongoReadinessFactory(
         MongoReadinessMonitor mongoReadinessMonitor)
     {
@@ -265,6 +288,12 @@ public sealed class HealthCheckServer : IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(new MongoReadinessSnapshot(true, DateTimeOffset.UnixEpoch));
     }
+
+    private static DiscordMetricsSnapshot CreateEmptyDiscordMetricsSnapshot()
+        => new(false, 0, 0, null, null);
+
+    private static MongoReadinessMetricsSnapshot CreateEmptyMongoMetricsSnapshot()
+        => new(false, false, false, null, 0, 0, 0);
 
     private WebApplication CreateApplication()
     {
@@ -294,6 +323,16 @@ public sealed class HealthCheckServer : IAsyncDisposable
                 LivenessPath,
                 StringComparison.OrdinalIgnoreCase),
             branch => branch.Run(HandleLivenessRequestAsync));
+        if (_options.MetricsEnabled)
+        {
+            application.MapWhen(
+                context => string.Equals(
+                    context.Request.Path.Value,
+                    MetricsPath,
+                    StringComparison.OrdinalIgnoreCase),
+                branch => branch.Run(HandleMetricsRequestAsync));
+        }
+
         application.Run(HandleRequestAsync);
         return application;
     }
@@ -311,10 +350,6 @@ public sealed class HealthCheckServer : IAsyncDisposable
     internal static int SelectBoundPort(IEnumerable<string> addresses)
     {
         ArgumentNullException.ThrowIfNull(addresses);
-
-        // Kestrel normally exposes one address for this server. If hosting
-        // configuration adds more, the lowest actual TCP port is stable and
-        // avoids making lifecycle logging or test discovery order-dependent.
         return addresses
             .Select(address => Uri.TryCreate(address, UriKind.Absolute, out var uri) ? uri.Port : 0)
             .Where(port => port > 0)
@@ -329,22 +364,14 @@ public sealed class HealthCheckServer : IAsyncDisposable
         if (!HttpMethods.IsGet(context.Request.Method) && !isHeadRequest)
         {
             context.Response.Headers.Allow = "GET, HEAD";
-            await WritePlainTextResponseAsync(
-                context,
-                StatusCodes.Status405MethodNotAllowed,
-                "Only GET and HEAD are supported.",
-                suppressBody: false);
+            await WritePlainTextResponseAsync(context, StatusCodes.Status405MethodNotAllowed, "Only GET and HEAD are supported.", false);
             return;
         }
 
         if (!IsAuthorized(context.Request))
         {
             context.Response.Headers.WWWAuthenticate = "Bearer";
-            await WritePlainTextResponseAsync(
-                context,
-                StatusCodes.Status401Unauthorized,
-                "Missing or invalid bearer token.",
-                isHeadRequest);
+            await WritePlainTextResponseAsync(context, StatusCodes.Status401Unauthorized, "Missing or invalid bearer token.", isHeadRequest);
             return;
         }
 
@@ -352,29 +379,51 @@ public sealed class HealthCheckServer : IAsyncDisposable
         if (_rateLimiter.IsRateLimited($"live|{clientIdentifier}", out var retryAfterSeconds))
         {
             context.Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
-            await WriteJsonResponseAsync(
-                context,
-                StatusCodes.Status429TooManyRequests,
-                new
-                {
-                    status = "rate_limited",
-                    message = $"Wait {retryAfterSeconds} more seconds before polling {LivenessPath} again.",
-                    retryAfterSeconds
-                },
-                isHeadRequest);
+            await WriteJsonResponseAsync(context, StatusCodes.Status429TooManyRequests, new
+            {
+                status = "rate_limited",
+                message = $"Wait {retryAfterSeconds} more seconds before polling {LivenessPath} again.",
+                retryAfterSeconds
+            }, isHeadRequest);
             return;
         }
 
-        await WriteJsonResponseAsync(
-            context,
-            StatusCodes.Status200OK,
-            new
-            {
-                status = "alive",
-                version = BuildIdentity.Current.Version,
-                commitSha = BuildIdentity.Current.CommitSha
-            },
-            isHeadRequest);
+        await WriteJsonResponseAsync(context, StatusCodes.Status200OK, new
+        {
+            status = "alive",
+            version = BuildIdentity.Current.Version,
+            commitSha = BuildIdentity.Current.CommitSha
+        }, isHeadRequest);
+    }
+
+    private async Task HandleMetricsRequestAsync(HttpContext context)
+    {
+        context.Response.Headers.Connection = "close";
+        var isHeadRequest = HttpMethods.IsHead(context.Request.Method);
+        if (!HttpMethods.IsGet(context.Request.Method) && !isHeadRequest)
+        {
+            context.Response.Headers.Allow = "GET, HEAD";
+            await WritePlainTextResponseAsync(context, StatusCodes.Status405MethodNotAllowed, "Only GET and HEAD are supported.", false);
+            return;
+        }
+
+        if (!IsAuthorized(context.Request))
+        {
+            context.Response.Headers.WWWAuthenticate = "Bearer";
+            await WritePlainTextResponseAsync(context, StatusCodes.Status401Unauthorized, "Missing or invalid bearer token.", isHeadRequest);
+            return;
+        }
+
+        var clientIdentifier = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        if (_rateLimiter.IsRateLimited($"metrics|{clientIdentifier}", out var retryAfterSeconds))
+        {
+            context.Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+            await WritePlainTextResponseAsync(context, StatusCodes.Status429TooManyRequests, "Metrics scrape rate limited.", isHeadRequest);
+            return;
+        }
+
+        var body = CreateMetricsPayload(_createDiscordMetricsSnapshot(), _createMongoMetricsSnapshot());
+        await WriteResponseAsync(context, StatusCodes.Status200OK, PrometheusContentType, body, isHeadRequest);
     }
 
     private async Task HandleRequestAsync(HttpContext context)
@@ -384,32 +433,20 @@ public sealed class HealthCheckServer : IAsyncDisposable
         if (!HttpMethods.IsGet(context.Request.Method) && !isHeadRequest)
         {
             context.Response.Headers.Allow = "GET, HEAD";
-            await WritePlainTextResponseAsync(
-                context,
-                StatusCodes.Status405MethodNotAllowed,
-                "Only GET and HEAD are supported.",
-                suppressBody: false);
+            await WritePlainTextResponseAsync(context, StatusCodes.Status405MethodNotAllowed, "Only GET and HEAD are supported.", false);
             return;
         }
 
         if (!string.Equals(context.Request.Path.Value, _options.Path, StringComparison.OrdinalIgnoreCase))
         {
-            await WritePlainTextResponseAsync(
-                context,
-                StatusCodes.Status404NotFound,
-                "Not Found",
-                isHeadRequest);
+            await WritePlainTextResponseAsync(context, StatusCodes.Status404NotFound, "Not Found", isHeadRequest);
             return;
         }
 
         if (!IsAuthorized(context.Request))
         {
             context.Response.Headers.WWWAuthenticate = "Bearer";
-            await WritePlainTextResponseAsync(
-                context,
-                StatusCodes.Status401Unauthorized,
-                "Missing or invalid bearer token.",
-                isHeadRequest);
+            await WritePlainTextResponseAsync(context, StatusCodes.Status401Unauthorized, "Missing or invalid bearer token.", isHeadRequest);
             return;
         }
 
@@ -417,58 +454,91 @@ public sealed class HealthCheckServer : IAsyncDisposable
         if (_rateLimiter.IsRateLimited(clientIdentifier, out var retryAfterSeconds))
         {
             context.Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
-            await WriteJsonResponseAsync(
-                context,
-                StatusCodes.Status429TooManyRequests,
-                new
-                {
-                    status = "rate_limited",
-                    message = $"Wait {retryAfterSeconds} more seconds before polling {_options.Path} again.",
-                    retryAfterSeconds
-                },
-                isHeadRequest);
+            await WriteJsonResponseAsync(context, StatusCodes.Status429TooManyRequests, new
+            {
+                status = "rate_limited",
+                message = $"Wait {retryAfterSeconds} more seconds before polling {_options.Path} again.",
+                retryAfterSeconds
+            }, isHeadRequest);
             return;
         }
 
         var discordSnapshot = _createHealthSnapshot();
         var mongoSnapshot = await _getMongoReadinessSnapshot(context.RequestAborted);
         var isHealthy = discordSnapshot.IsHealthy && mongoSnapshot.IsReachable;
-        await WriteJsonResponseAsync(
-            context,
-            isHealthy
-                ? StatusCodes.Status200OK
-                : StatusCodes.Status503ServiceUnavailable,
-            new
-            {
-                status = isHealthy ? "ok" : "unhealthy",
-                version = BuildIdentity.Current.Version,
-                commitSha = BuildIdentity.Current.CommitSha,
-                discordConnected = discordSnapshot.IsHealthy,
-                mongoReachable = mongoSnapshot.IsReachable,
-                mongoLastCheckedAtUtc = mongoSnapshot.LastCheckedAtUtc,
-                message = GetStatusMessage(discordSnapshot, mongoSnapshot),
-                loginState = discordSnapshot.LoginState,
-                connectionState = discordSnapshot.ConnectionState,
-                lastReadyAtUtc = discordSnapshot.LastReadyAtUtc,
-                lastDisconnectedAtUtc = discordSnapshot.LastDisconnectedAtUtc,
-                unhealthySinceAtUtc = discordSnapshot.UnhealthySinceAtUtc,
-                mostRecentDisconnectReason = discordSnapshot.MostRecentDisconnectReason
-            },
-            isHeadRequest);
+        await WriteJsonResponseAsync(context, isHealthy ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable, new
+        {
+            status = isHealthy ? "ok" : "unhealthy",
+            version = BuildIdentity.Current.Version,
+            commitSha = BuildIdentity.Current.CommitSha,
+            discordConnected = discordSnapshot.IsHealthy,
+            mongoReachable = mongoSnapshot.IsReachable,
+            mongoLastCheckedAtUtc = mongoSnapshot.LastCheckedAtUtc,
+            message = GetStatusMessage(discordSnapshot, mongoSnapshot),
+            loginState = discordSnapshot.LoginState,
+            connectionState = discordSnapshot.ConnectionState,
+            lastReadyAtUtc = discordSnapshot.LastReadyAtUtc,
+            lastDisconnectedAtUtc = discordSnapshot.LastDisconnectedAtUtc,
+            unhealthySinceAtUtc = discordSnapshot.UnhealthySinceAtUtc,
+            mostRecentDisconnectReason = discordSnapshot.MostRecentDisconnectReason
+        }, isHeadRequest);
     }
 
-    private static string GetStatusMessage(
-        DiscordHealthSnapshot discordSnapshot,
-        MongoReadinessSnapshot mongoSnapshot)
+    private static byte[] CreateMetricsPayload(
+        DiscordMetricsSnapshot discord,
+        MongoReadinessMetricsSnapshot mongo)
+    {
+        var builder = new StringBuilder(1536);
+        AppendMetric(builder, "beanbot_discord_ready", "gauge", "Whether Discord is currently ready.", discord.IsReady ? 1 : 0);
+        AppendMetric(builder, "beanbot_discord_ready_transitions_total", "counter", "Discord transitions into Ready state.", discord.ReadyTransitionCount);
+        AppendMetric(builder, "beanbot_discord_disconnect_transitions_total", "counter", "Discord transitions into disconnected state.", discord.DisconnectTransitionCount);
+        AppendMetric(builder, "beanbot_discord_last_ready_timestamp_seconds", "gauge", "Unix timestamp of the most recent Discord Ready observation.", ToUnixSeconds(discord.LastReadyAtUtc));
+        AppendMetric(builder, "beanbot_discord_last_disconnect_timestamp_seconds", "gauge", "Unix timestamp of the most recent Discord disconnect observation.", ToUnixSeconds(discord.LastDisconnectedAtUtc));
+        AppendMetric(builder, "beanbot_mongo_reachable", "gauge", "Last observed MongoDB reachability; inspect beanbot_mongo_state_known before trusting it.", mongo.IsReachable ? 1 : 0);
+        AppendMetric(builder, "beanbot_mongo_state_known", "gauge", "Whether any MongoDB readiness probe has completed or timed out.", mongo.IsKnown ? 1 : 0);
+        AppendMetric(builder, "beanbot_mongo_state_fresh", "gauge", "Whether the last observed MongoDB readiness state is within the readiness freshness window.", mongo.IsFresh ? 1 : 0);
+        AppendMetric(builder, "beanbot_mongo_last_probe_timestamp_seconds", "gauge", "Unix timestamp of the last observed MongoDB readiness result.", ToUnixSeconds(mongo.LastCheckedAtUtc));
+        AppendCounterWithResult(builder, "success", mongo.SuccessCount);
+        AppendCounterWithResult(builder, "failure", mongo.FailureCount);
+        AppendCounterWithResult(builder, "timeout", mongo.TimeoutCount);
+        return Encoding.UTF8.GetBytes(builder.ToString());
+    }
+
+    private static void AppendMetric(StringBuilder builder, string name, string type, string help, long value)
+    {
+        builder.Append("# HELP ").Append(name).Append(' ').AppendLine(help);
+        builder.Append("# TYPE ").Append(name).Append(' ').AppendLine(type);
+        builder.Append(name).Append(' ').Append(value.ToString(CultureInfo.InvariantCulture)).Append('\n');
+    }
+
+    private static void AppendCounterWithResult(StringBuilder builder, string result, long value)
+    {
+        const string name = "beanbot_mongo_probe_outcomes_total";
+        if (result == "success")
+        {
+            builder.Append("# HELP ").Append(name).AppendLine(" MongoDB readiness probe outcomes by bounded result category.");
+            builder.Append("# TYPE ").Append(name).AppendLine(" counter");
+        }
+
+        builder.Append(name)
+            .Append("{result=\"")
+            .Append(result)
+            .Append("\"} ")
+            .Append(value.ToString(CultureInfo.InvariantCulture))
+            .Append('\n');
+    }
+
+    private static long ToUnixSeconds(DateTimeOffset? value)
+        => value?.ToUnixTimeSeconds() ?? 0;
+
+    private static string GetStatusMessage(DiscordHealthSnapshot discordSnapshot, MongoReadinessSnapshot mongoSnapshot)
     {
         if (!discordSnapshot.IsHealthy)
         {
             return discordSnapshot.StatusMessage;
         }
 
-        return mongoSnapshot.IsReachable
-            ? discordSnapshot.StatusMessage
-            : "MongoDB is not reachable.";
+        return mongoSnapshot.IsReachable ? discordSnapshot.StatusMessage : "MongoDB is not reachable.";
     }
 
     private bool IsAuthorized(HttpRequest request)
@@ -489,40 +559,13 @@ public sealed class HealthCheckServer : IAsyncDisposable
         return CryptographicOperations.FixedTimeEquals(providedToken, expectedToken);
     }
 
-    private static Task WritePlainTextResponseAsync(
-        HttpContext context,
-        int statusCode,
-        string body,
-        bool suppressBody)
-    {
-        return WriteResponseAsync(
-            context,
-            statusCode,
-            "text/plain; charset=utf-8",
-            Encoding.UTF8.GetBytes(body),
-            suppressBody);
-    }
+    private static Task WritePlainTextResponseAsync(HttpContext context, int statusCode, string body, bool suppressBody)
+        => WriteResponseAsync(context, statusCode, "text/plain; charset=utf-8", Encoding.UTF8.GetBytes(body), suppressBody);
 
-    private static Task WriteJsonResponseAsync(
-        HttpContext context,
-        int statusCode,
-        object payload,
-        bool suppressBody)
-    {
-        return WriteResponseAsync(
-            context,
-            statusCode,
-            "application/json; charset=utf-8",
-            JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions),
-            suppressBody);
-    }
+    private static Task WriteJsonResponseAsync(HttpContext context, int statusCode, object payload, bool suppressBody)
+        => WriteResponseAsync(context, statusCode, "application/json; charset=utf-8", JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions), suppressBody);
 
-    private static async Task WriteResponseAsync(
-        HttpContext context,
-        int statusCode,
-        string contentType,
-        byte[] body,
-        bool suppressBody)
+    private static async Task WriteResponseAsync(HttpContext context, int statusCode, string contentType, byte[] body, bool suppressBody)
     {
         context.Response.StatusCode = statusCode;
         context.Response.ContentType = contentType;

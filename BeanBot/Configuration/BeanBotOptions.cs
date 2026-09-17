@@ -56,13 +56,15 @@ public sealed class HealthCheckOptions
         IPAddress bindAddress,
         int port,
         string? bearerToken,
-        TimeSpan minimumPollInterval)
+        TimeSpan minimumPollInterval,
+        bool metricsEnabled = false)
     {
         Enabled = enabled;
         BindAddress = bindAddress;
         Port = port;
         BearerToken = bearerToken;
         MinimumPollInterval = minimumPollInterval;
+        MetricsEnabled = metricsEnabled;
     }
 
     public bool Enabled { get; }
@@ -71,6 +73,7 @@ public sealed class HealthCheckOptions
     public string Path { get; } = "/healthz";
     public string? BearerToken { get; }
     public TimeSpan MinimumPollInterval { get; }
+    public bool MetricsEnabled { get; }
 
     public static HealthCheckOptions Disabled { get; } = new HealthCheckOptions(
         false,
