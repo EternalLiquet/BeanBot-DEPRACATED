@@ -76,8 +76,24 @@ internal sealed class BeanBotSettingsValidator : IValidateOptions<BeanBotSetting
         BeanBotHealthCheckSettings settings,
         List<string> failures)
     {
+        var metricsEnabled = false;
+        if (settings.MetricsEnabled is not null &&
+            !bool.TryParse(settings.MetricsEnabled, out metricsEnabled))
+        {
+            failures.Add(
+                $"Invalid value for {BeanBotConfiguration.MetricsEnabledVariable}. " +
+                "Expected true or false.");
+        }
+
         if (string.IsNullOrWhiteSpace(settings.Port))
         {
+            if (metricsEnabled)
+            {
+                failures.Add(
+                    $"{BeanBotConfiguration.MetricsEnabledVariable}=true requires " +
+                    $"{BeanBotConfiguration.HealthCheckPortVariable} so /metrics can reuse the existing listener.");
+            }
+
             return;
         }
 
