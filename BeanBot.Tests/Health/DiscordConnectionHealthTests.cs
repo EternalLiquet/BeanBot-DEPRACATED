@@ -100,7 +100,7 @@ public class DiscordConnectionHealthTests
             {
                 for (var attempt = 0; attempt < 500; attempt++)
                 {
-                    _ = health.CreateMetricsSnapshot(discordClient);
+                    health.CreateMetricsSnapshot(discordClient);
                 }
             }))
             .ToArray();
