@@ -134,7 +134,7 @@ public class BeanBotSecretFileConfigurationTests
     }
 
     [Fact]
-    public void SecretFile_RejectsFifoWithoutReadingFromIt()
+    public async Task SecretFile_RejectsFifoWithoutReadingFromIt()
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -154,7 +154,7 @@ public class BeanBotSecretFileConfigurationTests
             using (var process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Unable to start mkfifo for the test."))
             {
-                Assert.True(process.WaitForExit(5_000));
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
                 Assert.Equal(0, process.ExitCode);
             }
 
@@ -180,7 +180,7 @@ public class BeanBotSecretFileConfigurationTests
 
             if (writerTask is not null)
             {
-                Assert.True(writerTask.Wait(5_000));
+                await writerTask.WaitAsync(TimeSpan.FromSeconds(5));
             }
 
             directory.Delete(true);
