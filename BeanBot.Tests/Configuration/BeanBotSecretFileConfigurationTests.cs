@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using BeanBot.Configuration;
@@ -130,6 +131,60 @@ public class BeanBotSecretFileConfigurationTests
 
         Assert.Contains(BeanBotConfiguration.BotTokenFileVariable, exception.Message);
         Assert.Contains("exists and is readable", exception.Message);
+    }
+
+    [Fact]
+    public void SecretFile_RejectsFifoWithoutReadingFromIt()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var directory = Directory.CreateTempSubdirectory("beanbot-secret-fifo-");
+        var fifoPath = Path.Combine(directory.FullName, "secret-pipe");
+        Task? writerTask = null;
+        try
+        {
+            var startInfo = new ProcessStartInfo("mkfifo")
+            {
+                UseShellExecute = false
+            };
+            startInfo.ArgumentList.Add(fifoPath);
+            using (var process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Unable to start mkfifo for the test."))
+            {
+                Assert.True(process.WaitForExit(5_000));
+                Assert.Equal(0, process.ExitCode);
+            }
+
+            writerTask = Task.Run(() =>
+                File.WriteAllText(fifoPath, "fifo-secret", new UTF8Encoding(false)));
+
+            var values = RequiredSettings();
+            values.Remove(BeanBotConfiguration.BotTokenVariable);
+            values[BeanBotConfiguration.BotTokenFileVariable] = fifoPath;
+
+            var exception = Assert.Throws<InvalidOperationException>(() => CreateProvider(values));
+
+            Assert.Contains(BeanBotConfiguration.BotTokenFileVariable, exception.Message);
+            Assert.DoesNotContain("fifo-secret", exception.ToString());
+        }
+        finally
+        {
+            if (writerTask is not null && !writerTask.IsCompleted)
+            {
+                using var reader = File.OpenRead(fifoPath);
+                reader.CopyTo(Stream.Null);
+            }
+
+            if (writerTask is not null)
+            {
+                Assert.True(writerTask.Wait(5_000));
+            }
+
+            directory.Delete(true);
+        }
     }
 
     [Fact]
