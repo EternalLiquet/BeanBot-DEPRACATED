@@ -210,6 +210,20 @@ internal static class BeanBotConfiguration
 
         try
         {
+            var fileInfo = new FileInfo(filePath);
+            var fileLength = fileInfo.Length;
+            if (fileLength == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Secret file configured by {variableName} must not be empty.");
+            }
+
+            if (fileLength > SecretFileMaxBytes)
+            {
+                throw new InvalidOperationException(
+                    $"Secret file configured by {variableName} exceeds the {SecretFileMaxBytes}-byte limit.");
+            }
+
             using var stream = new FileStream(
                 filePath,
                 FileMode.Open,
@@ -217,6 +231,12 @@ internal static class BeanBotConfiguration
                 FileShare.Read,
                 bufferSize: 4096,
                 FileOptions.SequentialScan);
+
+            if (!stream.CanSeek)
+            {
+                throw new InvalidOperationException(
+                    $"Secret file configured by {variableName} must reference a regular file.");
+            }
 
             var buffer = new byte[SecretFileMaxBytes + 1];
             var bytesRead = 0;
