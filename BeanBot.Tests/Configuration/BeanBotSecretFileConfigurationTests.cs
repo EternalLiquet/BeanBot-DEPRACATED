@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using BeanBot.Configuration;
 using BeanBot.Hosting;
@@ -157,7 +158,9 @@ public class BeanBotSecretFileConfigurationTests
         var exception = Assert.Throws<InvalidOperationException>(() => CreateProvider(values));
 
         Assert.Contains(BeanBotConfiguration.BotTokenFileVariable, exception.Message);
-        Assert.Contains(BeanBotConfiguration.SecretFileMaxBytes.ToString(), exception.Message);
+        Assert.Contains(
+            BeanBotConfiguration.SecretFileMaxBytes.ToString(CultureInfo.InvariantCulture),
+            exception.Message);
     }
 
     [Fact]
