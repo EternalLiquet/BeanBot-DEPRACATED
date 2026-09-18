@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Extensions.Configuration;
 using Serilog;
 
@@ -6,7 +7,9 @@ namespace BeanBot.Configuration;
 internal static class BeanBotConfiguration
 {
     internal const string BotTokenVariable = "BEANBOT_BOT_TOKEN";
+    internal const string BotTokenFileVariable = "BEANBOT_BOT_TOKEN_FILE";
     internal const string MongoConnectionVariable = "BEANBOT_MONGO_CONNECTION_STRING";
+    internal const string MongoConnectionFileVariable = "BEANBOT_MONGO_CONNECTION_STRING_FILE";
     internal const string GeneralChannelVariable = "BEANBOT_GENERAL_CHANNEL_ID";
     internal const string HatoeteUrlVariable = "BEANBOT_HATOETE_URL";
     internal const string YoshimaruUrlVariable = "BEANBOT_YOSHIMARU_URL";
@@ -15,14 +18,22 @@ internal static class BeanBotConfiguration
     internal const string HealthCheckPortVariable = "BEANBOT_HEALTHCHECK_PORT";
     internal const string HealthCheckBindAddressVariable = "BEANBOT_HEALTHCHECK_BIND_ADDRESS";
     internal const string HealthCheckBearerTokenVariable = "BEANBOT_HEALTHCHECK_BEARER_TOKEN";
+    internal const string HealthCheckBearerTokenFileVariable = "BEANBOT_HEALTHCHECK_BEARER_TOKEN_FILE";
     internal const string HealthCheckRateLimitVariable = "BEANBOT_HEALTHCHECK_RATE_LIMIT_SECONDS";
     internal const string NewMemberWelcomeEnabledVariable = "BEANBOT_NEW_MEMBER_WELCOME_ENABLED";
     internal const string NewMemberWelcomeMessageVariable = "BEANBOT_NEW_MEMBER_WELCOME_MESSAGE";
+    internal const int SecretFileMaxBytes = 16 * 1024;
+
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     private static readonly ConfigurationKey[] RequiredKeys =
     [
-        new(BotTokenVariable, "botToken", "BotToken"),
-        new(MongoConnectionVariable, "mongoConnectionString", "MongoConnectionString"),
+        new(BotTokenVariable, "botToken", "BotToken", BotTokenFileVariable),
+        new(
+            MongoConnectionVariable,
+            "mongoConnectionString",
+            "MongoConnectionString",
+            MongoConnectionFileVariable),
         new(GeneralChannelVariable, "generalChannelId", "GeneralChannelId"),
         new(HatoeteUrlVariable, "hatoeteUrl", "HatoeteUrl"),
         new(YoshimaruUrlVariable, "yoshimaruUrl", "YoshimaruUrl")
@@ -40,7 +51,11 @@ internal static class BeanBotConfiguration
     private static readonly ConfigurationKey[] HealthCheckKeys =
     [
         new(HealthCheckBindAddressVariable, "healthCheckBindAddress", "HealthCheck:BindAddress"),
-        new(HealthCheckBearerTokenVariable, "healthCheckBearerToken", "HealthCheck:BearerToken"),
+        new(
+            HealthCheckBearerTokenVariable,
+            "healthCheckBearerToken",
+            "HealthCheck:BearerToken",
+            HealthCheckBearerTokenFileVariable),
         new(HealthCheckRateLimitVariable, "healthCheckRateLimitSeconds", "HealthCheck:RateLimitSeconds")
     ];
 
@@ -159,7 +174,145 @@ internal static class BeanBotConfiguration
     }
 
     private static string? GetCompatibilityValue(IConfiguration configuration, ConfigurationKey key)
-        => configuration[key.CanonicalName] ?? configuration[key.LegacyName];
+    {
+        var canonicalValue = configuration[key.CanonicalName];
+        var legacyValue = configuration[key.LegacyName];
+        var directValue = canonicalValue ?? legacyValue;
+
+        if (key.FileName is null)
+        {
+            return directValue;
+        }
+
+        var filePath = configuration[key.FileName];
+        if (filePath is null)
+        {
+            return directValue;
+        }
+
+        if (directValue is not null)
+        {
+            var directName = canonicalValue is not null ? key.CanonicalName : key.LegacyName;
+            throw new InvalidOperationException(
+                $"Conflicting configuration: {directName} and {key.FileName} cannot both be set.");
+        }
+
+        return ReadSecretFile(filePath, key.FileName);
+    }
+
+    private static string ReadSecretFile(string filePath, string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            throw new InvalidOperationException(
+                $"Configuration variable {variableName} must contain a non-empty file path.");
+        }
+
+        try
+        {
+            var fileInfo = new FileInfo(filePath);
+            var fileLength = fileInfo.Length;
+            if (fileLength == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Secret file configured by {variableName} must not be empty.");
+            }
+
+            if (fileLength > SecretFileMaxBytes)
+            {
+                throw new InvalidOperationException(
+                    $"Secret file configured by {variableName} exceeds the {SecretFileMaxBytes}-byte limit.");
+            }
+
+            using var stream = new FileStream(
+                filePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 4096,
+                FileOptions.SequentialScan);
+
+            if (!stream.CanSeek)
+            {
+                throw new InvalidOperationException(
+                    $"Secret file configured by {variableName} must reference a regular file.");
+            }
+
+            var buffer = new byte[SecretFileMaxBytes + 1];
+            var bytesRead = 0;
+            while (bytesRead < buffer.Length)
+            {
+                var read = stream.Read(buffer, bytesRead, buffer.Length - bytesRead);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                bytesRead += read;
+            }
+
+            if (bytesRead > SecretFileMaxBytes)
+            {
+                throw new InvalidOperationException(
+                    $"Secret file configured by {variableName} exceeds the {SecretFileMaxBytes}-byte limit.");
+            }
+
+            string value;
+            try
+            {
+                value = StrictUtf8.GetString(buffer, 0, bytesRead);
+            }
+            catch (DecoderFallbackException)
+            {
+                throw new InvalidOperationException(
+                    $"Secret file configured by {variableName} must contain valid UTF-8 text.");
+            }
+
+            if (value.EndsWith("\r\n", StringComparison.Ordinal))
+            {
+                value = value.Substring(0, value.Length - 2);
+            }
+            else if (value.EndsWith('\n'))
+            {
+                value = value.Substring(0, value.Length - 1);
+            }
+
+            if (value.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Secret file configured by {variableName} must not be empty.");
+            }
+
+            if (value.Contains('\0'))
+            {
+                throw new InvalidOperationException(
+                    $"Secret file configured by {variableName} contains invalid content.");
+            }
+
+            return value;
+        }
+        catch (IOException)
+        {
+            throw SecretFileReadFailure(variableName);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            throw SecretFileReadFailure(variableName);
+        }
+        catch (ArgumentException)
+        {
+            throw SecretFileReadFailure(variableName);
+        }
+        catch (NotSupportedException)
+        {
+            throw SecretFileReadFailure(variableName);
+        }
+    }
+
+    private static InvalidOperationException SecretFileReadFailure(string variableName)
+        => new(
+            $"Unable to read secret file configured by {variableName}. " +
+            "Ensure the file exists and is readable by the BeanBot process.");
 
     private static IEnumerable<string> DefaultDotEnvCandidatePaths()
     {
@@ -187,5 +340,6 @@ internal static class BeanBotConfiguration
     private sealed record ConfigurationKey(
         string CanonicalName,
         string LegacyName,
-        string OptionPath);
+        string OptionPath,
+        string? FileName = null);
 }
