@@ -16,14 +16,22 @@ internal sealed class InteractionCommandRegistration
     public InteractionCommandRegistration(
         Func<Task> registerCommands,
         TimeSpan timeout,
-        CancellationToken applicationStopping = default,
-        Func<Task, TimeSpan, Task>? waitForRegistration = null)
+        CancellationToken applicationStopping = default)
+        : this(registerCommands, timeout, WaitForRegistrationAsync, applicationStopping)
+    {
+    }
+
+    internal InteractionCommandRegistration(
+        Func<Task> registerCommands,
+        TimeSpan timeout,
+        Func<Task, TimeSpan, Task> waitForRegistration,
+        CancellationToken applicationStopping = default)
     {
         _registerCommands = registerCommands ?? throw new ArgumentNullException(nameof(registerCommands));
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
         _timeout = timeout;
+        _waitForRegistration = waitForRegistration ?? throw new ArgumentNullException(nameof(waitForRegistration));
         _applicationStopping = applicationStopping;
-        _waitForRegistration = waitForRegistration ?? WaitForRegistrationAsync;
     }
 
     internal bool HasPendingOperations
