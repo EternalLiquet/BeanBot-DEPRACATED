@@ -75,6 +75,7 @@ public class InteractionCommandRegistrationTests
     {
         var calls = 0;
         var stalledAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waitController = new RegistrationWaitController();
         var registration = new InteractionCommandRegistration(
             () =>
             {
@@ -84,10 +85,14 @@ public class InteractionCommandRegistrationTests
                     : Task.CompletedTask;
             },
             TimeSpan.FromSeconds(30),
-            waitForRegistration: CreateTimeoutFirstWaiter());
+            waitController.WaitAsync);
 
-        await Assert.ThrowsAsync<TimeoutException>(() => registration.EnsureRegisteredAsync());
+        var firstWaiter = registration.EnsureRegisteredAsync();
+        Assert.Equal(1, calls);
         Assert.False(stalledAttempt.Task.IsCompleted);
+
+        waitController.TimeoutFirstWait();
+        await Assert.ThrowsAsync<TimeoutException>(() => firstWaiter);
 
         var secondWaiter = registration.EnsureRegisteredAsync();
         Assert.Equal(1, calls);
@@ -104,6 +109,7 @@ public class InteractionCommandRegistrationTests
     {
         var calls = 0;
         var stalledAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waitController = new RegistrationWaitController();
         var registration = new InteractionCommandRegistration(
             () =>
             {
@@ -111,10 +117,14 @@ public class InteractionCommandRegistrationTests
                 return stalledAttempt.Task;
             },
             TimeSpan.FromSeconds(30),
-            waitForRegistration: CreateTimeoutFirstWaiter());
+            waitController.WaitAsync);
 
-        await Assert.ThrowsAsync<TimeoutException>(() => registration.EnsureRegisteredAsync());
+        var firstWaiter = registration.EnsureRegisteredAsync();
+        Assert.Equal(1, calls);
         Assert.False(stalledAttempt.Task.IsCompleted);
+
+        waitController.TimeoutFirstWait();
+        await Assert.ThrowsAsync<TimeoutException>(() => firstWaiter);
 
         stalledAttempt.SetResult();
         await stalledAttempt.Task;
@@ -134,6 +144,7 @@ public class InteractionCommandRegistrationTests
     {
         var calls = 0;
         var stalledAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waitController = new RegistrationWaitController();
         var registration = new InteractionCommandRegistration(
             () =>
             {
@@ -143,10 +154,14 @@ public class InteractionCommandRegistrationTests
                     : Task.CompletedTask;
             },
             TimeSpan.FromSeconds(30),
-            waitForRegistration: CreateTimeoutFirstWaiter());
+            waitController.WaitAsync);
 
-        await Assert.ThrowsAsync<TimeoutException>(() => registration.EnsureRegisteredAsync());
+        var firstWaiter = registration.EnsureRegisteredAsync();
+        Assert.Equal(1, calls);
         Assert.False(stalledAttempt.Task.IsCompleted);
+
+        waitController.TimeoutFirstWait();
+        await Assert.ThrowsAsync<TimeoutException>(() => firstWaiter);
 
         stalledAttempt.SetException(new InvalidOperationException("late failure"));
         await Assert.ThrowsAsync<InvalidOperationException>(() => stalledAttempt.Task);
@@ -155,11 +170,47 @@ public class InteractionCommandRegistrationTests
         Assert.Equal(2, calls);
     }
 
-    private static Func<Task, TimeSpan, Task> CreateTimeoutFirstWaiter()
+    [Fact]
+    public async Task EnsureRegisteredAsync_DeterministicTimeoutLifecycle_IsStableAcrossRepeatedRuns()
     {
-        var waitCalls = 0;
-        return (registrationTask, _) => Interlocked.Increment(ref waitCalls) == 1
-            ? Task.FromException(new TimeoutException("deterministic test timeout"))
-            : registrationTask;
+        const int iterations = 100;
+        for (var iteration = 0; iteration < iterations; iteration++)
+        {
+            var calls = 0;
+            var stalledAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var waitController = new RegistrationWaitController();
+            var registration = new InteractionCommandRegistration(
+                () =>
+                {
+                    calls++;
+                    return stalledAttempt.Task;
+                },
+                TimeSpan.FromSeconds(30),
+                waitController.WaitAsync);
+
+            var firstWaiter = registration.EnsureRegisteredAsync();
+            waitController.TimeoutFirstWait();
+            await Assert.ThrowsAsync<TimeoutException>(() => firstWaiter);
+
+            var secondWaiter = registration.EnsureRegisteredAsync();
+            stalledAttempt.SetResult();
+
+            Assert.True(await secondWaiter);
+            Assert.Equal(1, calls);
+        }
+    }
+
+    private sealed class RegistrationWaitController
+    {
+        private readonly TaskCompletionSource _firstWait = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _waitCalls;
+
+        public Task WaitAsync(Task registrationTask, TimeSpan _)
+            => Interlocked.Increment(ref _waitCalls) == 1
+                ? _firstWait.Task
+                : registrationTask;
+
+        public void TimeoutFirstWait()
+            => _firstWait.SetException(new TimeoutException("deterministic test timeout"));
     }
 }
