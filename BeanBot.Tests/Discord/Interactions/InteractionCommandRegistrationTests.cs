@@ -83,9 +83,12 @@ public class InteractionCommandRegistrationTests
                     ? stalledAttempt.Task
                     : Task.CompletedTask;
             },
-            TimeSpan.FromMilliseconds(20));
+            TimeSpan.FromSeconds(30),
+            waitForRegistration: CreateTimeoutFirstWaiter());
 
         await Assert.ThrowsAsync<TimeoutException>(() => registration.EnsureRegisteredAsync());
+        Assert.False(stalledAttempt.Task.IsCompleted);
+
         var secondWaiter = registration.EnsureRegisteredAsync();
         Assert.Equal(1, calls);
 
@@ -107,9 +110,12 @@ public class InteractionCommandRegistrationTests
                 calls++;
                 return stalledAttempt.Task;
             },
-            TimeSpan.FromMilliseconds(20));
+            TimeSpan.FromSeconds(30),
+            waitForRegistration: CreateTimeoutFirstWaiter());
 
         await Assert.ThrowsAsync<TimeoutException>(() => registration.EnsureRegisteredAsync());
+        Assert.False(stalledAttempt.Task.IsCompleted);
+
         stalledAttempt.SetResult();
         await stalledAttempt.Task;
 
@@ -136,13 +142,24 @@ public class InteractionCommandRegistrationTests
                     ? stalledAttempt.Task
                     : Task.CompletedTask;
             },
-            TimeSpan.FromMilliseconds(20));
+            TimeSpan.FromSeconds(30),
+            waitForRegistration: CreateTimeoutFirstWaiter());
 
         await Assert.ThrowsAsync<TimeoutException>(() => registration.EnsureRegisteredAsync());
+        Assert.False(stalledAttempt.Task.IsCompleted);
+
         stalledAttempt.SetException(new InvalidOperationException("late failure"));
         await Assert.ThrowsAsync<InvalidOperationException>(() => stalledAttempt.Task);
 
         Assert.True(await registration.EnsureRegisteredAsync());
         Assert.Equal(2, calls);
+    }
+
+    private static Func<Task, TimeSpan, Task> CreateTimeoutFirstWaiter()
+    {
+        var waitCalls = 0;
+        return (registrationTask, _) => Interlocked.Increment(ref waitCalls) == 1
+            ? Task.FromException(new TimeoutException("deterministic test timeout"))
+            : registrationTask;
     }
 }
