@@ -205,6 +205,27 @@ public sealed partial class LegacyReactionRoleSetupDiscordOperations
         }
     }
 
+    internal async Task WaitForOwnedOperationsAsync(CancellationToken cancellationToken = default)
+    {
+        while (true)
+        {
+            Task[] completions;
+            lock (_gate)
+            {
+                if (_ownedOperations.Count == 0)
+                {
+                    return;
+                }
+
+                completions = _ownedOperations.Values
+                    .Select(static operation => operation.Completion.Task)
+                    .ToArray();
+            }
+
+            await Task.WhenAll(completions).WaitAsync(cancellationToken);
+        }
+    }
+
     private OwnedOperation ReserveOperation(string operationName)
     {
         lock (_gate)
@@ -250,6 +271,8 @@ public sealed partial class LegacyReactionRoleSetupDiscordOperations
         {
             _ownedOperations.Remove(operation.Id);
         }
+
+        operation.Completion.TrySetResult();
     }
 
     [LoggerMessage(
@@ -287,6 +310,7 @@ public sealed partial class LegacyReactionRoleSetupDiscordOperations
 
         public long Id { get; }
         public string OperationName { get; }
+        public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int WaiterDetached;
     }
 }
