@@ -300,9 +300,9 @@ public class LegacyReactionRoleSetupDiscordOperationsTests
         int capacity = 4,
         TimeSpan? operationTimeout = null,
         TimeSpan? interReactionDelay = null,
-        CancellationToken applicationStopping = default,
         Func<TimeSpan, CancellationToken, Task>? delayAsync = null,
-        Action<CancellationTokenSource, TimeSpan>? scheduleTimeout = null)
+        Action<CancellationTokenSource, TimeSpan>? scheduleTimeout = null,
+        CancellationToken applicationStopping = default)
         => new(
             logger,
             capacity,
