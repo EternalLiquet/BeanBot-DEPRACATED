@@ -132,7 +132,7 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<PunProvider>();
         services.AddSingleton<IPunProvider>(provider =>
             provider.GetRequiredService<PunProvider>());
-        services.AddSingleton(ExternalMediaCommandOptions.Default);
+        services.AddSingleton<ExternalMediaCommandOptions.Default);
         services.AddSingleton<ExternalMediaAdmissionGuard>();
         services.AddSingleton<ExternalImageClient>();
         services.AddSingleton<IExternalImageClient>(provider =>
@@ -150,6 +150,7 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<FortuneResponseEditService>();
         services.AddSingleton<ReactionRoleRepository>();
         services.AddSingleton<ReactionRoleService>();
+        services.AddSingleton<LegacyReactionRoleSetupDiscordOperations>();
         services.AddSingleton<RoleMenuRepository>();
         services.AddSingleton<RoleMenuDraftRegistry>();
         services.AddSingleton(_ => new RoleMenuMutationCoordinator());
