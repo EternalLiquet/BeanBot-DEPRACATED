@@ -217,9 +217,7 @@ public sealed partial class LegacyReactionRoleSetupDiscordOperations
                     return;
                 }
 
-                completions = _ownedOperations.Values
-                    .Select(static operation => operation.Completion.Task)
-                    .ToArray();
+                completions = [.. _ownedOperations.Values.Select(static operation => operation.Completion.Task)];
             }
 
             await Task.WhenAll(completions).WaitAsync(cancellationToken);
