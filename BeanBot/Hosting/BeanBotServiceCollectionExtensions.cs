@@ -132,7 +132,7 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<PunProvider>();
         services.AddSingleton<IPunProvider>(provider =>
             provider.GetRequiredService<PunProvider>());
-        services.AddSingleton<ExternalMediaCommandOptions.Default);
+        services.AddSingleton(ExternalMediaCommandOptions.Default);
         services.AddSingleton<ExternalMediaAdmissionGuard>();
         services.AddSingleton<ExternalImageClient>();
         services.AddSingleton<IExternalImageClient>(provider =>
