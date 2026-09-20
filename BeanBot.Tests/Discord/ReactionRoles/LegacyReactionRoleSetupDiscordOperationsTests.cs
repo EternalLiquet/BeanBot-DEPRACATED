@@ -107,6 +107,7 @@ public class LegacyReactionRoleSetupDiscordOperationsTests
 
         var lateFailure = new InvalidOperationException("late Discord failure");
         discordOperation.SetException(lateFailure);
+        await WaitForOwnedOperationsToDrainAsync(operations);
 
         Assert.Equal(0, operations.OwnedOperationCount);
         var logEntry = Assert.Single(
@@ -153,6 +154,7 @@ public class LegacyReactionRoleSetupDiscordOperationsTests
         Assert.Equal(1, attempts);
 
         discordOperation.SetCanceled(requestToken);
+        await WaitForOwnedOperationsToDrainAsync(operations);
         Assert.False(operations.HasPendingOperations);
     }
 
@@ -238,6 +240,7 @@ public class LegacyReactionRoleSetupDiscordOperationsTests
         Assert.Equal(1, operations.OwnedOperationCount);
 
         stalledReaction.SetCanceled();
+        await WaitForOwnedOperationsToDrainAsync(operations);
         Assert.False(operations.HasPendingOperations);
     }
 
@@ -277,6 +280,7 @@ public class LegacyReactionRoleSetupDiscordOperationsTests
 
         var lateFailure = new InvalidOperationException("late compensation failure");
         deleteOperation.SetException(lateFailure);
+        await WaitForOwnedOperationsToDrainAsync(operations);
 
         Assert.False(operations.HasPendingOperations);
         var logEntry = Assert.Single(
@@ -293,6 +297,13 @@ public class LegacyReactionRoleSetupDiscordOperationsTests
         Assert.True(LegacyReactionRoleSetupDiscordOperations.DefaultOperationTimeout <= TimeSpan.FromSeconds(30));
         Assert.True(LegacyReactionRoleSetupDiscordOperations.DefaultInterReactionDelay >= TimeSpan.Zero);
         Assert.True(LegacyReactionRoleSetupDiscordOperations.DefaultInterReactionDelay <= TimeSpan.FromSeconds(1));
+    }
+
+    private static async Task WaitForOwnedOperationsToDrainAsync(
+        LegacyReactionRoleSetupDiscordOperations operations)
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        await operations.WaitForOwnedOperationsAsync(cancellation.Token);
     }
 
     private static LegacyReactionRoleSetupDiscordOperations CreateOperations(
