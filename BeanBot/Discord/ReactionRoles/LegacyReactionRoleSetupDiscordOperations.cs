@@ -50,10 +50,10 @@ public sealed partial class LegacyReactionRoleSetupDiscordOperations
             DefaultCapacity,
             DefaultOperationTimeout,
             DefaultInterReactionDelay,
-            applicationLifetime?.ApplicationStopping
-                ?? throw new ArgumentNullException(nameof(applicationLifetime)),
             static (delay, cancellationToken) => Task.Delay(delay, cancellationToken),
-            static (cancellation, timeout) => cancellation.CancelAfter(timeout))
+            static (cancellation, timeout) => cancellation.CancelAfter(timeout),
+            applicationLifetime?.ApplicationStopping
+                ?? throw new ArgumentNullException(nameof(applicationLifetime)))
     {
     }
 
@@ -62,18 +62,14 @@ public sealed partial class LegacyReactionRoleSetupDiscordOperations
         int capacity,
         TimeSpan operationTimeout,
         TimeSpan interReactionDelay,
-        CancellationToken applicationStopping,
         Func<TimeSpan, CancellationToken, Task> delayAsync,
-        Action<CancellationTokenSource, TimeSpan> scheduleTimeout)
+        Action<CancellationTokenSource, TimeSpan> scheduleTimeout,
+        CancellationToken applicationStopping)
     {
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(operationTimeout, TimeSpan.Zero);
-        if (interReactionDelay < TimeSpan.Zero)
-        {
-            throw new ArgumentOutOfRangeException(nameof(interReactionDelay));
-        }
-
+        ArgumentOutOfRangeException.ThrowIfLessThan(interReactionDelay, TimeSpan.Zero);
         ArgumentNullException.ThrowIfNull(delayAsync);
         ArgumentNullException.ThrowIfNull(scheduleTimeout);
 
