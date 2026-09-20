@@ -308,9 +308,9 @@ public class LegacyReactionRoleSetupDiscordOperationsTests
             capacity,
             operationTimeout ?? TimeSpan.FromSeconds(1),
             interReactionDelay ?? TimeSpan.Zero,
-            applicationStopping,
             delayAsync ?? NoDelayAsync,
-            scheduleTimeout ?? DoNotScheduleTimeout);
+            scheduleTimeout ?? DoNotScheduleTimeout,
+            applicationStopping);
 
     private static Task NoDelayAsync(TimeSpan delay, CancellationToken cancellationToken)
     {
