@@ -4,6 +4,7 @@ using BeanBot.Discord.Interactions;
 using BeanBot.Discord.Lifecycle;
 using BeanBot.Discord.Messaging;
 using BeanBot.Discord.Puns;
+using BeanBot.Discord.ReactionRoles;
 using BeanBot.Health;
 using BeanBot.Logging;
 using Discord.WebSocket;
@@ -24,6 +25,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     private readonly CommandHandler _commandHandler;
     private readonly InteractionHandler[] _interactionHandlers;
     private readonly LegacyCommandReplySender _commandReplySender;
+    private readonly LegacyReactionRoleSetupDiscordOperations _legacyReactionRoleSetupDiscordOperations;
     private readonly DailyPunService _dailyPunService;
     private readonly FortuneMessageEditHandler _fortuneMessageEditHandler;
     private readonly NewMemberHandler _newMemberHandler;
@@ -47,6 +49,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         CommandHandler commandHandler,
         IEnumerable<InteractionHandler> interactionHandlers,
         LegacyCommandReplySender commandReplySender,
+        LegacyReactionRoleSetupDiscordOperations legacyReactionRoleSetupDiscordOperations,
         DailyPunService dailyPunService,
         FortuneMessageEditHandler fortuneMessageEditHandler,
         NewMemberHandler newMemberHandler,
@@ -69,6 +72,8 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         // The core host can be composed without interactions; every registered handler owns teardown safety.
         _interactionHandlers = interactionHandlers?.ToArray() ?? throw new ArgumentNullException(nameof(interactionHandlers));
         _commandReplySender = commandReplySender ?? throw new ArgumentNullException(nameof(commandReplySender));
+        _legacyReactionRoleSetupDiscordOperations = legacyReactionRoleSetupDiscordOperations
+            ?? throw new ArgumentNullException(nameof(legacyReactionRoleSetupDiscordOperations));
         _dailyPunService = dailyPunService ?? throw new ArgumentNullException(nameof(dailyPunService));
         _fortuneMessageEditHandler = fortuneMessageEditHandler ?? throw new ArgumentNullException(nameof(fortuneMessageEditHandler));
         _newMemberHandler = newMemberHandler ?? throw new ArgumentNullException(nameof(newMemberHandler));
@@ -85,6 +90,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
             || _newMemberWelcomeService.HasActiveDiscordOperation
             || _fortuneMessageEditHandler.HasInFlightOperations
             || _commandReplySender.HasPendingOperations
+            || _legacyReactionRoleSetupDiscordOperations.HasPendingOperations
             || _interactionHandlers.Any(handler => handler.HasPendingOperations)
             || _reactionRoleHandler.HasPendingOperations
             || _paginatorService.HasPendingOperations;
