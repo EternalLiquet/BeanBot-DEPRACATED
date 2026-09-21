@@ -1,3 +1,4 @@
+using System.Globalization;
 using BeanBot.Logging;
 using BeanBot.Persistence.Repositories;
 using Microsoft.Extensions.Hosting;
@@ -84,7 +85,7 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _options.Validate();
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _holderId = holderId ?? Guid.NewGuid().ToString("N");
+        _holderId = holderId ?? Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
         ArgumentException.ThrowIfNullOrWhiteSpace(_holderId);
     }
 
@@ -102,7 +103,7 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
     public async Task AcquireAsync(ulong botUserId, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        var botIdentity = botUserId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var botIdentity = botUserId.ToString(CultureInfo.InvariantCulture);
 
         await _lifecycleGate.WaitAsync(cancellationToken);
         try
@@ -190,10 +191,12 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
                     BeanBotLog.InstanceLeaseRenewalDrainTimedOut(_logger);
+                    ObserveLateFault(renewalTask);
                 }
                 catch (TimeoutException)
                 {
                     BeanBotLog.InstanceLeaseRenewalDrainTimedOut(_logger);
+                    ObserveLateFault(renewalTask);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -209,12 +212,9 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
 
             try
             {
-                using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                operationCancellation.CancelAfter(_options.OperationTimeout);
-                var released = await _store.TryReleaseAsync(
-                    botIdentity,
-                    _holderId,
-                    operationCancellation.Token);
+                var released = await RunBoundedStoreOperationAsync(
+                    token => _store.TryReleaseAsync(botIdentity, _holderId, token),
+                    cancellationToken);
                 if (released)
                 {
                     BeanBotLog.InstanceLeaseReleased(_logger, botIdentity);
@@ -224,9 +224,9 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
                     BeanBotLog.InstanceLeaseReleaseNotOwned(_logger, botIdentity);
                 }
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                BeanBotLog.InstanceLeaseReleaseFailed(_logger, botIdentity);
+                throw;
             }
             catch (Exception)
             {
@@ -279,18 +279,22 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
                     knownExpiryUtc = _knownExpiresAtUtc;
                 }
 
-                if (nowUtc >= knownExpiryUtc - _options.SafetyMargin)
+                var safetyDeadlineUtc = knownExpiryUtc - _options.SafetyMargin;
+                var remainingSafety = safetyDeadlineUtc - nowUtc;
+                if (remainingSafety <= TimeSpan.Zero)
                 {
                     LoseOwnership(botIdentity);
                     return;
                 }
 
+                using var safetyCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                safetyCancellation.CancelAfter(remainingSafety);
                 var requestedExpiryUtc = nowUtc + _options.LeaseDuration;
                 var confirmation = await TryRenewAndReconcileAsync(
                     botIdentity,
                     nowUtc,
                     requestedExpiryUtc,
-                    cancellationToken);
+                    safetyCancellation.Token);
                 if (confirmation.State == LeaseConfirmationState.Held)
                 {
                     lock (_syncRoot)
@@ -313,7 +317,7 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
 
                 BeanBotLog.InstanceLeaseRenewalUncertain(_logger, botIdentity);
                 uncertain = true;
-                if (_clock.UtcNow >= knownExpiryUtc - _options.SafetyMargin)
+                if (_clock.UtcNow >= safetyDeadlineUtc)
                 {
                     LoseOwnership(botIdentity);
                     return;
@@ -322,6 +326,10 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+        catch (Exception)
+        {
+            LoseOwnership(botIdentity);
         }
     }
 
@@ -344,25 +352,25 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
     {
         try
         {
-            using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            operationCancellation.CancelAfter(_options.OperationTimeout);
-            var result = await _store.TryAcquireAsync(
-                botIdentity,
-                _holderId,
-                nowUtc,
-                requestedExpiryUtc,
-                operationCancellation.Token);
+            var result = await RunBoundedStoreOperationAsync(
+                token => _store.TryAcquireAsync(
+                    botIdentity,
+                    _holderId,
+                    nowUtc,
+                    requestedExpiryUtc,
+                    token),
+                cancellationToken);
             return result == InstanceLeaseAcquireResult.Acquired
                 ? LeaseConfirmation.Held(requestedExpiryUtc)
                 : LeaseConfirmation.NotHeld();
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            return await ReconcileAsync(botIdentity);
+            throw;
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception)
         {
-            return await ReconcileAsync(botIdentity);
+            return await ReconcileAsync(botIdentity, cancellationToken);
         }
     }
 
@@ -374,34 +382,37 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
     {
         try
         {
-            using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            operationCancellation.CancelAfter(_options.OperationTimeout);
-            var renewed = await _store.TryRenewAsync(
-                botIdentity,
-                _holderId,
-                nowUtc,
-                requestedExpiryUtc,
-                operationCancellation.Token);
+            var renewed = await RunBoundedStoreOperationAsync(
+                token => _store.TryRenewAsync(
+                    botIdentity,
+                    _holderId,
+                    nowUtc,
+                    requestedExpiryUtc,
+                    token),
+                cancellationToken);
             return renewed
                 ? LeaseConfirmation.Held(requestedExpiryUtc)
                 : LeaseConfirmation.NotHeld();
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            return await ReconcileAsync(botIdentity);
+            throw;
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception)
         {
-            return await ReconcileAsync(botIdentity);
+            return await ReconcileAsync(botIdentity, cancellationToken);
         }
     }
 
-    private async Task<LeaseConfirmation> ReconcileAsync(string botIdentity)
+    private async Task<LeaseConfirmation> ReconcileAsync(
+        string botIdentity,
+        CancellationToken cancellationToken)
     {
         try
         {
-            using var reconciliationCancellation = new CancellationTokenSource(_options.OperationTimeout);
-            var snapshot = await _store.GetAsync(botIdentity, reconciliationCancellation.Token);
+            var snapshot = await RunBoundedStoreOperationAsync(
+                token => _store.GetAsync(botIdentity, token),
+                cancellationToken);
             if (snapshot is null ||
                 !string.Equals(snapshot.HolderId, _holderId, StringComparison.Ordinal) ||
                 snapshot.ExpiresAtUtc <= _clock.UtcNow)
@@ -411,9 +422,37 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
 
             return LeaseConfirmation.Held(snapshot.ExpiresAtUtc);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception)
         {
             return LeaseConfirmation.Unknown();
+        }
+    }
+
+    private async Task<T> RunBoundedStoreOperationAsync<T>(
+        Func<CancellationToken, Task<T>> beginOperation,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task<T>? operation = null;
+        try
+        {
+            operation = beginOperation(operationCancellation.Token);
+            return await operation.WaitAsync(_options.OperationTimeout, cancellationToken);
+        }
+        catch
+        {
+            operationCancellation.Cancel();
+            if (operation is { IsCompleted: false })
+            {
+                ObserveLateFault(operation);
+            }
+
+            throw;
         }
     }
 
@@ -431,6 +470,15 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
 
         BeanBotLog.InstanceLeaseLost(_logger, botIdentity);
         _hostLifetime.StopApplication();
+    }
+
+    private static void ObserveLateFault(Task operation)
+    {
+        _ = operation.ContinueWith(
+            completedTask => _ = completedTask.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private enum LeaseConfirmationState
