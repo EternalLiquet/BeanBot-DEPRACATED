@@ -75,11 +75,17 @@ internal sealed class BeanBotApplication : IBeanBotApplication
             BuildIdentity.Current.CommitSha);
         _runtime.SubscribeApplicationEvents();
         await _runtime.StartHealthServerAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         await _runtime.StartDiscordAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         await _runtime.AcquireInstanceLeaseAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         _runtime.StartGatewayRecovery();
+        cancellationToken.ThrowIfCancellationRequested();
         await _runtime.StartCommandServicesAsync();
+        cancellationToken.ThrowIfCancellationRequested();
         _runtime.StartEventAndBackgroundServices();
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
