@@ -101,6 +101,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime, IDisposable
             || _ownerErrorNotifier.HasActiveDiscordOperation
             || _discordOutageRecoveryNotifier.HasActiveDiscordOperation
             || Volatile.Read(ref _ownedReadyOperationCount) != 0
+            || _dailyPunService.HasActiveDiscordOperation
             || _newMemberWelcomeService.HasActiveDiscordOperation
             || _fortuneMessageEditHandler.HasInFlightOperations
             || _commandReplySender.HasPendingOperations
