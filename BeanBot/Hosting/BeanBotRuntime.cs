@@ -85,6 +85,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
 
     public bool HasActiveDiscordLifecycleOperation
         => _discordLifecycleCoordinator.HasActiveSequence
+            || _ownerErrorNotifier.HasActiveDiscordOperation
             || _newMemberWelcomeService.HasActiveDiscordOperation
             || _fortuneMessageEditHandler.HasInFlightOperations
             || _commandReplySender.HasPendingOperations
@@ -195,6 +196,9 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
 
     public Task FlushOwnerAlertsAsync()
         => _ownerErrorNotifier.FlushAsync(TimeSpan.FromSeconds(3));
+
+    public Task StopOwnerAlertsAsync()
+        => _ownerErrorNotifier.DisposeAsync().AsTask();
 
     public async Task StopDiscordAsync(CancellationToken cancellationToken)
     {
