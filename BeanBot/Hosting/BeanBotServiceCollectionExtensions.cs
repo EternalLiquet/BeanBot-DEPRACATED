@@ -60,6 +60,7 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<IMongoDatabase>(provider =>
             provider.GetRequiredService<MongoClient>().GetDatabase("BeanBotDB"));
         services.AddSingleton<IDailyPunClaimStore, MongoDailyPunClaimStore>();
+        services.AddSingleton<IInstanceLeaseStore, MongoInstanceLeaseStore>();
         services.AddSingleton<IMongoReadinessProbe, MongoReadinessProbe>();
         services.AddSingleton<MongoReadinessMonitor>();
 
@@ -94,7 +95,7 @@ internal static class BeanBotServiceCollectionExtensions
         });
         services.AddSingleton<IRecoveryDelay, TaskRecoveryDelay>();
 
-        services.AddSingleton<DiscordOutageStore>(provider => new DiscordOutageStore(
+        services.AddSingleton(DiscordOutageStore>(provider => new DiscordOutageStore(
             Path.GetFullPath(DirectorySetup.botBaseDirectory),
             provider.GetRequiredService<ILogger<DiscordOutageStore>>()));
         services.AddSingleton<IDiscordOutageStore>(provider =>
@@ -132,7 +133,7 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<PunProvider>();
         services.AddSingleton<IPunProvider>(provider =>
             provider.GetRequiredService<PunProvider>());
-        services.AddSingleton(ExternalMediaCommandOptions.Default);
+        services.AddSingleton<ExternalMediaCommandOptions.Default>();
         services.AddSingleton<ExternalMediaAdmissionGuard>();
         services.AddSingleton<ExternalImageClient>();
         services.AddSingleton<IExternalImageClient>(provider =>
@@ -155,6 +156,12 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton(_ => new RoleMenuMutationCoordinator());
         services.AddSingleton<DiscordMessageCleanupService>();
 
+        services.AddSingleton<IInstanceLeaseClock, SystemInstanceLeaseClock>();
+        services.AddSingleton(InstanceLeaseOptions.Default);
+        services.AddSingleton<BeanBotInstanceLease>();
+        services.AddSingleton<IInstanceLeaseHealth>(provider =>
+            provider.GetRequiredService<BeanBotInstanceLease>());
+
         services.AddSingleton<CommandHandler>();
         services.AddSingleton<DailyPunService>();
         services.AddSingleton<FortuneMessageEditHandler>();
@@ -165,6 +172,7 @@ internal static class BeanBotServiceCollectionExtensions
             provider.GetRequiredService<DiscordSocketClient>(),
             provider.GetRequiredService<DiscordConnectionHealth>(),
             provider.GetRequiredService<MongoReadinessMonitor>(),
+            provider.GetRequiredService<IInstanceLeaseHealth>(),
             provider.GetRequiredService<ILogger<HealthCheckServer>>()));
 
         services.AddSingleton<BeanBotRuntime>();
