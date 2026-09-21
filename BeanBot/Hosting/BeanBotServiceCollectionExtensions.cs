@@ -96,7 +96,9 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<IDiscordOutageStore>(provider => provider.GetRequiredService<DiscordOutageStore>());
         services.AddSingleton<DiscordOwnerAlertDelivery>();
         services.AddSingleton<IOwnerAlertDelivery>(provider => provider.GetRequiredService<DiscordOwnerAlertDelivery>());
-        services.AddSingleton<DiscordOwnerErrorNotifier>(provider => new DiscordOwnerErrorNotifier(provider.GetRequiredService<IOwnerAlertDelivery>()));
+        services.AddSingleton<DiscordOwnerErrorNotifier>(provider => new DiscordOwnerErrorNotifier(
+            provider.GetRequiredService<IOwnerAlertDelivery>(),
+            startAccepting: false));
         services.AddSingleton<IOwnerErrorNotifier>(provider => provider.GetRequiredService<DiscordOwnerErrorNotifier>());
         services.AddSingleton<DiscordOutageRecoveryNotifier>();
         services.AddSingleton<LogHandler>();
