@@ -12,7 +12,7 @@ using Microsoft.Extensions.Logging;
 
 namespace BeanBot.Hosting;
 
-internal sealed class BeanBotRuntime : IBeanBotRuntime
+internal sealed class BeanBotRuntime : IBeanBotRuntime, IDisposable
 {
     private readonly DiscordSocketClient _discordClient;
     private readonly DiscordConnectionHealth _discordConnectionHealth;
@@ -43,6 +43,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     private Task? _ownerAlertStopTask;
     private int _ownedReadyOperationCount;
     private int _sideEffectAdmissionStopped;
+    private int _disposed;
     private bool _canDisposeDiscordClient;
 
     public BeanBotRuntime(
@@ -289,6 +290,17 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     }
 
     public void DisposeDiscordClient() => _discordClient.Dispose();
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        _applicationStoppingRegistration.Dispose();
+        _sideEffectCancellation.Dispose();
+    }
 
     internal static async Task<bool> RunLeaseOwnedOperationAsync(
         IInstanceLeaseHealth leaseHealth,
