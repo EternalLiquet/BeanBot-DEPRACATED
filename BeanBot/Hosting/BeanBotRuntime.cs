@@ -118,6 +118,14 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         }
 
         await _instanceLease.AcquireAsync(botUser.Id, cancellationToken);
+
+        // Ready can arrive during Discord startup before lease ownership exists. Keep
+        // health observation active during startup, then replay only the side effects
+        // that are safe for the confirmed owner.
+        if (_discordConnectionHealth.CreateSnapshot(_discordClient).IsHealthy)
+        {
+            await RunLeaseOwnedOperationAsync(_instanceLease, ProcessOwnedDiscordReadyAsync);
+        }
     }
 
     public void StartGatewayRecovery() => _discordGatewayRecovery.StartMonitoring();
@@ -215,6 +223,30 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
 
     public void DisposeDiscordClient() => _discordClient.Dispose();
 
+    internal static async Task<bool> RunLeaseOwnedOperationAsync(
+        IInstanceLeaseHealth leaseHealth,
+        Func<Task> operation)
+    {
+        ArgumentNullException.ThrowIfNull(leaseHealth);
+        ArgumentNullException.ThrowIfNull(operation);
+        if (!leaseHealth.IsHeld)
+        {
+            return false;
+        }
+
+        await operation();
+        return true;
+    }
+
+    internal static bool RunLeaseOwnedOperation(
+        IInstanceLeaseHealth leaseHealth,
+        Func<bool> operation)
+    {
+        ArgumentNullException.ThrowIfNull(leaseHealth);
+        ArgumentNullException.ThrowIfNull(operation);
+        return leaseHealth.IsHeld && operation();
+    }
+
     internal static async Task RunBoundedShutdownOperationAsync(
         Func<Task> beginOperation,
         string operationName,
@@ -255,7 +287,6 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     private async Task OnDiscordReadyAsync()
     {
         _discordConnectionHealth.MarkReady();
-        _discordGatewayRecovery.NotifyReady();
         if (_logger.IsEnabled(LogLevel.Information))
         {
             var loginState = _discordClient.LoginState;
@@ -265,6 +296,13 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
                 loginState,
                 connectionState);
         }
+
+        await RunLeaseOwnedOperationAsync(_instanceLease, ProcessOwnedDiscordReadyAsync);
+    }
+
+    private async Task ProcessOwnedDiscordReadyAsync()
+    {
+        _discordGatewayRecovery.NotifyReady();
         try
         {
             await _discordOutageRecoveryNotifier.NotifyIfOutageRecoveredAsync(DateTimeOffset.UtcNow);
@@ -297,7 +335,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
                 exception);
         }
 
-        _discordGatewayRecovery.StartMonitoring();
+        _ = RunLeaseOwnedOperation(_instanceLease, _discordGatewayRecovery.StartMonitoring);
         return Task.CompletedTask;
     }
 
