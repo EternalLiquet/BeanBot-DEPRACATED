@@ -155,10 +155,7 @@ internal sealed class MongoInstanceLeaseStore : IInstanceLeaseStore
             throw new ArgumentException("Instance lease timestamps must be UTC.");
         }
 
-        if (expiresAtUtc <= nowUtc)
-        {
-            throw new ArgumentOutOfRangeException(nameof(expiresAtUtc));
-        }
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(expiresAtUtc, nowUtc);
     }
 
     internal sealed class InstanceLeaseDocument
