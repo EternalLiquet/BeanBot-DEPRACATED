@@ -107,6 +107,37 @@ public class BeanBotInstanceLeaseApplicationTests
         Assert.DoesNotContain("stop-discord", runtime.Calls);
     }
 
+    [Fact]
+    public async Task StopAsync_OwnerAlertDrainFailureKeepsLeaseForExpiryFallback()
+    {
+        var failure = new InvalidOperationException("owner alert drain failed");
+        var runtime = new RecordingRuntime { OwnerAlertFlushFailure = failure };
+        var application = new BeanBotApplication(runtime, NullLogger<BeanBotApplication>.Instance);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => application.StopAsync(CancellationToken.None));
+
+        Assert.Same(failure, exception);
+        Assert.Contains("skip-lease-release", runtime.Calls);
+        Assert.DoesNotContain("release-lease", runtime.Calls);
+        Assert.Contains("stop-health", runtime.Calls);
+    }
+
+    [Fact]
+    public async Task StopAsync_PreCanceledHostTokenKeepsLeaseForExpiryFallback()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var runtime = new RecordingRuntime();
+        var application = new BeanBotApplication(runtime, NullLogger<BeanBotApplication>.Instance);
+
+        await application.StopAsync(cancellation.Token);
+
+        Assert.Contains("skip-lease-release", runtime.Calls);
+        Assert.DoesNotContain("release-lease", runtime.Calls);
+        Assert.DoesNotContain("flush-alerts", runtime.Calls);
+    }
+
     private sealed class RecordingRuntime : IBeanBotRuntime
     {
         public List<string> Calls { get; } = [];
@@ -114,6 +145,7 @@ public class BeanBotInstanceLeaseApplicationTests
         public bool CanDisposeDiscordClient => true;
         public bool CommandServicesDrained { get; init; } = true;
         public InvalidOperationException? LeaseAcquisitionFailure { get; init; }
+        public InvalidOperationException? OwnerAlertFlushFailure { get; init; }
 
         public void SubscribeApplicationEvents() => Calls.Add("subscribe-events");
         public Task StartHealthServerAsync(CancellationToken cancellationToken) => RecordAsync("start-health");
@@ -150,7 +182,15 @@ public class BeanBotInstanceLeaseApplicationTests
         public Task ReleaseInstanceLeaseAsync(CancellationToken cancellationToken) => RecordAsync("release-lease");
         public void SkipInstanceLeaseRelease() => Calls.Add("skip-lease-release");
         public Task StopHealthServerAsync(CancellationToken cancellationToken) => RecordAsync("stop-health");
-        public Task FlushOwnerAlertsAsync() => RecordAsync("flush-alerts");
+
+        public Task FlushOwnerAlertsAsync()
+        {
+            Calls.Add("flush-alerts");
+            return OwnerAlertFlushFailure is null
+                ? Task.CompletedTask
+                : Task.FromException(OwnerAlertFlushFailure);
+        }
+
         public Task StopDiscordAsync(CancellationToken cancellationToken) => RecordAsync("stop-discord");
         public void DisposeDiscordClient() => Calls.Add("dispose-discord");
 
