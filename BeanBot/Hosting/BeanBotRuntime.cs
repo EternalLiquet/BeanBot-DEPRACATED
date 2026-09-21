@@ -21,6 +21,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     private readonly DiscordStartupService _discordStartupService;
     private readonly DiscordOwnerErrorNotifier _ownerErrorNotifier;
     private readonly HealthCheckServer _healthCheckServer;
+    private readonly BeanBotInstanceLease _instanceLease;
     private readonly CommandHandler _commandHandler;
     private readonly InteractionHandler[] _interactionHandlers;
     private readonly LegacyCommandReplySender _commandReplySender;
@@ -44,6 +45,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         DiscordStartupService discordStartupService,
         DiscordOwnerErrorNotifier ownerErrorNotifier,
         HealthCheckServer healthCheckServer,
+        BeanBotInstanceLease instanceLease,
         CommandHandler commandHandler,
         IEnumerable<InteractionHandler> interactionHandlers,
         LegacyCommandReplySender commandReplySender,
@@ -65,6 +67,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         _discordStartupService = discordStartupService ?? throw new ArgumentNullException(nameof(discordStartupService));
         _ownerErrorNotifier = ownerErrorNotifier ?? throw new ArgumentNullException(nameof(ownerErrorNotifier));
         _healthCheckServer = healthCheckServer ?? throw new ArgumentNullException(nameof(healthCheckServer));
+        _instanceLease = instanceLease ?? throw new ArgumentNullException(nameof(instanceLease));
         _commandHandler = commandHandler ?? throw new ArgumentNullException(nameof(commandHandler));
         // The core host can be composed without interactions; every registered handler owns teardown safety.
         _interactionHandlers = interactionHandlers?.ToArray() ?? throw new ArgumentNullException(nameof(interactionHandlers));
@@ -104,6 +107,18 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
 
     public Task StartDiscordAsync(CancellationToken cancellationToken)
         => _discordStartupService.StartAsync(cancellationToken);
+
+    public async Task AcquireInstanceLeaseAsync(CancellationToken cancellationToken)
+    {
+        var botUser = _discordClient.CurrentUser;
+        if (botUser is null)
+        {
+            throw new InvalidOperationException(
+                "Discord startup completed without an authenticated bot identity; active-instance ownership cannot be established.");
+        }
+
+        await _instanceLease.AcquireAsync(botUser.Id, cancellationToken);
+    }
 
     public void StartGatewayRecovery() => _discordGatewayRecovery.StartMonitoring();
 
@@ -160,6 +175,12 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     }
 
     public Task StopPunServiceAsync() => _dailyPunService.DisposeAsync().AsTask();
+
+    public Task ReleaseInstanceLeaseAsync(CancellationToken cancellationToken)
+        => _instanceLease.ReleaseAsync(cancellationToken);
+
+    public void SkipInstanceLeaseRelease()
+        => BeanBotLog.InstanceLeaseReleaseSkipped(_logger);
 
     public Task StopHealthServerAsync(CancellationToken cancellationToken)
         => _healthCheckServer.StopAsync(cancellationToken);
