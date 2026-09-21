@@ -63,8 +63,8 @@ public class BeanBotApplicationTests
                 "stop-recovery",
                 "unsubscribe-events",
                 "stop-pun",
-                "stop-health",
                 "flush-alerts",
+                "stop-health",
                 "stop-discord",
                 "dispose-discord",
                 "flush-alerts"
@@ -283,7 +283,8 @@ public class BeanBotApplicationTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => application.StopAsync(cancellation.Token));
 
-        Assert.DoesNotContain("flush-alerts", runtime.Calls);
+        Assert.Equal(1, runtime.Calls.Count(call => call == "flush-alerts"));
+        Assert.True(runtime.Calls.IndexOf("flush-alerts") < runtime.Calls.IndexOf("stop-health"));
         Assert.DoesNotContain("stop-discord", runtime.Calls);
         Assert.DoesNotContain("dispose-discord", runtime.Calls);
         Assert.False(runtime.HealthStopTokenWasAlreadyCanceled);
