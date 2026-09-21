@@ -222,7 +222,7 @@ public sealed class MongoInstanceLeaseStoreIntegrationTests
 
     private TestDatabaseScope CreateScope()
     {
-        var databaseName = $"BeanBotInstanceLeaseIntegration_{Guid.NewGuid():N}";
+        var databaseName = $"BeanBotLease_{Guid.NewGuid():N}";
         var client = new MongoClient(_fixture.ConnectionString);
         return new TestDatabaseScope(client, client.GetDatabase(databaseName), databaseName);
     }
