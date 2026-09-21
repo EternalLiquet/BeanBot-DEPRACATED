@@ -11,6 +11,7 @@ internal interface IBeanBotRuntime
     void SubscribeApplicationEvents();
     Task StartHealthServerAsync(CancellationToken cancellationToken);
     Task StartDiscordAsync(CancellationToken cancellationToken);
+    Task AcquireInstanceLeaseAsync(CancellationToken cancellationToken);
     void StartGatewayRecovery();
     Task StartCommandServicesAsync();
     void StartEventAndBackgroundServices();
@@ -25,6 +26,8 @@ internal interface IBeanBotRuntime
     Task StopGatewayRecoveryAsync();
     void UnsubscribeApplicationEvents();
     Task StopPunServiceAsync();
+    Task ReleaseInstanceLeaseAsync(CancellationToken cancellationToken);
+    void SkipInstanceLeaseRelease();
     Task StopHealthServerAsync(CancellationToken cancellationToken);
     Task FlushOwnerAlertsAsync();
     Task StopDiscordAsync(CancellationToken cancellationToken);
@@ -70,6 +73,7 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         _runtime.SubscribeApplicationEvents();
         await _runtime.StartHealthServerAsync(cancellationToken);
         await _runtime.StartDiscordAsync(cancellationToken);
+        await _runtime.AcquireInstanceLeaseAsync(cancellationToken);
         _runtime.StartGatewayRecovery();
         await _runtime.StartCommandServicesAsync();
         _runtime.StartEventAndBackgroundServices();
@@ -154,8 +158,25 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         await RunStageAsync("gateway-recovery", _runtime.StopGatewayRecoveryAsync);
         await RunSynchronousStageAsync("application-events", _runtime.UnsubscribeApplicationEvents);
         await RunStageAsync("pun-service", _runtime.StopPunServiceAsync);
+        await RunStageAsync("owner-alerts-before-lease-release", _runtime.FlushOwnerAlertsAsync, false);
+
+        var canReleaseInstanceLease = false;
+        await RunSynchronousStageAsync(
+            "instance-lease-release-state",
+            () => canReleaseInstanceLease = commandServicesDrained &&
+                !_runtime.HasActiveDiscordLifecycleOperation);
+        if (canReleaseInstanceLease)
+        {
+            await RunStageAsync(
+                "instance-lease-release",
+                () => _runtime.ReleaseInstanceLeaseAsync(CancellationToken.None));
+        }
+        else
+        {
+            await RunSynchronousStageAsync("instance-lease-release-skipped", _runtime.SkipInstanceLeaseRelease);
+        }
+
         await RunStageAsync("health-server", StopHealthServerAsync);
-        await RunStageAsync("owner-alerts-before-discord", _runtime.FlushOwnerAlertsAsync, false);
 
         var canStopDiscord = false;
         await RunSynchronousStageAsync(
