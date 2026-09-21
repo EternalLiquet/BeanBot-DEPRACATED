@@ -34,9 +34,6 @@ internal static class BeanBotServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
 
-        // Register the client as an existing singleton so the host container does not
-        // dispose it automatically. BeanBotApplication owns its conditional teardown
-        // because a timed-out Discord.Net startup operation may still be using it.
         var discordClient = new DiscordSocketClient(DiscordSocketConfiguration.Create());
         services.AddSingleton(discordClient);
 
@@ -77,11 +74,9 @@ internal static class BeanBotServiceCollectionExtensions
                 provider.GetRequiredService<DiscordLifecycleCoordinator>(),
                 provider.GetRequiredService<ILogger<DiscordStartupLifecycle>>());
         });
-        services.AddSingleton<IDiscordStartupLifecycle>(provider =>
-            provider.GetRequiredService<DiscordStartupLifecycle>());
+        services.AddSingleton<IDiscordStartupLifecycle>(provider => provider.GetRequiredService<DiscordStartupLifecycle>());
         services.AddSingleton<IDiscordStartupDelay, DiscordStartupDelay>();
         services.AddSingleton<DiscordStartupService>();
-
         services.AddSingleton(DiscordGatewayRecoveryOptions.Default);
         services.AddSingleton<IDiscordGatewayLifecycle>(provider =>
         {
@@ -95,25 +90,19 @@ internal static class BeanBotServiceCollectionExtensions
         });
         services.AddSingleton<IRecoveryDelay, TaskRecoveryDelay>();
 
-        services.AddSingleton(DiscordOutageStore>(provider => new DiscordOutageStore(
+        services.AddSingleton<DiscordOutageStore>(provider => new DiscordOutageStore(
             Path.GetFullPath(DirectorySetup.botBaseDirectory),
             provider.GetRequiredService<ILogger<DiscordOutageStore>>()));
-        services.AddSingleton<IDiscordOutageStore>(provider =>
-            provider.GetRequiredService<DiscordOutageStore>());
-
+        services.AddSingleton<IDiscordOutageStore>(provider => provider.GetRequiredService<DiscordOutageStore>());
         services.AddSingleton<DiscordOwnerAlertDelivery>();
-        services.AddSingleton<IOwnerAlertDelivery>(provider =>
-            provider.GetRequiredService<DiscordOwnerAlertDelivery>());
-        services.AddSingleton<DiscordOwnerErrorNotifier>(provider =>
-            new DiscordOwnerErrorNotifier(provider.GetRequiredService<IOwnerAlertDelivery>()));
-        services.AddSingleton<IOwnerErrorNotifier>(provider =>
-            provider.GetRequiredService<DiscordOwnerErrorNotifier>());
+        services.AddSingleton<IOwnerAlertDelivery>(provider => provider.GetRequiredService<DiscordOwnerAlertDelivery>());
+        services.AddSingleton<DiscordOwnerErrorNotifier>(provider => new DiscordOwnerErrorNotifier(provider.GetRequiredService<IOwnerAlertDelivery>()));
+        services.AddSingleton<IOwnerErrorNotifier>(provider => provider.GetRequiredService<DiscordOwnerErrorNotifier>());
         services.AddSingleton<DiscordOutageRecoveryNotifier>();
         services.AddSingleton<LogHandler>();
         services.AddSingleton<LegacyCommandReplySender>();
         services.AddSingleton<DiscordLegacyCommandFeedbackDelivery>();
-        services.AddSingleton<ILegacyCommandFeedbackDelivery>(provider =>
-            provider.GetRequiredService<DiscordLegacyCommandFeedbackDelivery>());
+        services.AddSingleton<ILegacyCommandFeedbackDelivery>(provider => provider.GetRequiredService<DiscordLegacyCommandFeedbackDelivery>());
         services.AddSingleton<LegacyCommandFeedbackResponder>();
 
         services.AddSingleton<DiscordGatewayRecoveryService>(provider =>
@@ -131,20 +120,16 @@ internal static class BeanBotServiceCollectionExtensions
 
         services.AddSingleton<FortuneAnswerStore>();
         services.AddSingleton<PunProvider>();
-        services.AddSingleton<IPunProvider>(provider =>
-            provider.GetRequiredService<PunProvider>());
-        services.AddSingleton<ExternalMediaCommandOptions.Default>();
+        services.AddSingleton<IPunProvider>(provider => provider.GetRequiredService<PunProvider>());
+        services.AddSingleton(ExternalMediaCommandOptions.Default);
         services.AddSingleton<ExternalMediaAdmissionGuard>();
         services.AddSingleton<ExternalImageClient>();
-        services.AddSingleton<IExternalImageClient>(provider =>
-            provider.GetRequiredService<ExternalImageClient>());
+        services.AddSingleton<IExternalImageClient>(provider => provider.GetRequiredService<ExternalImageClient>());
         services.AddSingleton<MemeProvider>();
-        services.AddSingleton<IMemeProvider>(provider =>
-            provider.GetRequiredService<MemeProvider>());
+        services.AddSingleton<IMemeProvider>(provider => provider.GetRequiredService<MemeProvider>());
         services.AddSingleton(NewMemberWelcomeRuntimeOptions.Default);
         services.AddSingleton<DiscordNewMemberWelcomeDelivery>();
-        services.AddSingleton<INewMemberWelcomeDelivery>(provider =>
-            provider.GetRequiredService<DiscordNewMemberWelcomeDelivery>());
+        services.AddSingleton<INewMemberWelcomeDelivery>(provider => provider.GetRequiredService<DiscordNewMemberWelcomeDelivery>());
         services.AddSingleton<NewMemberWelcomeService>();
         services.AddSingleton<DiscordMessageWaiter>();
         services.AddSingleton<DiscordPaginatorService>();
@@ -159,8 +144,7 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<IInstanceLeaseClock, SystemInstanceLeaseClock>();
         services.AddSingleton(InstanceLeaseOptions.Default);
         services.AddSingleton<BeanBotInstanceLease>();
-        services.AddSingleton<IInstanceLeaseHealth>(provider =>
-            provider.GetRequiredService<BeanBotInstanceLease>());
+        services.AddSingleton<IInstanceLeaseHealth>(provider => provider.GetRequiredService<BeanBotInstanceLease>());
 
         services.AddSingleton<CommandHandler>();
         services.AddSingleton<DailyPunService>();
@@ -176,14 +160,11 @@ internal static class BeanBotServiceCollectionExtensions
             provider.GetRequiredService<ILogger<HealthCheckServer>>()));
 
         services.AddSingleton<BeanBotRuntime>();
-        services.AddSingleton<IBeanBotRuntime>(provider =>
-            provider.GetRequiredService<BeanBotRuntime>());
+        services.AddSingleton<IBeanBotRuntime>(provider => provider.GetRequiredService<BeanBotRuntime>());
         services.AddSingleton<BeanBotApplication>();
-        services.AddSingleton<IBeanBotApplication>(provider =>
-            provider.GetRequiredService<BeanBotApplication>());
+        services.AddSingleton<IBeanBotApplication>(provider => provider.GetRequiredService<BeanBotApplication>());
         services.AddSingleton<BeanBotHostedService>();
-        services.AddSingleton<IHostedService>(provider =>
-            provider.GetRequiredService<BeanBotHostedService>());
+        services.AddSingleton<IHostedService>(provider => provider.GetRequiredService<BeanBotHostedService>());
 
         return services;
     }
