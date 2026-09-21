@@ -132,7 +132,7 @@ public sealed class HealthCheckServer : IAsyncDisposable
         _options = options;
         _createHealthSnapshot = createHealthSnapshot;
         _getMongoReadinessSnapshot = getMongoReadinessSnapshot;
-        _isInstanceLeaseHeld = isInstanceLeaseHeld ?? static () => true;
+        _isInstanceLeaseHeld = isInstanceLeaseHeld ?? (() => true);
         _logger = logger;
         _requestHeadersTimeout = effectiveRequestHeadersTimeout;
         _shutdownTimeout = effectiveShutdownTimeout;
