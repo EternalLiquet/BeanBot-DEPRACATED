@@ -20,6 +20,8 @@ public sealed partial class DailyPunService : IAsyncDisposable
     private readonly PunSchedulerOptions _schedulerOptions;
     private readonly ILogger<DailyPunService> _logger;
     private readonly CancellationTokenSource _tokenSource = new();
+    private readonly object _discordOperationSync = new();
+    private TaskCompletionSource? _discordOperationsDrained;
     private Task? _runner;
     private int _activeDiscordOperationCount;
     private int _disposed;
@@ -431,16 +433,45 @@ public sealed partial class DailyPunService : IAsyncDisposable
     internal void TrackDiscordOperation(Task operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        Interlocked.Increment(ref _activeDiscordOperationCount);
+
+        lock (_discordOperationSync)
+        {
+            if (_activeDiscordOperationCount == 0)
+            {
+                _discordOperationsDrained = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+
+            _activeDiscordOperationCount++;
+        }
+
         _ = operation.ContinueWith(
             completedTask =>
             {
                 _ = completedTask.Exception;
-                Interlocked.Decrement(ref _activeDiscordOperationCount);
+                lock (_discordOperationSync)
+                {
+                    _activeDiscordOperationCount--;
+                    if (_activeDiscordOperationCount == 0)
+                    {
+                        _discordOperationsDrained?.TrySetResult();
+                        _discordOperationsDrained = null;
+                    }
+                }
             },
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
+    }
+
+    internal Task WaitForDiscordOperationsAsync()
+    {
+        lock (_discordOperationSync)
+        {
+            return _activeDiscordOperationCount == 0
+                ? Task.CompletedTask
+                : _discordOperationsDrained!.Task;
+        }
     }
 
     private static void ObserveLateFault(Task sendTask)
