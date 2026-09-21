@@ -21,6 +21,7 @@ public sealed partial class DailyPunService : IAsyncDisposable
     private readonly ILogger<DailyPunService> _logger;
     private readonly CancellationTokenSource _tokenSource = new();
     private Task? _runner;
+    private int _activeDiscordOperationCount;
     private int _disposed;
 
     internal static readonly TimeSpan MessageSendTimeout = TimeSpan.FromSeconds(10);
@@ -76,6 +77,8 @@ public sealed partial class DailyPunService : IAsyncDisposable
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         BeanBotLog.PunServiceInitializing(_logger);
     }
+
+    internal bool HasActiveDiscordOperation => Volatile.Read(ref _activeDiscordOperationCount) != 0;
 
     private static Func<string, RequestOptions, Task>? ResolveSender(
         DiscordSocketClient client, ulong channelId)
@@ -240,7 +243,8 @@ public sealed partial class DailyPunService : IAsyncDisposable
                     pun,
                     requestOptions,
                     _logger,
-                    _schedulerOptions.MessageSendTimeout);
+                    _schedulerOptions.MessageSendTimeout,
+                    TrackDiscordOperation);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -350,7 +354,8 @@ public sealed partial class DailyPunService : IAsyncDisposable
         string pun,
         RequestOptions requestOptions,
         ILogger logger,
-        TimeSpan? sendTimeout = null)
+        TimeSpan? sendTimeout = null,
+        Action<Task>? trackOperation = null)
     {
         ArgumentNullException.ThrowIfNull(sendMessage);
         ArgumentNullException.ThrowIfNull(requestOptions);
@@ -368,13 +373,15 @@ public sealed partial class DailyPunService : IAsyncDisposable
             "The time has come and so have I, Bean Bot here to deliver you your daily pun(?)",
             requestOptions,
             timeout,
-            token);
+            token,
+            trackOperation);
         await SendWithTimeoutAsync(
             sendMessage,
             "<:420stolfoit:675553715759087618>",
             requestOptions,
             timeout,
-            token);
+            token,
+            trackOperation);
         try
         {
             await SendWithTimeoutAsync(
@@ -382,7 +389,8 @@ public sealed partial class DailyPunService : IAsyncDisposable
                 pun,
                 requestOptions,
                 timeout,
-                token);
+                token,
+                trackOperation);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
@@ -399,9 +407,11 @@ public sealed partial class DailyPunService : IAsyncDisposable
         string message,
         RequestOptions requestOptions,
         TimeSpan timeout,
-        CancellationToken token)
+        CancellationToken token,
+        Action<Task>? trackOperation)
     {
         var sendTask = sendMessage(message, requestOptions);
+        trackOperation?.Invoke(sendTask);
         try
         {
             await sendTask.WaitAsync(timeout, token);
@@ -416,6 +426,21 @@ public sealed partial class DailyPunService : IAsyncDisposable
             ObserveLateFault(sendTask);
             throw;
         }
+    }
+
+    internal void TrackDiscordOperation(Task operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        Interlocked.Increment(ref _activeDiscordOperationCount);
+        _ = operation.ContinueWith(
+            completedTask =>
+            {
+                _ = completedTask.Exception;
+                Interlocked.Decrement(ref _activeDiscordOperationCount);
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private static void ObserveLateFault(Task sendTask)
