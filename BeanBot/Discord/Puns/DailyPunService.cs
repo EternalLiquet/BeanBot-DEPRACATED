@@ -373,15 +373,15 @@ public sealed partial class DailyPunService : IAsyncDisposable
             "The time has come and so have I, Bean Bot here to deliver you your daily pun(?)",
             requestOptions,
             timeout,
-            token,
-            trackOperation);
+            trackOperation,
+            token);
         await SendWithTimeoutAsync(
             sendMessage,
             "<:420stolfoit:675553715759087618>",
             requestOptions,
             timeout,
-            token,
-            trackOperation);
+            trackOperation,
+            token);
         try
         {
             await SendWithTimeoutAsync(
@@ -389,8 +389,8 @@ public sealed partial class DailyPunService : IAsyncDisposable
                 pun,
                 requestOptions,
                 timeout,
-                token,
-                trackOperation);
+                trackOperation,
+                token);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
@@ -407,8 +407,8 @@ public sealed partial class DailyPunService : IAsyncDisposable
         string message,
         RequestOptions requestOptions,
         TimeSpan timeout,
-        CancellationToken token,
-        Action<Task>? trackOperation)
+        Action<Task>? trackOperation,
+        CancellationToken token)
     {
         var sendTask = sendMessage(message, requestOptions);
         trackOperation?.Invoke(sendTask);
