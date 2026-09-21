@@ -41,7 +41,7 @@ public sealed class DailyPunLeaseHandoffTests
         Assert.True(service.HasActiveDiscordOperation);
 
         sendCompletion.TrySetResult();
-        await sendCompletion.Task;
+        await service.WaitForDiscordOperationsAsync().WaitAsync(TimeSpan.FromSeconds(1));
         Assert.False(service.HasActiveDiscordOperation);
     }
 
