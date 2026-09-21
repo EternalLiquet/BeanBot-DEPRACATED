@@ -32,6 +32,7 @@ internal interface IBeanBotRuntime
     }
     Task StopHealthServerAsync(CancellationToken cancellationToken);
     Task FlushOwnerAlertsAsync();
+    Task StopOwnerAlertsAsync() => Task.CompletedTask;
     Task StopDiscordAsync(CancellationToken cancellationToken);
     void DisposeDiscordClient();
 }
@@ -91,6 +92,7 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         Exception? firstFailure = null;
         var commandServicesDrained = false;
         var ownerAlertsDrained = false;
+        var ownerAlertsStopped = false;
 
         async Task RunStageAsync(
             string stageName,
@@ -169,12 +171,21 @@ internal sealed class BeanBotApplication : IBeanBotApplication
                 ownerAlertsDrained = true;
             },
             false);
+        await RunStageAsync(
+            "owner-alert-admission",
+            async () =>
+            {
+                await _runtime.StopOwnerAlertsAsync();
+                ownerAlertsStopped = true;
+            },
+            false);
 
         var canReleaseInstanceLease = false;
         await RunSynchronousStageAsync(
             "instance-lease-release-state",
             () => canReleaseInstanceLease = commandServicesDrained &&
                 ownerAlertsDrained &&
+                ownerAlertsStopped &&
                 !_runtime.HasActiveDiscordLifecycleOperation);
         if (canReleaseInstanceLease)
         {
