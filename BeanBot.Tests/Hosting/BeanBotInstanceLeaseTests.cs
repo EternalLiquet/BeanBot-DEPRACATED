@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading.Channels;
 using BeanBot.Hosting;
 using BeanBot.Persistence.Repositories;
 using Microsoft.Extensions.Hosting;
@@ -325,7 +326,7 @@ public class BeanBotInstanceLeaseTests
     private sealed class ControlledLeaseClock : IInstanceLeaseClock
     {
         private readonly ConcurrentQueue<PendingDelay> _delays = new();
-        private readonly SemaphoreSlim _delayAdded = new(0);
+        private readonly Channel<bool> _delayAdded = Channel.CreateUnbounded<bool>();
         private DateTime _utcNow;
         private int _delayCount;
 
@@ -346,7 +347,7 @@ public class BeanBotInstanceLeaseTests
                 completion);
             _delays.Enqueue(new PendingDelay(delay, completion, registration));
             Interlocked.Increment(ref _delayCount);
-            _delayAdded.Release();
+            _delayAdded.Writer.TryWrite(true);
             return completion.Task;
         }
 
@@ -369,7 +370,7 @@ public class BeanBotInstanceLeaseTests
         {
             while (DelayCount < expected)
             {
-                await _delayAdded.WaitAsync(TimeSpan.FromSeconds(1));
+                await _delayAdded.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1));
             }
         }
 
