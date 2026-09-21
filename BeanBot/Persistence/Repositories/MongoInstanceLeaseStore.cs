@@ -8,15 +8,15 @@ internal enum InstanceLeaseAcquireResult
     Conflict
 }
 
-internal sealed record InstanceLeaseSnapshot(string HolderId, DateTimeOffset ExpiresAtUtc);
+internal sealed record InstanceLeaseSnapshot(string HolderId, DateTime ExpiresAtUtc);
 
 internal interface IInstanceLeaseStore
 {
     Task<InstanceLeaseAcquireResult> TryAcquireAsync(
         string botIdentity,
         string holderId,
-        DateTimeOffset nowUtc,
-        DateTimeOffset expiresAtUtc,
+        DateTime nowUtc,
+        DateTime expiresAtUtc,
         CancellationToken cancellationToken);
 
     Task<InstanceLeaseSnapshot?> GetAsync(
@@ -26,8 +26,8 @@ internal interface IInstanceLeaseStore
     Task<bool> TryRenewAsync(
         string botIdentity,
         string holderId,
-        DateTimeOffset nowUtc,
-        DateTimeOffset expiresAtUtc,
+        DateTime nowUtc,
+        DateTime expiresAtUtc,
         CancellationToken cancellationToken);
 
     Task<bool> TryReleaseAsync(
@@ -51,11 +51,12 @@ internal sealed class MongoInstanceLeaseStore : IInstanceLeaseStore
     public async Task<InstanceLeaseAcquireResult> TryAcquireAsync(
         string botIdentity,
         string holderId,
-        DateTimeOffset nowUtc,
-        DateTimeOffset expiresAtUtc,
+        DateTime nowUtc,
+        DateTime expiresAtUtc,
         CancellationToken cancellationToken)
     {
         ValidateIdentity(botIdentity, holderId);
+        ValidateUtc(nowUtc, expiresAtUtc);
         cancellationToken.ThrowIfCancellationRequested();
 
         var filter = Builders<InstanceLeaseDocument>.Filter.And(
@@ -108,11 +109,12 @@ internal sealed class MongoInstanceLeaseStore : IInstanceLeaseStore
     public async Task<bool> TryRenewAsync(
         string botIdentity,
         string holderId,
-        DateTimeOffset nowUtc,
-        DateTimeOffset expiresAtUtc,
+        DateTime nowUtc,
+        DateTime expiresAtUtc,
         CancellationToken cancellationToken)
     {
         ValidateIdentity(botIdentity, holderId);
+        ValidateUtc(nowUtc, expiresAtUtc);
         cancellationToken.ThrowIfCancellationRequested();
 
         var filter = Builders<InstanceLeaseDocument>.Filter.And(
@@ -146,10 +148,23 @@ internal sealed class MongoInstanceLeaseStore : IInstanceLeaseStore
         ArgumentException.ThrowIfNullOrWhiteSpace(holderId);
     }
 
+    private static void ValidateUtc(DateTime nowUtc, DateTime expiresAtUtc)
+    {
+        if (nowUtc.Kind != DateTimeKind.Utc || expiresAtUtc.Kind != DateTimeKind.Utc)
+        {
+            throw new ArgumentException("Instance lease timestamps must be UTC.");
+        }
+
+        if (expiresAtUtc <= nowUtc)
+        {
+            throw new ArgumentOutOfRangeException(nameof(expiresAtUtc));
+        }
+    }
+
     internal sealed class InstanceLeaseDocument
     {
         public string Id { get; set; } = string.Empty;
         public string HolderId { get; set; } = string.Empty;
-        public DateTimeOffset ExpiresAtUtc { get; set; }
+        public DateTime ExpiresAtUtc { get; set; }
     }
 }
