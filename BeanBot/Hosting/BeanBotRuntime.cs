@@ -36,10 +36,12 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     private readonly LogHandler _logHandler;
     private readonly ILogger<BeanBotRuntime> _logger;
     private readonly object _sideEffectStopSync = new();
+    private readonly CancellationTokenSource _sideEffectCancellation = new();
     private readonly CancellationTokenRegistration _applicationStoppingRegistration;
     private Task? _gatewayRecoveryStopTask;
     private Task? _punStopTask;
     private Task? _ownerAlertStopTask;
+    private int _ownedReadyOperationCount;
     private int _sideEffectAdmissionStopped;
     private bool _canDisposeDiscordClient;
 
@@ -96,6 +98,8 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     public bool HasActiveDiscordLifecycleOperation
         => _discordLifecycleCoordinator.HasActiveSequence
             || _ownerErrorNotifier.HasActiveDiscordOperation
+            || _discordOutageRecoveryNotifier.HasActiveDiscordOperation
+            || Volatile.Read(ref _ownedReadyOperationCount) != 0
             || _newMemberWelcomeService.HasActiveDiscordOperation
             || _fortuneMessageEditHandler.HasInFlightOperations
             || _commandReplySender.HasPendingOperations
@@ -129,32 +133,60 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         }
 
         await _instanceLease.AcquireAsync(botUser.Id, cancellationToken);
+        _ownerErrorNotifier.StartAccepting();
 
         // Ready can arrive during Discord startup before lease ownership exists. Keep
         // health observation active during startup, then replay only the side effects
         // that are safe for the confirmed owner.
         if (_discordConnectionHealth.CreateSnapshot(_discordClient).IsHealthy)
         {
-            await RunLeaseOwnedOperationAsync(_instanceLease, ProcessOwnedDiscordReadyAsync);
+            await RunTrackedOwnedDiscordReadyAsync();
         }
     }
 
-    public void StartGatewayRecovery() => _discordGatewayRecovery.StartMonitoring();
+    public void StartGatewayRecovery()
+    {
+        lock (_sideEffectStopSync)
+        {
+            if (!CanAdmitSideEffects())
+            {
+                return;
+            }
+
+            _discordGatewayRecovery.StartMonitoring();
+        }
+    }
 
     public async Task StartCommandServicesAsync()
     {
+        lock (_sideEffectStopSync)
+        {
+            if (!CanAdmitSideEffects())
+            {
+                return;
+            }
+        }
+
         BeanBotLog.CommandServicesCreated(_logger);
         await _commandHandler.InitializeCommandsAsync();
     }
 
     public void StartEventAndBackgroundServices()
     {
-        _discordClient.Log += _logHandler.LogMessages;
-        _dailyPunService.Start();
-        _fortuneMessageEditHandler.InitializeEventListener();
-        _newMemberWelcomeService.Start();
-        _newMemberHandler.InitializeNewMembers();
-        _reactionRoleHandler.InitializeReactDependentServices();
+        lock (_sideEffectStopSync)
+        {
+            if (!CanAdmitSideEffects())
+            {
+                return;
+            }
+
+            _discordClient.Log += _logHandler.LogMessages;
+            _dailyPunService.Start();
+            _fortuneMessageEditHandler.InitializeEventListener();
+            _newMemberWelcomeService.Start();
+            _newMemberHandler.InitializeNewMembers();
+            _reactionRoleHandler.InitializeReactDependentServices();
+        }
     }
 
     public void StopReactionServices() => _reactionRoleHandler.Dispose();
@@ -211,7 +243,10 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         => _instanceLease.ReleaseAsync(cancellationToken);
 
     public void SkipInstanceLeaseRelease()
-        => BeanBotLog.InstanceLeaseReleaseSkipped(_logger);
+    {
+        _instanceLease.SuppressRelease();
+        BeanBotLog.InstanceLeaseReleaseSkipped(_logger);
+    }
 
     public Task StopHealthServerAsync(CancellationToken cancellationToken)
         => _healthCheckServer.StopAsync(cancellationToken);
@@ -221,6 +256,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
 
     public Task StopOwnerAlertsAsync()
     {
+        _ownerErrorNotifier.StopAccepting();
         lock (_sideEffectStopSync)
         {
             return _ownerAlertStopTask ??= _ownerErrorNotifier.DisposeAsync().AsTask();
@@ -328,18 +364,52 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
                 connectionState);
         }
 
-        if (Volatile.Read(ref _sideEffectAdmissionStopped) == 0)
+        await RunTrackedOwnedDiscordReadyAsync();
+    }
+
+    private async Task RunTrackedOwnedDiscordReadyAsync()
+    {
+        if (!CanAdmitSideEffects())
         {
-            await RunLeaseOwnedOperationAsync(_instanceLease, ProcessOwnedDiscordReadyAsync);
+            return;
+        }
+
+        Interlocked.Increment(ref _ownedReadyOperationCount);
+        try
+        {
+            if (!CanAdmitSideEffects())
+            {
+                return;
+            }
+
+            await ProcessOwnedDiscordReadyAsync();
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _ownedReadyOperationCount);
         }
     }
 
     private async Task ProcessOwnedDiscordReadyAsync()
     {
-        _discordGatewayRecovery.NotifyReady();
+        lock (_sideEffectStopSync)
+        {
+            if (!CanAdmitSideEffects())
+            {
+                return;
+            }
+
+            _discordGatewayRecovery.NotifyReady();
+        }
+
         try
         {
-            await _discordOutageRecoveryNotifier.NotifyIfOutageRecoveredAsync(DateTimeOffset.UtcNow);
+            await _discordOutageRecoveryNotifier.NotifyIfOutageRecoveredAsync(
+                DateTimeOffset.UtcNow,
+                _sideEffectCancellation.Token);
+        }
+        catch (OperationCanceledException) when (_sideEffectCancellation.IsCancellationRequested)
+        {
         }
         catch (Exception exception)
         {
@@ -369,12 +439,18 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
                 exception);
         }
 
-        if (Volatile.Read(ref _sideEffectAdmissionStopped) == 0)
+        lock (_sideEffectStopSync)
         {
-            _ = RunLeaseOwnedOperation(_instanceLease, _discordGatewayRecovery.StartMonitoring);
+            if (CanAdmitSideEffects())
+            {
+                _discordGatewayRecovery.StartMonitoring();
+            }
         }
         return Task.CompletedTask;
     }
+
+    private bool CanAdmitSideEffects()
+        => Volatile.Read(ref _sideEffectAdmissionStopped) == 0 && _instanceLease.IsHeld;
 
     private void StopSideEffectAdmission()
     {
@@ -383,17 +459,19 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
             return;
         }
 
-        _commandHandler.Dispose();
-        _reactionRoleHandler.Dispose();
-        _newMemberHandler.Dispose();
-        _newMemberWelcomeService.StopAccepting();
-        _fortuneMessageEditHandler.Dispose();
-        _messageWaiter.Dispose();
-        _paginatorService.Dispose();
-        _discordClient.Log -= _logHandler.LogMessages;
+        _ownerErrorNotifier.StopAccepting();
+        _sideEffectCancellation.Cancel();
 
         lock (_sideEffectStopSync)
         {
+            _commandHandler.Dispose();
+            _reactionRoleHandler.Dispose();
+            _newMemberHandler.Dispose();
+            _newMemberWelcomeService.StopAccepting();
+            _fortuneMessageEditHandler.Dispose();
+            _messageWaiter.Dispose();
+            _paginatorService.Dispose();
+            _discordClient.Log -= _logHandler.LogMessages;
             _gatewayRecoveryStopTask ??= _discordGatewayRecovery.DisposeAsync().AsTask();
             _punStopTask ??= _dailyPunService.DisposeAsync().AsTask();
             _ownerAlertStopTask ??= _ownerErrorNotifier.DisposeAsync().AsTask();
