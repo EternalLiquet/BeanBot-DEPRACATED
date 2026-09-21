@@ -69,6 +69,7 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
     private string? _botIdentity;
     private DateTime _knownExpiresAtUtc;
     private bool _held;
+    private bool _releaseSuppressed;
     private bool _disposed;
 
     public BeanBotInstanceLease(
@@ -149,6 +150,7 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
                 _botIdentity = botIdentity;
                 _knownExpiresAtUtc = confirmation.ExpiresAtUtc;
                 _held = true;
+                _releaseSuppressed = false;
                 _renewalCancellation = renewalCancellation;
                 _renewalTask = RenewLoopAsync(botIdentity, renewalCancellation.Token);
             }
@@ -159,6 +161,19 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
         {
             _lifecycleGate.Release();
         }
+    }
+
+    public void SuppressRelease()
+    {
+        CancellationTokenSource? renewalCancellation;
+        lock (_syncRoot)
+        {
+            _releaseSuppressed = true;
+            _held = false;
+            renewalCancellation = _renewalCancellation;
+        }
+
+        renewalCancellation?.Cancel();
     }
 
     public async Task ReleaseAsync(CancellationToken cancellationToken)
@@ -210,6 +225,14 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
                 return;
             }
 
+            lock (_syncRoot)
+            {
+                if (_releaseSuppressed)
+                {
+                    return;
+                }
+            }
+
             try
             {
                 var released = await RunBoundedStoreOperationAsync(
@@ -258,7 +281,7 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                var delay = uncertain ? GetUncertainRetryDelay() : _options.RenewInterval;
+                var delay = GetNextRenewalDelay(uncertain);
                 if (delay <= TimeSpan.Zero)
                 {
                     LoseOwnership(botIdentity);
@@ -297,6 +320,7 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
                     safetyCancellation.Token);
                 if (confirmation.State == LeaseConfirmationState.Held)
                 {
+                    var expiryAdvanced = confirmation.ExpiresAtUtc > knownExpiryUtc;
                     lock (_syncRoot)
                     {
                         if (_held && string.Equals(_botIdentity, botIdentity, StringComparison.Ordinal))
@@ -305,7 +329,20 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
                         }
                     }
 
-                    uncertain = false;
+                    if (expiryAdvanced)
+                    {
+                        uncertain = false;
+                        continue;
+                    }
+
+                    BeanBotLog.InstanceLeaseRenewalUncertain(_logger, botIdentity);
+                    uncertain = true;
+                    if (_clock.UtcNow >= safetyDeadlineUtc)
+                    {
+                        LoseOwnership(botIdentity);
+                        return;
+                    }
+
                     continue;
                 }
 
@@ -333,14 +370,13 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
         }
     }
 
-    private TimeSpan GetUncertainRetryDelay()
+    private TimeSpan GetNextRenewalDelay(bool uncertain)
     {
         lock (_syncRoot)
         {
             var remaining = (_knownExpiresAtUtc - _options.SafetyMargin) - _clock.UtcNow;
-            return remaining <= _options.UncertainRetryDelay
-                ? remaining
-                : _options.UncertainRetryDelay;
+            var preferred = uncertain ? _options.UncertainRetryDelay : _options.RenewInterval;
+            return remaining <= preferred ? remaining : preferred;
         }
     }
 
@@ -468,8 +504,8 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
             _held = false;
         }
 
-        BeanBotLog.InstanceLeaseLost(_logger, botIdentity);
         _hostLifetime.StopApplication();
+        BeanBotLog.InstanceLeaseLost(_logger, botIdentity);
     }
 
     private static void ObserveLateFault(Task operation)
