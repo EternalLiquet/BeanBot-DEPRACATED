@@ -55,6 +55,8 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
     private readonly TimeSpan _shutdownFlushTimeout;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly Task _worker;
+    private readonly object _deliverySync = new();
+    private Task? _activeDelivery;
     private int _sendInProgress;
     private int _disposed;
 
@@ -78,6 +80,17 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
             SingleWriter = false
         });
         _worker = Task.Run(() => ProcessAlertsAsync(_shutdown.Token));
+    }
+
+    internal bool HasActiveDiscordOperation
+    {
+        get
+        {
+            lock (_deliverySync)
+            {
+                return _activeDelivery is { IsCompleted: false };
+            }
+        }
     }
 
     public void Enqueue(string alert)
@@ -143,9 +156,11 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
             try
             {
                 // Discord.Net does not expose cancellation on every DM operation.
-                // WaitAsync still guarantees the notifier worker and application
-                // shutdown are not held hostage by a stalled network task.
-                await _delivery.DeliverAsync(alert, cancellationToken).WaitAsync(cancellationToken);
+                // Keep ownership of the underlying delivery even when the worker's
+                // bounded wait is canceled so lease handoff cannot race a late DM.
+                var delivery = _delivery.DeliverAsync(alert, cancellationToken);
+                TrackDelivery(delivery);
+                await delivery.WaitAsync(cancellationToken);
                 return;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -165,6 +180,30 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
                 await Task.Delay(_retryDelay(attempt), cancellationToken);
             }
         }
+    }
+
+    private void TrackDelivery(Task delivery)
+    {
+        lock (_deliverySync)
+        {
+            _activeDelivery = delivery;
+        }
+
+        _ = delivery.ContinueWith(
+            completedTask =>
+            {
+                _ = completedTask.Exception;
+                lock (_deliverySync)
+                {
+                    if (ReferenceEquals(_activeDelivery, completedTask))
+                    {
+                        _activeDelivery = null;
+                    }
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 }
 
