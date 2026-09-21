@@ -90,6 +90,7 @@ internal sealed class BeanBotApplication : IBeanBotApplication
 
         Exception? firstFailure = null;
         var commandServicesDrained = false;
+        var ownerAlertsDrained = false;
 
         async Task RunStageAsync(
             string stageName,
@@ -160,12 +161,20 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         await RunStageAsync("gateway-recovery", _runtime.StopGatewayRecoveryAsync);
         await RunSynchronousStageAsync("application-events", _runtime.UnsubscribeApplicationEvents);
         await RunStageAsync("pun-service", _runtime.StopPunServiceAsync);
-        await RunStageAsync("owner-alerts-before-lease-release", _runtime.FlushOwnerAlertsAsync, false);
+        await RunStageAsync(
+            "owner-alerts-before-lease-release",
+            async () =>
+            {
+                await _runtime.FlushOwnerAlertsAsync();
+                ownerAlertsDrained = true;
+            },
+            false);
 
         var canReleaseInstanceLease = false;
         await RunSynchronousStageAsync(
             "instance-lease-release-state",
             () => canReleaseInstanceLease = commandServicesDrained &&
+                ownerAlertsDrained &&
                 !_runtime.HasActiveDiscordLifecycleOperation);
         if (canReleaseInstanceLease)
         {
