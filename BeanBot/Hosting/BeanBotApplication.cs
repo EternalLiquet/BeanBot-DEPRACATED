@@ -11,7 +11,7 @@ internal interface IBeanBotRuntime
     void SubscribeApplicationEvents();
     Task StartHealthServerAsync(CancellationToken cancellationToken);
     Task StartDiscordAsync(CancellationToken cancellationToken);
-    Task AcquireInstanceLeaseAsync(CancellationToken cancellationToken);
+    Task AcquireInstanceLeaseAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     void StartGatewayRecovery();
     Task StartCommandServicesAsync();
     void StartEventAndBackgroundServices();
@@ -26,8 +26,10 @@ internal interface IBeanBotRuntime
     Task StopGatewayRecoveryAsync();
     void UnsubscribeApplicationEvents();
     Task StopPunServiceAsync();
-    Task ReleaseInstanceLeaseAsync(CancellationToken cancellationToken);
-    void SkipInstanceLeaseRelease();
+    Task ReleaseInstanceLeaseAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    void SkipInstanceLeaseRelease()
+    {
+    }
     Task StopHealthServerAsync(CancellationToken cancellationToken);
     Task FlushOwnerAlertsAsync();
     Task StopDiscordAsync(CancellationToken cancellationToken);
