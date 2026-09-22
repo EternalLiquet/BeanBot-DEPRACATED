@@ -17,10 +17,7 @@ internal static class FileLogShutdown
     {
         ArgumentNullException.ThrowIfNull(flushAsync);
         ArgumentNullException.ThrowIfNull(writeDiagnostic);
-        if (timeout <= TimeSpan.Zero)
-        {
-            throw new ArgumentOutOfRangeException(nameof(timeout));
-        }
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
 
         var flushTask = Task.Run(flushAsync);
         try
