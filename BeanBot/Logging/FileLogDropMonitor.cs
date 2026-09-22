@@ -1,4 +1,4 @@
-using Serilog.Async;
+using Serilog.Sinks.Async;
 
 namespace BeanBot.Logging;
 
