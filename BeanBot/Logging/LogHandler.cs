@@ -36,12 +36,15 @@ public sealed class LogHandler
             .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
             .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
             .MinimumLevel.Override("System", LogEventLevel.Warning)
-            .WriteTo.Console(formatProvider: CultureInfo.InvariantCulture)
-            .WriteTo.Async(a => a.File(
-                Path.Combine(DirectorySetup.botBaseDirectory, "Logs", "BeanBotLogs.txt"),
-                formatProvider: CultureInfo.InvariantCulture,
-                rollingInterval: RollingInterval.Day))
-            .WriteTo.Sink(new DiscordOwnerErrorSink(ownerErrorNotifier));
+            .WriteTo.Console(formatProvider: CultureInfo.InvariantCulture);
+
+        FileLogPolicy.ConfigureFileSink(
+            loggerConfiguration.WriteTo,
+            Path.Combine(DirectorySetup.botBaseDirectory, "Logs", "BeanBotLogs.txt"),
+            FileLogPolicy.ProductionOptions,
+            new FileLogDropMonitor());
+
+        loggerConfiguration.WriteTo.Sink(new DiscordOwnerErrorSink(ownerErrorNotifier));
     }
 
     public Task LogMessages(LogMessage messages)
