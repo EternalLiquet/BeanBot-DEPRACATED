@@ -1,7 +1,7 @@
 using System.Globalization;
 using Serilog;
-using Serilog.Async;
 using Serilog.Configuration;
+using Serilog.Sinks.Async;
 
 namespace BeanBot.Logging;
 
