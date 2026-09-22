@@ -2,7 +2,7 @@ using Serilog.Sinks.Async;
 
 namespace BeanBot.Logging;
 
-internal sealed class FileLogDropMonitor : IAsyncLogEventSinkMonitor
+internal sealed class FileLogDropMonitor : IAsyncLogEventSinkMonitor, IDisposable
 {
     private readonly object _sync = new();
     private readonly TimeSpan _reportInterval;
@@ -10,6 +10,7 @@ internal sealed class FileLogDropMonitor : IAsyncLogEventSinkMonitor
     private IAsyncLogEventSinkInspector? _inspector;
     private Timer? _timer;
     private long _lastReportedDroppedMessagesCount;
+    private bool _disposed;
 
     internal FileLogDropMonitor()
         : this(
@@ -20,11 +21,7 @@ internal sealed class FileLogDropMonitor : IAsyncLogEventSinkMonitor
 
     internal FileLogDropMonitor(TimeSpan reportInterval, Action<string> writeDiagnostic)
     {
-        if (reportInterval <= TimeSpan.Zero)
-        {
-            throw new ArgumentOutOfRangeException(nameof(reportInterval));
-        }
-
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(reportInterval, TimeSpan.Zero);
         _reportInterval = reportInterval;
         _writeDiagnostic = writeDiagnostic ?? throw new ArgumentNullException(nameof(writeDiagnostic));
     }
@@ -35,6 +32,7 @@ internal sealed class FileLogDropMonitor : IAsyncLogEventSinkMonitor
 
         lock (_sync)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             if (_inspector is not null)
             {
                 throw new InvalidOperationException("The file-log async sink is already being monitored.");
@@ -67,10 +65,30 @@ internal sealed class FileLogDropMonitor : IAsyncLogEventSinkMonitor
             timer = _timer;
             _timer = null;
             _inspector = null;
+            _disposed = true;
         }
 
         timer?.Dispose();
         ReportNewDrops(inspector);
+    }
+
+    public void Dispose()
+    {
+        Timer? timer;
+        lock (_sync)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            timer = _timer;
+            _timer = null;
+            _inspector = null;
+        }
+
+        timer?.Dispose();
     }
 
     internal long CheckNow()
