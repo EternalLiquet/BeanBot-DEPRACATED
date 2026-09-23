@@ -1,4 +1,5 @@
 using System.Runtime.ExceptionServices;
+using BeanBot.Health;
 using BeanBot.Logging;
 using Microsoft.Extensions.Logging;
 
@@ -37,6 +38,7 @@ internal sealed class BeanBotApplication : IBeanBotApplication
     private static readonly TimeSpan PostCancellationStageTimeout = TimeSpan.FromSeconds(1);
 
     private readonly IBeanBotRuntime _runtime;
+    private readonly ApplicationReadinessState _applicationReadinessState;
     private readonly ILogger<BeanBotApplication> _logger;
     private readonly TimeSpan _shutdownStageTimeout;
     private int _startRequested;
@@ -46,8 +48,23 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         IBeanBotRuntime runtime,
         ILogger<BeanBotApplication> logger,
         TimeSpan? shutdownStageTimeout = null)
+        : this(
+            runtime,
+            new ApplicationReadinessState(),
+            logger,
+            shutdownStageTimeout)
+    {
+    }
+
+    internal BeanBotApplication(
+        IBeanBotRuntime runtime,
+        ApplicationReadinessState applicationReadinessState,
+        ILogger<BeanBotApplication> logger,
+        TimeSpan? shutdownStageTimeout = null)
     {
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
+        _applicationReadinessState = applicationReadinessState ??
+            throw new ArgumentNullException(nameof(applicationReadinessState));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _shutdownStageTimeout = shutdownStageTimeout ?? DefaultShutdownStageTimeout;
         if (_shutdownStageTimeout <= TimeSpan.Zero)
@@ -73,6 +90,8 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         _runtime.StartGatewayRecovery();
         await _runtime.StartCommandServicesAsync();
         _runtime.StartEventAndBackgroundServices();
+        cancellationToken.ThrowIfCancellationRequested();
+        _applicationReadinessState.MarkReady();
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -81,6 +100,8 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         {
             return;
         }
+
+        _applicationReadinessState.BeginDraining();
 
         Exception? firstFailure = null;
         var commandServicesDrained = false;
