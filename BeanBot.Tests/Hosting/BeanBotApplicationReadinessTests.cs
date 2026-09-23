@@ -8,7 +8,7 @@ namespace BeanBot.Tests.Hosting;
 public class BeanBotApplicationReadinessTests
 {
     [Fact]
-    public async Task StartAsync_MarksReadyOnlyAfterFinalStartupStage()
+    public async Task StartAsync_CompletesCoreStartupWithoutPublishingFinalReadiness()
     {
         var readiness = new ApplicationReadinessState();
         ApplicationLifecycleState? stateDuringFinalStage = null;
@@ -27,7 +27,7 @@ public class BeanBotApplicationReadinessTests
         await application.StartAsync(CancellationToken.None);
 
         Assert.Equal(ApplicationLifecycleState.Starting, stateDuringFinalStage);
-        Assert.Equal(ApplicationLifecycleState.Ready, readiness.CreateSnapshot().State);
+        Assert.Equal(ApplicationLifecycleState.Starting, readiness.CreateSnapshot().State);
     }
 
     [Fact]
@@ -73,10 +73,10 @@ public class BeanBotApplicationReadinessTests
     public async Task StopAsync_ClearsReadyBeforeFirstUserFacingStopStageAndNeverRestoresIt()
     {
         var readiness = new ApplicationReadinessState();
+        readiness.MarkReady();
         ApplicationLifecycleState? stateAtFirstStopStage = null;
         var runtime = new RecordingRuntime();
         var application = CreateApplication(runtime, readiness);
-        await application.StartAsync(CancellationToken.None);
         runtime.OperationRecorded = operation =>
         {
             if (operation == "stop-reaction")
@@ -102,6 +102,7 @@ public class BeanBotApplicationReadinessTests
 
         await application.StartAsync(CancellationToken.None);
         await application.StartAsync(CancellationToken.None);
+        readiness.MarkReady();
         await application.StopAsync(CancellationToken.None);
         await application.StopAsync(CancellationToken.None);
 

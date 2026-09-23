@@ -91,7 +91,6 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         await _runtime.StartCommandServicesAsync();
         _runtime.StartEventAndBackgroundServices();
         cancellationToken.ThrowIfCancellationRequested();
-        _applicationReadinessState.MarkReady();
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
