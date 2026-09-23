@@ -20,7 +20,10 @@ public sealed partial class DailyPunService : IAsyncDisposable
     private readonly PunSchedulerOptions _schedulerOptions;
     private readonly ILogger<DailyPunService> _logger;
     private readonly CancellationTokenSource _tokenSource = new();
+    private readonly object _discordOperationSync = new();
+    private TaskCompletionSource? _discordOperationsDrained;
     private Task? _runner;
+    private int _activeDiscordOperationCount;
     private int _disposed;
 
     internal static readonly TimeSpan MessageSendTimeout = TimeSpan.FromSeconds(10);
@@ -76,6 +79,8 @@ public sealed partial class DailyPunService : IAsyncDisposable
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         BeanBotLog.PunServiceInitializing(_logger);
     }
+
+    internal bool HasActiveDiscordOperation => Volatile.Read(ref _activeDiscordOperationCount) != 0;
 
     private static Func<string, RequestOptions, Task>? ResolveSender(
         DiscordSocketClient client, ulong channelId)
@@ -240,7 +245,8 @@ public sealed partial class DailyPunService : IAsyncDisposable
                     pun,
                     requestOptions,
                     _logger,
-                    _schedulerOptions.MessageSendTimeout);
+                    _schedulerOptions.MessageSendTimeout,
+                    TrackDiscordOperation);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -350,7 +356,8 @@ public sealed partial class DailyPunService : IAsyncDisposable
         string pun,
         RequestOptions requestOptions,
         ILogger logger,
-        TimeSpan? sendTimeout = null)
+        TimeSpan? sendTimeout = null,
+        Action<Task>? trackOperation = null)
     {
         ArgumentNullException.ThrowIfNull(sendMessage);
         ArgumentNullException.ThrowIfNull(requestOptions);
@@ -368,12 +375,14 @@ public sealed partial class DailyPunService : IAsyncDisposable
             "The time has come and so have I, Bean Bot here to deliver you your daily pun(?)",
             requestOptions,
             timeout,
+            trackOperation,
             token);
         await SendWithTimeoutAsync(
             sendMessage,
             "<:420stolfoit:675553715759087618>",
             requestOptions,
             timeout,
+            trackOperation,
             token);
         try
         {
@@ -382,6 +391,7 @@ public sealed partial class DailyPunService : IAsyncDisposable
                 pun,
                 requestOptions,
                 timeout,
+                trackOperation,
                 token);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -399,9 +409,11 @@ public sealed partial class DailyPunService : IAsyncDisposable
         string message,
         RequestOptions requestOptions,
         TimeSpan timeout,
+        Action<Task>? trackOperation,
         CancellationToken token)
     {
         var sendTask = sendMessage(message, requestOptions);
+        trackOperation?.Invoke(sendTask);
         try
         {
             await sendTask.WaitAsync(timeout, token);
@@ -415,6 +427,50 @@ public sealed partial class DailyPunService : IAsyncDisposable
         {
             ObserveLateFault(sendTask);
             throw;
+        }
+    }
+
+    internal void TrackDiscordOperation(Task operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+
+        lock (_discordOperationSync)
+        {
+            if (_activeDiscordOperationCount == 0)
+            {
+                _discordOperationsDrained = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+
+            _activeDiscordOperationCount++;
+        }
+
+        _ = operation.ContinueWith(
+            completedTask =>
+            {
+                _ = completedTask.Exception;
+                lock (_discordOperationSync)
+                {
+                    _activeDiscordOperationCount--;
+                    if (_activeDiscordOperationCount == 0)
+                    {
+                        _discordOperationsDrained?.TrySetResult();
+                        _discordOperationsDrained = null;
+                    }
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    internal Task WaitForDiscordOperationsAsync()
+    {
+        lock (_discordOperationSync)
+        {
+            return _activeDiscordOperationCount == 0
+                ? Task.CompletedTask
+                : _discordOperationsDrained!.Task;
         }
     }
 

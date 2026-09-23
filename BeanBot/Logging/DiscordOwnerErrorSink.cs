@@ -55,6 +55,9 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
     private readonly TimeSpan _shutdownFlushTimeout;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly Task _worker;
+    private readonly object _deliverySync = new();
+    private Task? _activeDelivery;
+    private int _accepting;
     private int _sendInProgress;
     private int _disposed;
 
@@ -66,11 +69,13 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
     internal DiscordOwnerErrorNotifier(
         IOwnerAlertDelivery delivery,
         Func<int, TimeSpan>? retryDelay = null,
-        TimeSpan? shutdownFlushTimeout = null)
+        TimeSpan? shutdownFlushTimeout = null,
+        bool startAccepting = true)
     {
         _delivery = delivery ?? throw new ArgumentNullException(nameof(delivery));
         _retryDelay = retryDelay ?? (attempt => TimeSpan.FromSeconds(attempt));
         _shutdownFlushTimeout = shutdownFlushTimeout ?? TimeSpan.FromSeconds(3);
+        _accepting = startAccepting ? 1 : 0;
         _alerts = Channel.CreateBounded<string>(new BoundedChannelOptions(100)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
@@ -80,9 +85,30 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
         _worker = Task.Run(() => ProcessAlertsAsync(_shutdown.Token));
     }
 
-    public void Enqueue(string alert)
+    internal bool HasActiveDiscordOperation
+    {
+        get
+        {
+            lock (_deliverySync)
+            {
+                return _activeDelivery is { IsCompleted: false };
+            }
+        }
+    }
+
+    internal void StartAccepting()
     {
         if (Volatile.Read(ref _disposed) == 0)
+        {
+            Volatile.Write(ref _accepting, 1);
+        }
+    }
+
+    internal void StopAccepting() => Volatile.Write(ref _accepting, 0);
+
+    public void Enqueue(string alert)
+    {
+        if (Volatile.Read(ref _disposed) == 0 && Volatile.Read(ref _accepting) != 0)
         {
             _alerts.Writer.TryWrite(alert);
         }
@@ -105,6 +131,7 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
             return;
         }
 
+        StopAccepting();
         _alerts.Writer.TryComplete();
         await FlushAsync(_shutdownFlushTimeout);
         _shutdown.Cancel();
@@ -143,9 +170,11 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
             try
             {
                 // Discord.Net does not expose cancellation on every DM operation.
-                // WaitAsync still guarantees the notifier worker and application
-                // shutdown are not held hostage by a stalled network task.
-                await _delivery.DeliverAsync(alert, cancellationToken).WaitAsync(cancellationToken);
+                // Keep ownership of the underlying delivery even when the worker's
+                // bounded wait is canceled so lease handoff cannot race a late DM.
+                var delivery = _delivery.DeliverAsync(alert, cancellationToken);
+                TrackDelivery(delivery);
+                await delivery.WaitAsync(cancellationToken);
                 return;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -165,6 +194,30 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
                 await Task.Delay(_retryDelay(attempt), cancellationToken);
             }
         }
+    }
+
+    private void TrackDelivery(Task delivery)
+    {
+        lock (_deliverySync)
+        {
+            _activeDelivery = delivery;
+        }
+
+        _ = delivery.ContinueWith(
+            completedTask =>
+            {
+                _ = completedTask.Exception;
+                lock (_deliverySync)
+                {
+                    if (ReferenceEquals(_activeDelivery, completedTask))
+                    {
+                        _activeDelivery = null;
+                    }
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 }
 

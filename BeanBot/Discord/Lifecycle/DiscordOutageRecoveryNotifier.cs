@@ -17,6 +17,7 @@ internal sealed class DiscordOutageRecoveryNotifier : IDisposable
     private readonly TimeSpan _deliveryTimeout;
     private readonly ILogger<DiscordOutageRecoveryNotifier> _logger;
     private readonly SemaphoreSlim _notificationAccess = new(1, 1);
+    private int _activeDeliveryCount;
 
     public DiscordOutageRecoveryNotifier(
         IDiscordOutageStore outageStore,
@@ -31,6 +32,8 @@ internal sealed class DiscordOutageRecoveryNotifier : IDisposable
         _retryDelay = retryDelay ?? (attempt => TimeSpan.FromSeconds(attempt));
         _deliveryTimeout = deliveryTimeout ?? DefaultDeliveryTimeout;
     }
+
+    internal bool HasActiveDiscordOperation => Volatile.Read(ref _activeDeliveryCount) != 0;
 
     public async Task NotifyIfOutageRecoveredAsync(
         DateTimeOffset recoveredAtUtc,
@@ -119,9 +122,9 @@ internal sealed class DiscordOutageRecoveryNotifier : IDisposable
         {
             try
             {
-                await _ownerAlertDelivery
-                    .DeliverAsync(recoveryMessage, cancellationToken)
-                    .WaitAsync(_deliveryTimeout, cancellationToken);
+                var delivery = _ownerAlertDelivery.DeliverAsync(recoveryMessage, cancellationToken);
+                TrackDelivery(delivery);
+                await delivery.WaitAsync(_deliveryTimeout, cancellationToken);
                 return true;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -144,6 +147,20 @@ internal sealed class DiscordOutageRecoveryNotifier : IDisposable
         }
 
         return false;
+    }
+
+    private void TrackDelivery(Task delivery)
+    {
+        Interlocked.Increment(ref _activeDeliveryCount);
+        _ = delivery.ContinueWith(
+            completedTask =>
+            {
+                _ = completedTask.Exception;
+                Interlocked.Decrement(ref _activeDeliveryCount);
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private static string FormatDuration(TimeSpan duration)

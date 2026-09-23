@@ -11,6 +11,7 @@ internal interface IBeanBotRuntime
     void SubscribeApplicationEvents();
     Task StartHealthServerAsync(CancellationToken cancellationToken);
     Task StartDiscordAsync(CancellationToken cancellationToken);
+    Task AcquireInstanceLeaseAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     void StartGatewayRecovery();
     Task StartCommandServicesAsync();
     void StartEventAndBackgroundServices();
@@ -25,8 +26,13 @@ internal interface IBeanBotRuntime
     Task StopGatewayRecoveryAsync();
     void UnsubscribeApplicationEvents();
     Task StopPunServiceAsync();
+    Task ReleaseInstanceLeaseAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    void SkipInstanceLeaseRelease()
+    {
+    }
     Task StopHealthServerAsync(CancellationToken cancellationToken);
     Task FlushOwnerAlertsAsync();
+    Task StopOwnerAlertsAsync() => Task.CompletedTask;
     Task StopDiscordAsync(CancellationToken cancellationToken);
     void DisposeDiscordClient();
 }
@@ -69,10 +75,17 @@ internal sealed class BeanBotApplication : IBeanBotApplication
             BuildIdentity.Current.CommitSha);
         _runtime.SubscribeApplicationEvents();
         await _runtime.StartHealthServerAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         await _runtime.StartDiscordAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        await _runtime.AcquireInstanceLeaseAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         _runtime.StartGatewayRecovery();
+        cancellationToken.ThrowIfCancellationRequested();
         await _runtime.StartCommandServicesAsync();
+        cancellationToken.ThrowIfCancellationRequested();
         _runtime.StartEventAndBackgroundServices();
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -84,6 +97,8 @@ internal sealed class BeanBotApplication : IBeanBotApplication
 
         Exception? firstFailure = null;
         var commandServicesDrained = false;
+        var ownerAlertsDrained = false;
+        var ownerAlertsStopped = false;
 
         async Task RunStageAsync(
             string stageName,
@@ -154,8 +169,42 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         await RunStageAsync("gateway-recovery", _runtime.StopGatewayRecoveryAsync);
         await RunSynchronousStageAsync("application-events", _runtime.UnsubscribeApplicationEvents);
         await RunStageAsync("pun-service", _runtime.StopPunServiceAsync);
+        await RunStageAsync(
+            "owner-alerts-before-lease-release",
+            async () =>
+            {
+                await _runtime.FlushOwnerAlertsAsync();
+                ownerAlertsDrained = true;
+            },
+            false);
+        await RunStageAsync(
+            "owner-alert-admission",
+            async () =>
+            {
+                await _runtime.StopOwnerAlertsAsync();
+                ownerAlertsStopped = true;
+            },
+            false);
+
+        var canReleaseInstanceLease = false;
+        await RunSynchronousStageAsync(
+            "instance-lease-release-state",
+            () => canReleaseInstanceLease = commandServicesDrained &&
+                ownerAlertsDrained &&
+                ownerAlertsStopped &&
+                !_runtime.HasActiveDiscordLifecycleOperation);
+        if (canReleaseInstanceLease)
+        {
+            await RunStageAsync(
+                "instance-lease-release",
+                () => _runtime.ReleaseInstanceLeaseAsync(CancellationToken.None));
+        }
+        else
+        {
+            await RunSynchronousStageAsync("instance-lease-release-skipped", _runtime.SkipInstanceLeaseRelease);
+        }
+
         await RunStageAsync("health-server", StopHealthServerAsync);
-        await RunStageAsync("owner-alerts-before-discord", _runtime.FlushOwnerAlertsAsync, false);
 
         var canStopDiscord = false;
         await RunSynchronousStageAsync(
