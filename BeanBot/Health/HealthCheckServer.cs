@@ -488,9 +488,9 @@ public sealed class HealthCheckServer : IAsyncDisposable
             return;
         }
 
-        var applicationSnapshot = _createApplicationReadinessSnapshot();
         var discordSnapshot = _createHealthSnapshot();
         var mongoSnapshot = await _getMongoReadinessSnapshot(context.RequestAborted);
+        var applicationSnapshot = _createApplicationReadinessSnapshot();
         var isHealthy = applicationSnapshot.IsReady &&
             discordSnapshot.IsHealthy &&
             mongoSnapshot.IsReachable;
