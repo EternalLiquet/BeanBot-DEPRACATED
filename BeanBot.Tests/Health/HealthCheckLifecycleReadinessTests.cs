@@ -62,6 +62,40 @@ public class HealthCheckLifecycleReadinessTests
     }
 
     [Fact]
+    public async Task DrainBeginningDuringMongoProbe_Returns503WithDrainingSnapshot()
+    {
+        var readiness = new ApplicationReadinessState();
+        readiness.MarkReady();
+        var mongoProbeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mongoProbeCompletion = new TaskCompletionSource<MongoReadinessSnapshot>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = CreateServer(
+            readiness,
+            async cancellationToken =>
+            {
+                mongoProbeStarted.TrySetResult();
+                return await mongoProbeCompletion.Task.WaitAsync(cancellationToken);
+            });
+        await server.StartAsync(CancellationToken.None);
+        using var client = CreateClient(server);
+
+        var responseTask = client.GetAsync("/healthz");
+        await mongoProbeStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        readiness.BeginDraining();
+        mongoProbeCompletion.TrySetResult(new MongoReadinessSnapshot(true, DateTimeOffset.UtcNow));
+
+        using var response = await responseTask.WaitAsync(TimeSpan.FromSeconds(1));
+        using var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.False(payload.RootElement.GetProperty("applicationReady").GetBoolean());
+        Assert.Equal("draining", payload.RootElement.GetProperty("lifecycleState").GetString());
+        Assert.Equal(
+            "BeanBot is draining for shutdown.",
+            payload.RootElement.GetProperty("message").GetString());
+    }
+
+    [Fact]
     public async Task DrainingLifecycle_Returns503WhileDependenciesRemainHealthy()
     {
         var readiness = new ApplicationReadinessState();
@@ -84,7 +118,9 @@ public class HealthCheckLifecycleReadinessTests
         Assert.True(payload.RootElement.GetProperty("mongoReachable").GetBoolean());
     }
 
-    private static HealthCheckServer CreateServer(ApplicationReadinessState readiness)
+    private static HealthCheckServer CreateServer(
+        ApplicationReadinessState readiness,
+        Func<CancellationToken, Task<MongoReadinessSnapshot>>? getMongoReadinessSnapshot = null)
     {
         var options = new HealthCheckOptions(
             true,
@@ -95,7 +131,8 @@ public class HealthCheckLifecycleReadinessTests
         return new HealthCheckServer(
             options,
             () => HealthyDiscordSnapshot,
-            _ => Task.FromResult(new MongoReadinessSnapshot(true, DateTimeOffset.UtcNow)),
+            getMongoReadinessSnapshot ??
+                (_ => Task.FromResult(new MongoReadinessSnapshot(true, DateTimeOffset.UtcNow))),
             readiness.CreateSnapshot,
             NullLogger<HealthCheckServer>.Instance,
             maximumConcurrentClients: 2,
