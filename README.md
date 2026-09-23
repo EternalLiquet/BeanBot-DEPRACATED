@@ -54,21 +54,23 @@ BEANBOT_HEALTHCHECK_RATE_LIMIT_SECONDS=90
 
 When `BEANBOT_HEALTHCHECK_PORT` is set, the bot exposes a Kestrel-hosted `GET /healthz` and `HEAD /healthz` endpoint on that port:
 
-- `200 OK`: process is up, the Discord gateway session is ready, and MongoDB passed a recent readiness probe.
+- `200 OK`: BeanBot has completed startup, is still admitting normal user-facing work, the Discord gateway session is ready, and MongoDB passed a recent readiness probe.
 - `401 Unauthorized`: the bearer token is missing or invalid.
-- `503 Service Unavailable`: process is up, but Discord is not ready or MongoDB is unavailable/stale.
+- `503 Service Unavailable`: BeanBot is still starting or is draining for shutdown, Discord is not ready, or MongoDB is unavailable/stale.
 - `429 Too Many Requests`: the same client polled again before the configured rate limit expired.
 - no response / connection failure: the bot process is down or unreachable.
 
-Successful and unhealthy JSON responses include the non-secret release version and Git commit SHA, the existing Discord lifecycle fields, and sanitized `mongoReachable` / `mongoLastCheckedAtUtc` fields so an operator can distinguish Gateway and persistence readiness without exposing MongoDB connection details.
+Successful and unhealthy JSON responses include the non-secret release version and Git commit SHA, sanitized `applicationReady` / `lifecycleState` values, the existing Discord lifecycle fields, and sanitized `mongoReachable` / `mongoLastCheckedAtUtc` fields so an operator can distinguish application lifecycle, Gateway, and persistence readiness without exposing internal shutdown stages or MongoDB connection details.
+
+The health listener intentionally starts before the rest of BeanBot so liveness can be observed during startup. Lifecycle readiness remains `starting` until the core command/event/background startup and the interaction hosted service have completed. On graceful shutdown BeanBot changes lifecycle readiness to `draining` before hosted interaction teardown or the core reaction/command/event shutdown stages withdraw normal work. Once draining begins, `/healthz` remains `503` even if Discord and MongoDB are still healthy; a later shutdown failure or cancellation does not restore readiness.
 
 Mongo readiness uses a lightweight single-flight ping. A completed result is reused for at most 10 seconds, and a stale result triggers a fresh probe. Each probe has a 2-second application-owned deadline. If the underlying driver call does not settle by that deadline, `/healthz` reports MongoDB unavailable while BeanBot retains ownership of that single late probe until it completes; later polls do not fan out additional Mongo operations. Recovery is reflected by the next probe after the cached unhealthy result expires, without restarting BeanBot.
 
 If you bind the endpoint to anything other than `127.0.0.1`, set `BEANBOT_HEALTHCHECK_BEARER_TOKEN` and send `Authorization: Bearer <token>` from Home Assistant.
 
-The same listener also exposes dependency-free `GET /livez` and `HEAD /livez` liveness checks. `/livez` returns `200 OK` with only the non-secret build identity while the BeanBot process and Kestrel health surface can answer; it does not query Discord, MongoDB, external services, or persistence. It uses the same bearer-token policy, Kestrel limits, bounded client tracking, and poll interval as `/healthz` without opening another port.
+The same listener also exposes dependency-free `GET /livez` and `HEAD /livez` liveness checks. `/livez` returns `200 OK` with only the non-secret build identity while the BeanBot process and Kestrel health surface can answer; it does not query application lifecycle readiness, Discord, MongoDB, external services, or persistence. It uses the same bearer-token policy, Kestrel limits, bounded client tracking, and poll interval as `/healthz` without opening another port.
 
-Use `/livez` for process/container liveness and restart decisions, and use `/healthz` for application readiness/availability monitoring. A recoverable required-dependency outage may therefore produce `/healthz = 503` while `/livez = 200`; that divergence is expected. A supervisor should not restart BeanBot solely because readiness is temporarily unavailable unless its operational policy deliberately chooses to do so.
+Use `/livez` for process/container liveness and restart decisions, and use `/healthz` for application readiness/availability monitoring. Startup, graceful draining, or a recoverable required-dependency outage may therefore produce `/healthz = 503` while `/livez = 200`; that divergence is expected. Rollout and routing tooling should stop considering an instance available when `/healthz` becomes non-ready, while a supervisor should not restart BeanBot solely because readiness is temporarily unavailable unless its operational policy deliberately chooses to do so.
 
 ## Local Development
 
@@ -92,7 +94,7 @@ BeanBot remains a single application project, organized by responsibility:
 
 - `Configuration` binds and validates runtime settings.
 - `Discord` contains commands, event handlers, gateway lifecycle, messaging helpers, role-menu behavior, and legacy reaction-role behavior.
-- `Health` owns Gateway and MongoDB readiness snapshots and the authenticated `/healthz` endpoint.
+- `Health` owns process lifecycle, Gateway, and MongoDB readiness snapshots plus the authenticated `/healthz` endpoint.
 - `Hosting` composes the Generic Host and coordinates startup and shutdown.
 - `Logging` contains structured log messages and Discord owner-alert delivery.
 - `Persistence` contains runtime directory setup, persisted models, outage state, and MongoDB repositories.

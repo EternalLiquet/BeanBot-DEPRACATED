@@ -1,4 +1,5 @@
 using BeanBot.Discord.RoleMenus;
+using BeanBot.Health;
 using BeanBot.Persistence.Repositories;
 using Discord;
 using Discord.Interactions;
@@ -34,6 +35,9 @@ internal static class BeanBotInteractionServiceCollectionExtensions
         services.AddSingleton<BeanBotInteractionHostedService>();
         services.AddSingleton<IHostedService>(provider =>
             provider.GetRequiredService<BeanBotInteractionHostedService>());
+        services.AddSingleton<ApplicationReadinessHostedService>();
+        services.AddSingleton<IHostedService>(provider =>
+            provider.GetRequiredService<ApplicationReadinessHostedService>());
 
         return services;
     }
