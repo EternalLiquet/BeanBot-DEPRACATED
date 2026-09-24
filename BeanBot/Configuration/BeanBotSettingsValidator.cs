@@ -44,6 +44,7 @@ internal sealed class BeanBotSettingsValidator : IValidateOptions<BeanBotSetting
             "yoshimaruUrl",
             failures);
 
+        ValidateInteractionGuild(settings.InteractionGuildId, failures);
         ValidateDailyPun(settings.DailyPun, failures);
         ValidateHealthCheck(settings.HealthCheck, failures);
         ValidateNewMemberWelcome(settings.NewMemberWelcome, failures);
@@ -51,6 +52,26 @@ internal sealed class BeanBotSettingsValidator : IValidateOptions<BeanBotSetting
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);
+    }
+
+    private static void ValidateInteractionGuild(string? guildId, List<string> failures)
+    {
+        if (string.IsNullOrWhiteSpace(guildId))
+        {
+            return;
+        }
+
+        if (!ulong.TryParse(
+                guildId,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var parsedGuildId) ||
+            parsedGuildId == 0)
+        {
+            failures.Add(
+                $"Invalid value for {BeanBotConfiguration.InteractionGuildVariable}. " +
+                "Expected a non-zero Discord snowflake ID.");
+        }
     }
 
     private static void ValidateDailyPun(

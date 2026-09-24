@@ -5,8 +5,17 @@ namespace BeanBot.Logging;
 
 internal static partial class BeanBotLog
 {
-    [LoggerMessage(Level = LogLevel.Information, Message = "Discord application commands registered successfully")]
-    internal static partial void InteractionCommandsRegistered(ILogger logger);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Discord application-command registration scope selected. Scope={RegistrationScope}, GuildId={GuildId}")]
+    internal static partial void InteractionCommandRegistrationScopeSelected(
+        ILogger logger,
+        string registrationScope,
+        ulong? guildId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Discord application commands registered successfully. Scope={RegistrationScope}, GuildId={GuildId}")]
+    internal static partial void InteractionCommandsRegistered(
+        ILogger logger,
+        string registrationScope,
+        ulong? guildId);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Discord application-command registration failed")]
     internal static partial void InteractionCommandRegistrationFailed(ILogger logger, Exception exception);
