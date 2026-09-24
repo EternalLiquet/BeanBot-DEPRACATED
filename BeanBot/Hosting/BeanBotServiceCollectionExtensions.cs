@@ -27,18 +27,12 @@ namespace BeanBot.Hosting;
 
 internal static class BeanBotServiceCollectionExtensions
 {
-    internal static IServiceCollection AddBeanBot(
+    internal static IServiceCollection AddBeanBotOptions(
         this IServiceCollection services,
         IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
-
-        // Register the client as an existing singleton so the host container does not
-        // dispose it automatically. BeanBotApplication owns its conditional teardown
-        // because a timed-out Discord.Net startup operation may still be using it.
-        var discordClient = new DiscordSocketClient(DiscordSocketConfiguration.Create());
-        services.AddSingleton(discordClient);
 
         services.AddSingleton<IValidateOptions<BeanBotSettings>, BeanBotSettingsValidator>();
         services.AddOptions<BeanBotSettings>()
@@ -48,6 +42,25 @@ internal static class BeanBotServiceCollectionExtensions
             provider.GetRequiredService<IOptions<BeanBotSettings>>().Value));
         services.AddSingleton(provider => NewMemberWelcomeOptions.Create(
             provider.GetRequiredService<IOptions<BeanBotSettings>>().Value.NewMemberWelcome));
+
+        return services;
+    }
+
+    internal static IServiceCollection AddBeanBot(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        services.AddBeanBotOptions(configuration);
+
+        // Register the client as an existing singleton so the host container does not
+        // dispose it automatically. BeanBotApplication owns its conditional teardown
+        // because a timed-out Discord.Net startup operation may still be using it.
+        var discordClient = new DiscordSocketClient(DiscordSocketConfiguration.Create());
+        services.AddSingleton(discordClient);
+
         services.AddSingleton(_ => new CommandService(new CommandServiceConfig
         {
             LogLevel = LogSeverity.Verbose,

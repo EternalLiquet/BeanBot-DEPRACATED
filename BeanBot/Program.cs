@@ -20,13 +20,24 @@ internal static class Program
         Log.Logger = LogHandler.CreateBootstrapLogger();
         try
         {
+            var punResourcePath = Path.Combine(AppContext.BaseDirectory, "Resources", "puns.csv");
+            if (DeploymentPreflight.IsRequested(args))
+            {
+                return DeploymentPreflight.Run(
+                    args,
+                    DirectorySetup.botBaseDirectory,
+                    punResourcePath,
+                    Console.Out,
+                    Console.Error);
+            }
+
             DirectorySetup.MakeSureAllDirectoriesExist();
 
             if (args is [ContainerSmokeTest.Argument])
             {
                 return ContainerSmokeTest.Run(
                     DirectorySetup.botBaseDirectory,
-                    Path.Combine(AppContext.BaseDirectory, "Resources", "puns.csv"),
+                    punResourcePath,
                     Console.Out,
                     Console.Error);
             }
