@@ -45,7 +45,7 @@ public sealed class RoleMenuAdministrationService
             return new RoleMenuPreviewResult("Bean Bot couldn't refresh the current server role hierarchy. Try again in a moment.");
         }
 
-        var title = request.Title.Trim();
+        var title = request.Title?.Trim() ?? string.Empty;
         var description = request.Description?.Trim() ?? string.Empty;
         if (!TryParseAndValidateModal(
                 request,
@@ -186,6 +186,185 @@ public sealed class RoleMenuAdministrationService
                 menuId,
                 cancellationToken));
 
+    internal async Task<RoleMenuEditResult> EditAsync(
+        ObjectId menuId,
+        RoleMenuEditRequest request,
+        ulong guildId,
+        ulong administratorId,
+        ulong botUserId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var settings = await _roleMenuService.GetAsync(menuId, guildId, cancellationToken);
+        if (settings is null)
+        {
+            return new RoleMenuEditResult(
+                RoleMenuEditStatus.NotFound,
+                "That role menu was deleted or no longer exists in this server.");
+        }
+
+        if (settings.Id != menuId
+            || !RoleMenuSettingsParser.TryParse(settings, out var parsed, out _)
+            || parsed.GuildId != guildId)
+        {
+            return new RoleMenuEditResult(
+                RoleMenuEditStatus.InvalidStoredConfiguration,
+                "That saved role menu is invalid and cannot be edited safely. Use `/role-menu delete` to clean it up.");
+        }
+
+        var requestOptions = CreateRequestOptions(cancellationToken);
+        var currentAdministrator = await _discord.GetGuildUserAsync(
+            guildId,
+            administratorId,
+            requestOptions);
+        var currentBot = await _discord.GetGuildUserAsync(guildId, botUserId, requestOptions);
+        if (currentAdministrator is null || currentBot is null)
+        {
+            return new RoleMenuEditResult(
+                RoleMenuEditStatus.ValidationFailed,
+                "Bean Bot couldn't refresh the current server role hierarchy. Try again in a moment.");
+        }
+
+        var title = request.Title?.Trim() ?? string.Empty;
+        var description = request.Description?.Trim() ?? string.Empty;
+        if (!TryParseAndValidateEdit(
+                request,
+                currentAdministrator,
+                currentBot,
+                title,
+                description,
+                out var selectionMode,
+                out _,
+                out var validationMessage))
+        {
+            return new RoleMenuEditResult(
+                currentAdministrator.GuildPermissions.ManageRoles
+                    ? RoleMenuEditStatus.ValidationFailed
+                    : RoleMenuEditStatus.AuthorizationDenied,
+                validationMessage);
+        }
+
+        var targetChannel = await _discord.GetGuildTextChannelAsync(
+            guildId,
+            parsed.ChannelId,
+            requestOptions);
+        if (targetChannel is null)
+        {
+            return new RoleMenuEditResult(
+                RoleMenuEditStatus.PanelUnavailable,
+                "The saved target channel is missing or is no longer a normal text channel. The menu was not changed.");
+        }
+
+        var channelPermissionFailure = GetChannelPermissionFailure(currentBot, targetChannel);
+        if (channelPermissionFailure is not null)
+        {
+            return new RoleMenuEditResult(
+                RoleMenuEditStatus.ValidationFailed,
+                channelPermissionFailure.Replace("published", "updated", StringComparison.Ordinal));
+        }
+
+        var panelLookup = await _discord.ReadDeletionPanelAsync(
+            guildId,
+            menuId,
+            parsed.ChannelId,
+            parsed.MessageId,
+            cancellationToken);
+        if (!IsExpectedPanel(panelLookup, guildId, parsed.ChannelId, parsed.MessageId, botUserId))
+        {
+            return new RoleMenuEditResult(
+                RoleMenuEditStatus.PanelUnavailable,
+                "The saved message is missing or no longer matches Bean Bot's role-menu panel. Nothing was changed; use `/role-menu audit` or `/role-menu delete` to inspect it.");
+        }
+
+        var replacement = new RoleMenuSettings(
+            settings.Id,
+            settings.GuildId,
+            settings.ChannelId,
+            settings.MessageId,
+            title,
+            description,
+            request.RoleIds!.Select(roleId => roleId.ToString(CultureInfo.InvariantCulture)),
+            selectionMode)
+        {
+            CreatedAtUtc = settings.CreatedAtUtc
+        };
+        var commit = await RoleMenuEditWorkflow.ExecuteAsync(
+            replacement,
+            new RoleMenuEditCommitOperations(
+                (candidate, operationToken) =>
+                    _roleMenuService.UpsertAsync(candidate, operationToken),
+                (candidate, operationToken) => _discord.UpdatePanelAsync(
+                    guildId,
+                    menuId,
+                    parsed.ChannelId,
+                    parsed.MessageId,
+                    botUserId,
+                    candidate,
+                    operationToken),
+                () => _roleMenuService.IsShuttingDown),
+            cancellationToken);
+        LogEditFailures(menuId, commit.Failures);
+        return commit.Status switch
+        {
+            RoleMenuEditCommitStatus.Updated => new RoleMenuEditResult(
+                RoleMenuEditStatus.Updated,
+                "Role menu updated in place. The stable menu ID, channel, and message were preserved."),
+            RoleMenuEditCommitStatus.PersistenceOutcomeUnknown => new RoleMenuEditResult(
+                RoleMenuEditStatus.PersistenceOutcomeUnknown,
+                "Bean Bot couldn't confirm whether MongoDB saved the edit, so it left the public panel untouched. Reopen `/role-menu edit` to inspect persisted truth before retrying."),
+            RoleMenuEditCommitStatus.PanelMissing => new RoleMenuEditResult(
+                RoleMenuEditStatus.PanelUpdateFailed,
+                "The edited settings were saved and are now authoritative, but the public panel disappeared before Bean Bot could update it. Use `/role-menu audit` or `/role-menu delete` to reconcile the stale presentation."),
+            RoleMenuEditCommitStatus.PanelUnexpected => new RoleMenuEditResult(
+                RoleMenuEditStatus.PanelUpdateFailed,
+                "The edited settings were saved and are now authoritative, but the saved message stopped matching Bean Bot's panel before it could be updated. The message was left untouched; inspect it with `/role-menu audit`."),
+            RoleMenuEditCommitStatus.PanelOutcomeUnknown => new RoleMenuEditResult(
+                RoleMenuEditStatus.PanelOutcomeUnknown,
+                "The edited settings were saved and are now authoritative, but Bean Bot could not confirm the Discord panel update. It did not retry or publish a replacement. Inspect the existing message, then rerun the same edit to reconcile it safely."),
+            _ => throw new InvalidOperationException("Unknown role-menu edit result.")
+        };
+    }
+
+    private static bool IsExpectedPanel(
+        RoleMenuPanelLookupResult lookup,
+        ulong guildId,
+        ulong channelId,
+        ulong messageId,
+        ulong botUserId)
+        => lookup.Status == RoleMenuPanelLookupStatus.Found
+           && lookup.Panel is
+           {
+               HasManageButton: true
+           } panel
+           && panel.GuildId == guildId
+           && panel.ChannelId == channelId
+           && panel.MessageId == messageId
+           && panel.AuthorId == botUserId;
+
+    private void LogEditFailures(
+        ObjectId menuId,
+        IReadOnlyCollection<RoleMenuEditFailure> failures)
+    {
+        foreach (var failure in failures)
+        {
+            switch (failure.Phase)
+            {
+                case RoleMenuEditFailurePhase.Persistence:
+                    BeanBotLog.RoleMenuEditPersistenceFailed(
+                        _logger,
+                        menuId.ToString(),
+                        failure.Exception);
+                    break;
+                case RoleMenuEditFailurePhase.PanelUpdate:
+                    BeanBotLog.RoleMenuEditPanelUpdateFailed(
+                        _logger,
+                        menuId.ToString(),
+                        failure.Exception);
+                    break;
+            }
+        }
+    }
+
     internal async Task<RoleMenuDeletionResult> DeleteAsync(
         ObjectId menuId,
         ulong guildId,
@@ -271,7 +450,7 @@ public sealed class RoleMenuAdministrationService
                     messageId,
                     cancellationToken),
             (panel, cancellationToken) => _discord.DeleteDeletionPanelAsync(
-                    guildId,
+                guildId,
                 menuId,
                 panel,
                 cancellationToken),
@@ -296,3 +475,26 @@ internal sealed record RoleMenuPreviewResult(
     string Content,
     RoleMenuDraft? Draft = null,
     IReadOnlyCollection<RoleMenuRoleSnapshot>? Roles = null);
+
+internal sealed record RoleMenuEditRequest(
+    string Title,
+    string? Description,
+    string SelectionMode,
+    IReadOnlyCollection<ulong>? RoleIds);
+
+internal enum RoleMenuEditStatus
+{
+    Updated,
+    NotFound,
+    InvalidStoredConfiguration,
+    AuthorizationDenied,
+    ValidationFailed,
+    PanelUnavailable,
+    PersistenceOutcomeUnknown,
+    PanelUpdateFailed,
+    PanelOutcomeUnknown
+}
+
+internal sealed record RoleMenuEditResult(
+    RoleMenuEditStatus Status,
+    string Content);
