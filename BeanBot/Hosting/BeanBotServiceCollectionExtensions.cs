@@ -150,6 +150,7 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<FortuneResponseEditService>();
         services.AddSingleton<ReactionRoleRepository>();
         services.AddSingleton<ReactionRoleService>();
+        services.AddSingleton<LegacyReactionRoleSetupDiscordOperations>();
         services.AddSingleton<RoleMenuRepository>();
         services.AddSingleton<RoleMenuDraftRegistry>();
         services.AddSingleton(_ => new RoleMenuMutationCoordinator());
