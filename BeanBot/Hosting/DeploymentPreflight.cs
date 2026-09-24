@@ -39,7 +39,7 @@ internal static class DeploymentPreflight
 
         try
         {
-            var builder = Host.CreateApplicationBuilder(Array.Empty<string>());
+            var builder = Host.CreateApplicationBuilder([]);
             builder.Configuration.AddBeanBotConfiguration();
             return Run(
                 builder.Configuration,
