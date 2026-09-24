@@ -29,6 +29,18 @@ public class RoleMenuInteractionMetadataTests
     }
 
     [Fact]
+    public void MigrationCommand_IsPartOfExistingAdminModule()
+    {
+        var method = typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.MigrateAsync));
+
+        Assert.NotNull(method);
+        var slashCommand = method.GetCustomAttribute<SlashCommandAttribute>();
+        Assert.NotNull(slashCommand);
+        Assert.Equal("migrate", slashCommand.Name);
+        Assert.Equal(RunMode.Sync, slashCommand.RunMode);
+    }
+
+    [Fact]
     public void CreateModal_UsesNativeBoundedRoleAndTextChannelSelectors()
     {
         var roles = Assert.IsAssignableFrom<PropertyInfo>(
@@ -88,6 +100,7 @@ public class RoleMenuInteractionMetadataTests
         {
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.HandleCreateModalAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.PublishAsync)),
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ConfirmMigrationAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ConfirmDeleteAsync)),
             typeof(RoleMenuMemberModule).GetMethod(nameof(RoleMenuMemberModule.SaveAsync)),
             typeof(RoleMenuMemberModule).GetMethod(nameof(RoleMenuMemberModule.ClearAsync))

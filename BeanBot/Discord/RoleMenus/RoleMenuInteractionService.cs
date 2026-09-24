@@ -86,6 +86,27 @@ public sealed class RoleMenuInteractionService
             selectionMode,
             out draft);
 
+    internal RoleMenuDraftCreateStatus CreateMigrationDraft(
+        ulong guildId,
+        ulong userId,
+        ulong targetChannelId,
+        string title,
+        string description,
+        IReadOnlyCollection<ulong> roleIds,
+        ObjectId menuId,
+        ulong legacyReactionRoleMessageId,
+        out RoleMenuDraft? draft)
+        => _draftRegistry.CreateMigration(
+            guildId,
+            userId,
+            targetChannelId,
+            title,
+            description,
+            roleIds,
+            menuId,
+            legacyReactionRoleMessageId,
+            out draft);
+
     internal RoleMenuDraftAccessStatus TryBeginPublish(
         Guid draftId,
         ulong guildId,

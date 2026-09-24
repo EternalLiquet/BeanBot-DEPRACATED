@@ -16,26 +16,29 @@ using static BeanBot.Discord.RoleMenus.RoleMenuSetupValidation;
 
 namespace BeanBot.Discord.RoleMenus;
 
-[Group("role-menu", "Create and remove self-assignable role menus.")]
+[Group("role-menu", "Create, migrate, and remove self-assignable role menus.")]
 [CommandContextType(InteractionContextType.Guild)]
 [RequireContext(ContextType.Guild)]
 [RequireUserPermission(GuildPermission.ManageRoles)]
 [DefaultMemberPermissions(GuildPermission.ManageRoles)]
-public sealed class RoleMenuAdminModule : RoleMenuModuleBase
+public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
 {
     private readonly DiscordRoleMenuClient _discord;
     private readonly RoleMenuAdministrationService _administration;
+    private readonly RoleMenuMigrationService _migration;
     private readonly ILogger<RoleMenuAdminModule> _logger;
 
     public RoleMenuAdminModule(
         RoleMenuInteractionService roleMenuService,
         DiscordRoleMenuClient discord,
         RoleMenuAdministrationService administration,
+        RoleMenuMigrationService migration,
         ILogger<RoleMenuAdminModule> logger)
         : base(roleMenuService)
     {
         _discord = discord ?? throw new ArgumentNullException(nameof(discord));
         _administration = administration ?? throw new ArgumentNullException(nameof(administration));
+        _migration = migration ?? throw new ArgumentNullException(nameof(migration));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
