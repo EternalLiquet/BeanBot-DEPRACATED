@@ -50,6 +50,7 @@ BEANBOT_HEALTHCHECK_PORT=8080
 BEANBOT_HEALTHCHECK_BIND_ADDRESS=0.0.0.0
 BEANBOT_HEALTHCHECK_BEARER_TOKEN=
 BEANBOT_HEALTHCHECK_RATE_LIMIT_SECONDS=90
+BEANBOT_METRICS_ENABLED=false
 ```
 
 When `BEANBOT_HEALTHCHECK_PORT` is set, the bot exposes a Kestrel-hosted `GET /healthz` and `HEAD /healthz` endpoint on that port:
@@ -67,6 +68,8 @@ Mongo readiness uses a lightweight single-flight ping. A completed result is reu
 If you bind the endpoint to anything other than `127.0.0.1`, set `BEANBOT_HEALTHCHECK_BEARER_TOKEN` and send `Authorization: Bearer <token>` from Home Assistant.
 
 The same listener also exposes dependency-free `GET /livez` and `HEAD /livez` liveness checks. `/livez` returns `200 OK` with only the non-secret build identity while the BeanBot process and Kestrel health surface can answer; it does not query Discord, MongoDB, external services, or persistence. It uses the same bearer-token policy, Kestrel limits, bounded client tracking, and poll interval as `/healthz` without opening another port.
+
+Set `BEANBOT_METRICS_ENABLED=true` to opt in to `GET /metrics` and `HEAD /metrics` on that same listener. Metrics reuse the existing bearer-token policy, connection/request limits, bounded per-client polling, and shutdown lifecycle; they are disabled by default and enabling them does not send telemetry anywhere. Scrapes report only already-observed low-cardinality Discord and Mongo readiness state and never initiate a Discord API call or MongoDB probe. See the [Prometheus metrics guide](docs/prometheus-metrics.md) for the metric set, privacy/cardinality guarantees, authentication guidance, and a minimal scrape configuration.
 
 Use `/livez` for process/container liveness and restart decisions, and use `/healthz` for application readiness/availability monitoring. A recoverable required-dependency outage may therefore produce `/healthz = 503` while `/livez = 200`; that divergence is expected. A supervisor should not restart BeanBot solely because readiness is temporarily unavailable unless its operational policy deliberately chooses to do so.
 

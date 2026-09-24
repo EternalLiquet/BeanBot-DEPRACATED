@@ -34,12 +34,15 @@ internal static class BeanBotOptionsFactory
             ? 90
             : int.Parse(settings.RateLimitSeconds, NumberStyles.None, CultureInfo.InvariantCulture);
         var minimumPollInterval = TimeSpan.FromSeconds(rateLimitSeconds);
+        var metricsEnabled = !string.IsNullOrWhiteSpace(settings.MetricsEnabled)
+            && bool.Parse(settings.MetricsEnabled);
 
         return new HealthCheckOptions(
             true,
             bindAddress,
             port,
             settings.BearerToken,
-            minimumPollInterval);
+            minimumPollInterval,
+            metricsEnabled);
     }
 }

@@ -26,6 +26,7 @@ internal sealed class BeanBotHealthCheckSettings
     public string? BindAddress { get; set; }
     public string? BearerToken { get; set; }
     public string? RateLimitSeconds { get; set; }
+    public string? MetricsEnabled { get; set; }
 }
 
 internal sealed class BeanBotNewMemberWelcomeSettings
