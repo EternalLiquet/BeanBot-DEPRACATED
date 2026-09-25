@@ -2,10 +2,10 @@ using System.Net;
 using System.Net.Sockets;
 using BeanBot.Persistence.Models;
 using BeanBot.Persistence.Repositories;
-using Microsoft.Extensions.Logging.Abstractions;
-using MongoDB.Driver;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
+using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Driver;
 using Xunit;
 
 namespace BeanBot.Tests.Integration;
