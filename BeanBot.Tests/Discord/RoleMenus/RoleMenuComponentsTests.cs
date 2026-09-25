@@ -24,19 +24,18 @@ public class RoleMenuComponentsTests
     }
 
     [Fact]
-    public void BuildPublicEmbed_IncludesDeletionLookupIdAndMode()
+    public void BuildPublicEmbed_HidesInternalIdAndShowsMode()
     {
         var menuId = ObjectId.GenerateNewId();
 
         var embed = RoleMenuComponents.BuildPublicEmbed(
-            menuId,
             "Games",
             string.Empty,
             RoleMenuSelectionMode.Exclusive);
 
         Assert.True(embed.Footer.HasValue);
         var footer = embed.Footer.GetValueOrDefault();
-        Assert.Contains(menuId.ToString(), footer.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(menuId.ToString(), footer.Text, StringComparison.Ordinal);
         Assert.Contains("Choose one role", footer.Text, StringComparison.Ordinal);
         Assert.False(string.IsNullOrWhiteSpace(embed.Description));
     }
@@ -47,7 +46,6 @@ public class RoleMenuComponentsTests
         var menuId = ObjectId.GenerateNewId();
 
         var embed = RoleMenuComponents.BuildPublicEmbed(
-            menuId,
             "Games",
             "Choose the games you play.",
             RoleMenuSelectionMode.Multiple);
@@ -57,7 +55,7 @@ public class RoleMenuComponentsTests
         Assert.True(embed.Footer.HasValue);
         var footer = embed.Footer.GetValueOrDefault();
         Assert.Contains("Choose any combination", footer.Text, StringComparison.Ordinal);
-        Assert.Contains(menuId.ToString(), footer.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(menuId.ToString(), footer.Text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -279,17 +277,45 @@ public class RoleMenuComponentsTests
     }
 
     [Fact]
+    public void BuildDeleteSelector_OffersHumanReadableNextPage()
+    {
+        var menus = Enumerable.Range(0, 25)
+            .Select(index => CreateSettings(RoleMenuSelectionMode.Multiple, $"Menu {index}"))
+            .ToList();
+        foreach (var menu in menus)
+        {
+            menu.CreatedAtUtc = new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc);
+        }
+
+        var components = RoleMenuComponents.BuildDeleteSelector(
+            123UL, menus, _ => "roles", menus[^1]);
+        var select = GetSelect(components);
+        Assert.Equal(25, select.Options.Count);
+        Assert.All(select.Options, option =>
+        {
+            Assert.Contains("#roles", option.Description, StringComparison.Ordinal);
+            Assert.DoesNotContain(option.Value, option.Label, StringComparison.Ordinal);
+            Assert.DoesNotContain(option.Value, option.Description, StringComparison.Ordinal);
+        });
+        var next = Assert.IsType<ButtonComponent>(
+            Assert.Single(Assert.IsType<ActionRowComponent>(components.Components.ElementAt(1))
+                .Components));
+        Assert.Equal(RoleMenuCustomIds.DeletePage(123UL, menus[^1].CreatedAtUtc, menus[^1].Id),
+            next.CustomId);
+    }
+
+    [Fact]
     public void BuildDeleteConfirmationComponents_ContainsDeleteAndCancelActions()
     {
         const ulong userId = 123UL;
         var menuId = ObjectId.GenerateNewId();
 
         var buttons = GetButtons(
-            RoleMenuComponents.BuildDeleteConfirmationComponents(userId, menuId));
+            RoleMenuComponents.BuildDeleteConfirmationComponents(userId, menuId, 2UL, 3UL));
 
         var delete = Assert.Single(
             buttons,
-            button => button.CustomId == RoleMenuCustomIds.DeleteConfirm(userId, menuId));
+            button => button.CustomId == RoleMenuCustomIds.DeleteConfirm(userId, menuId, 2UL, 3UL));
         Assert.Equal("Delete", delete.Label);
         Assert.Equal(ButtonStyle.Danger, delete.Style);
         var cancel = Assert.Single(
@@ -297,6 +323,20 @@ public class RoleMenuComponentsTests
             button => button.CustomId == RoleMenuCustomIds.DeleteCancel(userId));
         Assert.Equal("Cancel", cancel.Label);
         Assert.Equal(ButtonStyle.Secondary, cancel.Style);
+    }
+
+    [Fact]
+    public void BuildDeleteConfirmationComponents_BindsTargetAndCleanupModeWithinDiscordLimit()
+    {
+        var menuId = ObjectId.GenerateNewId();
+        var components = RoleMenuComponents.BuildDeleteConfirmationComponents(
+            ulong.MaxValue, menuId, ulong.MaxValue, ulong.MaxValue, false);
+        var delete = Assert.Single(GetButtons(components), button => button.Style == ButtonStyle.Danger);
+
+        Assert.Equal(RoleMenuCustomIds.DeleteConfirm(
+            ulong.MaxValue, menuId, ulong.MaxValue, ulong.MaxValue, false), delete.CustomId);
+        Assert.EndsWith(":s", delete.CustomId, StringComparison.Ordinal);
+        Assert.True(delete.CustomId.Length <= ComponentBuilder.MaxCustomIdLength);
     }
 
     [Fact]
@@ -322,6 +362,8 @@ public class RoleMenuComponentsTests
         var embed = RoleMenuComponents.BuildDeleteConfirmationEmbed(settings);
 
         Assert.Contains("Untitled or stale role menu", embed.Description, StringComparison.Ordinal);
+        Assert.Contains("2 self-assignable roles", embed.Description, StringComparison.Ordinal);
+        Assert.Contains("Multiple selection", embed.Description, StringComparison.Ordinal);
     }
 
     [Fact]

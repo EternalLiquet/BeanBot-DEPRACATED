@@ -47,6 +47,35 @@ public class RoleMenuRepositoryTests
     }
 
     [Fact]
+    public async Task GetByMessageAsync_UsesCompletePublishedIdentity()
+    {
+        var settings = CreateSettings();
+        var store = new FakeStore
+        {
+            GetByMessage = (guild, channel, message, _) =>
+            {
+                Assert.Equal("1", guild);
+                Assert.Equal("2", channel);
+                Assert.Equal("3", message);
+                return Task.FromResult<RoleMenuSettings?>(settings);
+            }
+        };
+
+        Assert.Same(settings, await CreateRepository(store).GetByMessageAsync("1", "2", "3"));
+    }
+
+    [Fact]
+    public async Task GetPageAsync_RequiresBoundAndCompleteCursor()
+    {
+        var repository = CreateRepository(new FakeStore());
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            repository.GetPageAsync("1", null, null, 0));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            repository.GetPageAsync("1", DateTime.UtcNow, null, 25));
+    }
+
+    [Fact]
     public async Task UpsertAsync_PreservesExistingCreationTimeAndUpdatesUtcTimestamp()
     {
         var settings = CreateSettings();
@@ -135,6 +164,11 @@ public class RoleMenuRepositoryTests
             = (_, _) => Task.CompletedTask;
         public Func<ObjectId, string, CancellationToken, Task<RoleMenuSettings?>> GetById
         { get; init; } = (_, _, _) => Task.FromResult<RoleMenuSettings?>(null);
+        public Func<string, string, string, CancellationToken, Task<RoleMenuSettings?>> GetByMessage
+        { get; init; } = (_, _, _, _) => Task.FromResult<RoleMenuSettings?>(null);
+        public Func<string, DateTime?, ObjectId?, int, CancellationToken,
+            Task<List<RoleMenuSettings>>> GetPage
+        { get; init; } = (_, _, _, _, _) => Task.FromResult(new List<RoleMenuSettings>());
         public Func<string, int, CancellationToken, Task<List<RoleMenuSettings>>> GetByGuild
         { get; init; } = (_, _, _) => Task.FromResult(new List<RoleMenuSettings>());
         public Func<ObjectId, string, CancellationToken, Task<bool>> Delete { get; init; }
@@ -150,6 +184,21 @@ public class RoleMenuRepositoryTests
             string guildId,
             CancellationToken cancellationToken)
             => GetById(id, guildId, cancellationToken);
+
+        public Task<RoleMenuSettings?> GetByMessageAsync(
+            string guildId,
+            string channelId,
+            string messageId,
+            CancellationToken cancellationToken)
+            => GetByMessage(guildId, channelId, messageId, cancellationToken);
+
+        public Task<List<RoleMenuSettings>> GetPageAsync(
+            string guildId,
+            DateTime? beforeCreatedAtUtc,
+            ObjectId? beforeId,
+            int maximumResults,
+            CancellationToken cancellationToken)
+            => GetPage(guildId, beforeCreatedAtUtc, beforeId, maximumResults, cancellationToken);
 
         public Task<List<RoleMenuSettings>> GetByGuildAsync(
             string guildId,

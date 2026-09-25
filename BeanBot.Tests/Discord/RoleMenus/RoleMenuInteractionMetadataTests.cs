@@ -29,6 +29,23 @@ public class RoleMenuInteractionMetadataTests
     }
 
     [Fact]
+    public void MessageCommand_IsGuildOnlyAndRequiresManageRoles()
+    {
+        var module = typeof(RoleMenuMessageCommandModule);
+        Assert.Equal(ContextType.Guild,
+            module.GetCustomAttribute<RequireContextAttribute>()?.Contexts);
+        Assert.Equal(GuildPermission.ManageRoles,
+            module.GetCustomAttribute<RequireUserPermissionAttribute>()?.GuildPermission);
+        Assert.Equal(GuildPermission.ManageRoles,
+            module.GetCustomAttribute<DefaultMemberPermissionsAttribute>()?.Permissions);
+        Assert.Equal([InteractionContextType.Guild],
+            module.GetCustomAttribute<CommandContextTypeAttribute>()?.ContextTypes);
+        Assert.Equal(RunMode.Sync,
+            module.GetMethod(nameof(RoleMenuMessageCommandModule.DeleteRoleMenuAsync))?
+                .GetCustomAttribute<MessageCommandAttribute>()?.RunMode);
+    }
+
+    [Fact]
     public void CreateModal_UsesNativeBoundedRoleAndTextChannelSelectors()
     {
         var roles = Assert.IsAssignableFrom<PropertyInfo>(

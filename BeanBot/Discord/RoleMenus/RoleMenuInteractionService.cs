@@ -125,6 +125,30 @@ public sealed class RoleMenuInteractionService
             maximumResults,
             cancellationToken);
 
+    internal Task<RoleMenuSettings?> GetByMessageAsync(
+        ulong guildId,
+        ulong channelId,
+        ulong messageId,
+        CancellationToken cancellationToken)
+        => _repository.GetByMessageAsync(
+            guildId.ToString(CultureInfo.InvariantCulture),
+            channelId.ToString(CultureInfo.InvariantCulture),
+            messageId.ToString(CultureInfo.InvariantCulture),
+            cancellationToken);
+
+    internal Task<List<RoleMenuSettings>> GetPageAsync(
+        ulong guildId,
+        DateTime? beforeCreatedAtUtc,
+        ObjectId? beforeId,
+        int maximumResults,
+        CancellationToken cancellationToken)
+        => _repository.GetPageAsync(
+            guildId.ToString(CultureInfo.InvariantCulture),
+            beforeCreatedAtUtc,
+            beforeId,
+            maximumResults,
+            cancellationToken);
+
     internal Task<bool> DeleteAsync(
         ObjectId id,
         ulong guildId,

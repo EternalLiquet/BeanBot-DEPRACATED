@@ -307,9 +307,7 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
         "delete",
         "Delete a published role menu and its saved configuration.",
         runMode: RunMode.Sync)]
-    public async Task DeleteAsync(
-        [Summary("menu-id", "Optional ID shown in the role panel footer")]
-        string? menuId = null)
+    public async Task DeleteAsync()
     {
         using var cancellation = RoleMenus.CreateOperationCancellation();
         await RoleMenus.ExecuteInitialResponseAsync(
@@ -329,41 +327,66 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(menuId))
+        await ShowDeletePageAsync(null, null, cancellation.Token);
+    }
+
+    [ComponentInteraction(
+        RoleMenuCustomIds.DeletePagePattern,
+        ignoreGroupNames: true,
+        runMode: RunMode.Sync)]
+    public async Task NextDeletePageAsync(
+        string userIdValue,
+        string ticksValue,
+        string menuIdValue)
+    {
+        using var cancellation = RoleMenus.CreateOperationCancellation();
+        if (!RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var boundUserId)
+            || boundUserId != Context.User.Id
+            || !long.TryParse(ticksValue, NumberStyles.None, CultureInfo.InvariantCulture, out var ticks)
+            || ticks < DateTime.MinValue.Ticks
+            || ticks > DateTime.MaxValue.Ticks
+            || !RoleMenuCustomIds.TryParseMenuId(menuIdValue, out var menuId)
+            || Context.Guild is null
+            || Context.Interaction is not SocketMessageComponent component
+            || !IsValidPrivateComponent(
+                component,
+                Context.Guild,
+                ComponentType.Button,
+                RoleMenuCustomIds.DeletePage(boundUserId, new DateTime(ticks, DateTimeKind.Utc), menuId)))
         {
-            if (!RoleMenuCustomIds.TryParseMenuId(menuId.Trim(), out var parsedMenuId))
-            {
-                await ReplaceResponseAsync(
-                    "That menu ID is invalid. Copy the ID from the role panel footer.",
-                    cancellation.Token);
-                return;
-            }
-
-            var settings = await RoleMenus.GetAsync(
-                parsedMenuId,
-                Context.Guild.Id,
+            await RespondToInvalidComponentAsync(
+                "That role-menu page belongs to another administrator or has expired.",
                 cancellation.Token);
-            if (settings is null)
-            {
-                await ReplaceResponseAsync(
-                    "No saved role menu with that ID exists in this server.",
-                    cancellation.Token);
-                return;
-            }
-
-            await ShowDeleteConfirmationAsync(settings, cancellation.Token);
             return;
         }
 
-        var menus = await RoleMenus.GetByGuildAsync(
-            Context.Guild.Id,
+        if (!await AcknowledgeEphemeralComponentAsync("Loading role menus…", cancellation.Token))
+        {
+            return;
+        }
+
+        await ShowDeletePageAsync(new DateTime(ticks, DateTimeKind.Utc), menuId, cancellation.Token);
+    }
+
+    private async Task ShowDeletePageAsync(
+        DateTime? beforeCreatedAtUtc,
+        ObjectId? beforeId,
+        CancellationToken cancellationToken)
+    {
+        var guild = Context.Guild!;
+        var menus = await RoleMenus.GetPageAsync(
+            guild.Id,
+            beforeCreatedAtUtc,
+            beforeId,
             RoleMenuConstants.MaximumListedMenus + 1,
-            cancellation.Token);
+            cancellationToken);
         if (menus.Count == 0)
         {
             await ReplaceResponseAsync(
-                "This server has no saved dropdown role menus.",
-                cancellation.Token);
+                beforeId.HasValue
+                    ? "There are no more saved role menus. Run `/role-menu delete` to start again."
+                    : "This server has no saved dropdown role menus.",
+                cancellationToken);
             return;
         }
 
@@ -371,11 +394,16 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
         var listedMenus = menus.Take(RoleMenuConstants.MaximumListedMenus).ToList();
         await ReplaceResponseAsync(
             hasMore
-                ? "Choose one of the 25 newest menus. For an older panel, rerun `/role-menu delete` " +
-                  "with the ID shown in its footer."
+                ? "Choose a role menu or open the next page."
                 : "Choose the role menu you want to delete.",
-            cancellation.Token,
-            components: RoleMenuComponents.BuildDeleteSelector(Context.User.Id, listedMenus));
+            cancellationToken,
+            components: RoleMenuComponents.BuildDeleteSelector(
+                Context.User.Id,
+                listedMenus,
+                channelIdValue => RoleMenuCustomIds.TryParseSnowflake(channelIdValue, out var channelId)
+                    ? guild.GetChannel(channelId)?.Name ?? "missing channel"
+                    : "invalid channel",
+                hasMore ? listedMenus[^1] : null));
     }
 
     [ComponentInteraction(
@@ -430,19 +458,28 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
         RoleMenuCustomIds.DeleteConfirmPattern,
         ignoreGroupNames: true,
         runMode: RunMode.Sync)]
-    public async Task ConfirmDeleteAsync(string userIdValue, string menuIdValue)
+    public async Task ConfirmDeleteAsync(
+        string userIdValue,
+        string menuIdValue,
+        string channelIdValue,
+        string messageIdValue,
+        string modeValue)
     {
         using var cancellation = RoleMenus.CreateOperationCancellation();
         if (!RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var boundUserId)
             || boundUserId != Context.User.Id
             || !RoleMenuCustomIds.TryParseMenuId(menuIdValue, out var menuId)
+            || !RoleMenuCustomIds.TryParseSnowflake(channelIdValue, out var channelId)
+            || !RoleMenuCustomIds.TryParseSnowflake(messageIdValue, out var messageId)
+            || modeValue is not ("p" or "s")
             || !TryGetGuildActors(out var guild, out _, out var bot)
             || Context.Interaction is not SocketMessageComponent component
             || !IsValidPrivateComponent(
                 component,
                 guild,
                 ComponentType.Button,
-                RoleMenuCustomIds.DeleteConfirm(boundUserId, menuId)))
+                RoleMenuCustomIds.DeleteConfirm(
+                    boundUserId, menuId, channelId, messageId, modeValue == "p")))
         {
             await RespondToInvalidComponentAsync(
                 "That deletion confirmation is invalid or belongs to another administrator.",
@@ -457,16 +494,36 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
             return;
         }
 
-        RoleMenuDeletionResult result;
+        RoleMenuDeletionResult? result;
         var mutationStarted = false;
         try
         {
-            result = await RoleMenus.RunMenuMutationAsync(
+            result = await RoleMenus.RunMenuMutationAsync<RoleMenuDeletionResult?>(
                 menuId,
-                operationToken =>
+                async operationToken =>
                 {
+                    var current = await RoleMenus.GetAsync(menuId, guild.Id, operationToken);
+                    if (current is null
+                        || current.GuildId != guild.Id.ToString(CultureInfo.InvariantCulture)
+                        || current.ChannelId != channelIdValue
+                        || current.MessageId != messageIdValue)
+                    {
+                        return null;
+                    }
+
+                    if (modeValue == "p")
+                    {
+                        var lookup = await _discord.ReadDeletionPanelAsync(
+                            guild.Id, menuId, channelId, messageId, operationToken);
+                        if (!RoleMenuPanelIdentity.MatchesConfirmation(
+                                current, guild.Id, channelId, messageId, bot.Id, lookup))
+                        {
+                            return null;
+                        }
+                    }
+
                     mutationStarted = true;
-                    return _administration.DeleteAsync(
+                    return await _administration.DeleteAsync(
                         menuId,
                         guild.Id,
                         bot.Id,
@@ -498,7 +555,10 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
             return;
         }
 
-        await SendFreshFeedbackAsync(FormatDeletion(result));
+        await SendFreshFeedbackAsync(result is null
+            ? "That panel or its saved configuration changed. No deletion was started. " +
+              "Open the current panel and try again."
+            : FormatDeletion(result));
     }
 
     [ComponentInteraction(
@@ -667,13 +727,39 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
     private async Task ShowDeleteConfirmationAsync(
         RoleMenuSettings settings,
         CancellationToken cancellationToken)
-        => await ReplaceResponseAsync(
-            "Confirm this destructive action.",
+    {
+        if (!RoleMenuCustomIds.TryParseSnowflake(settings.ChannelId, out var channelId)
+            || !RoleMenuCustomIds.TryParseSnowflake(settings.MessageId, out var messageId)
+            || Context.Guild is null)
+        {
+            await ReplaceResponseAsync(
+                "That role-menu configuration is invalid. No deletion was started.",
+                cancellationToken);
+            return;
+        }
+
+        var guild = Context.Guild;
+        var lookup = await _discord.ReadDeletionPanelAsync(
+            guild.Id, settings.Id, channelId, messageId, cancellationToken);
+        var currentPanel = RoleMenuPanelIdentity.MatchesConfirmation(
+            settings, guild.Id, channelId, messageId, guild.CurrentUser.Id, lookup);
+
+        await ReplaceResponseAsync(
+            currentPanel
+                ? "Confirm this destructive action."
+                : "The published panel could not be verified. Confirmation will only clean up " +
+                  "saved configuration when the existing safe deletion workflow permits it.",
             cancellationToken,
-            RoleMenuComponents.BuildDeleteConfirmationEmbed(settings),
+            RoleMenuComponents.BuildDeleteConfirmationEmbed(
+                settings,
+                guild.GetChannel(channelId)?.Name ?? "missing channel"),
             RoleMenuComponents.BuildDeleteConfirmationComponents(
                 Context.User.Id,
-                settings.Id));
+                settings.Id,
+                channelId,
+                messageId,
+                currentPanel));
+    }
 
     private async Task SendTerminalPublicationFeedbackAsync(
         ObjectId menuId,
