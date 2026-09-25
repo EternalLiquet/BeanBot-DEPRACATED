@@ -310,6 +310,20 @@ public class RoleMenuInteractionServiceTests
                     : null);
         }
 
+        public Task<RoleMenuSettings?> GetByMessageAsync(
+            string guildId, string channelId, string messageId, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(_settings?.GuildId == guildId
+                && _settings.ChannelId == channelId && _settings.MessageId == messageId
+                    ? _settings : null);
+        }
+
+        public Task<List<RoleMenuSettings>> GetPageAsync(
+            string guildId, DateTime? beforeCreatedAtUtc, ObjectId? beforeId,
+            int maximumResults, CancellationToken cancellationToken)
+            => GetByGuildAsync(guildId, maximumResults, cancellationToken);
+
         public Task<List<RoleMenuSettings>> GetByGuildAsync(
             string guildId,
             int maximumResults,

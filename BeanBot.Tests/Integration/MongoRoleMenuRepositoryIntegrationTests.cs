@@ -116,6 +116,46 @@ public sealed class MongoRoleMenuRepositoryIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task MessageLookupAndPages_StayGuildScopedAndReachOlderMenus()
+    {
+        var databaseName = $"BeanBotRoleMenuPages_{Guid.NewGuid():N}";
+        var client = new MongoClient(_fixture.ConnectionString);
+        var database = client.GetDatabase(databaseName);
+        try
+        {
+            using var cancellation = new CancellationTokenSource(OperationTimeout);
+            var repository = CreateRepository(database);
+            var menus = Enumerable.Range(1, 30)
+                .Select(number => new RoleMenuSettings(
+                    ObjectId.GenerateNewId(), "1", "20",
+                    number.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    $"Menu {number}", "", ["40"], RoleMenuSelectionMode.Multiple))
+                .ToList();
+            foreach (var menu in menus)
+            {
+                await repository.UpsertAsync(menu, cancellation.Token);
+            }
+
+            var first = await repository.GetPageAsync("1", null, null, 25, cancellation.Token);
+            Assert.Equal(25, first.Count);
+            var cursor = first[^1];
+            var second = await repository.GetPageAsync(
+                "1", cursor.CreatedAtUtc, cursor.Id, 25, cancellation.Token);
+            Assert.Equal(5, second.Count);
+            Assert.Equal(30, first.Concat(second).Select(menu => menu.Id).Distinct().Count());
+            Assert.Equal(menus[0].Id, (await repository.GetByMessageAsync(
+                "1", "20", "1", cancellation.Token))?.Id);
+            Assert.Null(await repository.GetByMessageAsync("2", "20", "1", cancellation.Token));
+            Assert.Null(await repository.GetByMessageAsync("1", "21", "1", cancellation.Token));
+        }
+        finally
+        {
+            using var cancellation = new CancellationTokenSource(OperationTimeout);
+            await client.DropDatabaseAsync(databaseName, cancellation.Token);
+        }
+    }
+
     private static RoleMenuRepository CreateRepository(IMongoDatabase database)
         => new(database, NullLogger<RoleMenuRepository>.Instance);
 

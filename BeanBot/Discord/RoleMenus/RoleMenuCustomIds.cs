@@ -13,7 +13,8 @@ internal static class RoleMenuCustomIds
     internal const string PublishPattern = "role-menu:publish:*";
     internal const string CancelPublishPattern = "role-menu:cancel-publish:*";
     internal const string DeleteSelectPattern = "role-menu:delete-select:*";
-    internal const string DeleteConfirmPattern = "role-menu:delete-confirm:*:*";
+    internal const string DeletePagePattern = "role-menu:delete-page:*:*:*";
+    internal const string DeleteConfirmPattern = "rm:dc:*:*:*:*:*";
     internal const string DeleteCancelPattern = "role-menu:delete-cancel:*";
 
     internal static string Manage(ObjectId menuId)
@@ -40,9 +41,21 @@ internal static class RoleMenuCustomIds
     internal static string DeleteSelect(ulong userId)
         => EnsureValid($"role-menu:delete-select:{userId.ToString(CultureInfo.InvariantCulture)}");
 
-    internal static string DeleteConfirm(ulong userId, ObjectId menuId)
+    internal static string DeletePage(ulong userId, DateTime createdAtUtc, ObjectId menuId)
+        => EnsureValid($"role-menu:delete-page:{userId.ToString(CultureInfo.InvariantCulture)}:" +
+            $"{createdAtUtc.Ticks.ToString(CultureInfo.InvariantCulture)}:{menuId}");
+
+    internal static string DeleteConfirm(
+        ulong userId,
+        ObjectId menuId,
+        ulong channelId,
+        ulong messageId,
+        bool requireCurrentPanel = true)
         => EnsureValid(
-            $"role-menu:delete-confirm:{userId.ToString(CultureInfo.InvariantCulture)}:{menuId}");
+            $"rm:dc:{userId.ToString(CultureInfo.InvariantCulture)}:{menuId}:" +
+            $"{channelId.ToString(CultureInfo.InvariantCulture)}:" +
+            messageId.ToString(CultureInfo.InvariantCulture) +
+            (requireCurrentPanel ? ":p" : ":s"));
 
     internal static string DeleteCancel(ulong userId)
         => EnsureValid($"role-menu:delete-cancel:{userId.ToString(CultureInfo.InvariantCulture)}");

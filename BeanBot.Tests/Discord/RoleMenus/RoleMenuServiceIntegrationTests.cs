@@ -234,6 +234,16 @@ public class RoleMenuServiceIntegrationTests
         public Task<RoleMenuSettings?> GetByIdAsync(ObjectId id, string guildId, CancellationToken cancellationToken)
             => Task.FromResult(Settings?.Id == id && Settings.GuildId == guildId ? Settings : null);
 
+        public Task<RoleMenuSettings?> GetByMessageAsync(
+            string guildId, string channelId, string messageId, CancellationToken cancellationToken)
+            => Task.FromResult(Settings?.GuildId == guildId && Settings.ChannelId == channelId
+                && Settings.MessageId == messageId ? Settings : null);
+
+        public Task<List<RoleMenuSettings>> GetPageAsync(
+            string guildId, DateTime? beforeCreatedAtUtc, ObjectId? beforeId,
+            int maximumResults, CancellationToken cancellationToken)
+            => GetByGuildAsync(guildId, maximumResults, cancellationToken);
+
         public Task<List<RoleMenuSettings>> GetByGuildAsync(string guildId, int maximumResults,
             CancellationToken cancellationToken)
             => Task.FromResult<List<RoleMenuSettings>>(Settings?.GuildId == guildId ? [Settings] : []);

@@ -15,7 +15,6 @@ internal static class RoleMenuComponents
         "Choose the roles you want. You can update this at any time.";
 
     internal static Embed BuildPublicEmbed(
-        ObjectId menuId,
         string title,
         string description,
         RoleMenuSelectionMode selectionMode)
@@ -28,7 +27,7 @@ internal static class RoleMenuComponents
             .WithDescription(string.IsNullOrWhiteSpace(description)
                 ? DefaultDescription
                 : description)
-            .WithFooter($"Role menu • {modeText} • ID: {menuId}")
+            .WithFooter($"Role menu • {modeText}")
             .Build();
     }
 
@@ -138,7 +137,9 @@ internal static class RoleMenuComponents
 
     internal static MessageComponent BuildDeleteSelector(
         ulong userId,
-        IReadOnlyCollection<RoleMenuSettings> settings)
+        IReadOnlyCollection<RoleMenuSettings> settings,
+        Func<string, string>? channelName = null,
+        RoleMenuSettings? nextCursor = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         var selector = new SelectMenuBuilder()
@@ -154,6 +155,7 @@ internal static class RoleMenuComponents
             var date = menu.CreatedAtUtc == default
                 ? "Unknown creation date"
                 : menu.CreatedAtUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            var channel = channelName?.Invoke(menu.ChannelId);
             selector.AddOption(
                 RoleMenuText.TruncateWithEllipsis(
                     string.IsNullOrWhiteSpace(menu.Title)
@@ -162,14 +164,29 @@ internal static class RoleMenuComponents
                     SelectMenuOptionBuilder.MaxSelectLabelLength),
                 menu.Id.ToString(),
                 RoleMenuText.TruncateWithEllipsis(
-                    $"{mode} • {date}",
+                    channel is null ? $"{mode} • {date}" : $"#{channel} • {mode} • {date}",
                     SelectMenuOptionBuilder.MaxDescriptionLength));
         }
 
-        return new ComponentBuilder().WithSelectMenu(selector).Build();
+        var components = new ComponentBuilder().WithSelectMenu(selector);
+        if (nextCursor is not null)
+        {
+            components.WithButton(
+                "Next page",
+                DeletePageCustomId(userId, nextCursor),
+                ButtonStyle.Secondary,
+                row: 1);
+        }
+
+        return components.Build();
     }
 
-    internal static Embed BuildDeleteConfirmationEmbed(RoleMenuSettings settings)
+    private static string DeletePageCustomId(ulong userId, RoleMenuSettings cursor)
+        => RoleMenuCustomIds.DeletePage(userId, cursor.CreatedAtUtc, cursor.Id);
+
+    internal static Embed BuildDeleteConfirmationEmbed(
+        RoleMenuSettings settings,
+        string channelName = "unknown channel")
     {
         ArgumentNullException.ThrowIfNull(settings);
         var title = RoleMenuText.TruncateWithEllipsis(
@@ -178,21 +195,29 @@ internal static class RoleMenuComponents
                 : settings.Title,
             RoleMenuConstants.MaximumTitleLength);
 
+        var mode = settings.SelectionMode == RoleMenuSelectionMode.Exclusive
+            ? "Single selection"
+            : "Multiple selection";
         return new EmbedBuilder()
             .WithTitle("Delete role menu?")
             .WithDescription(
-                $"**{title}**\n\nThis removes the published panel and its saved configuration.")
+                $"**{title}**\n#{channelName}\n{settings.RoleIds.Count} self-assignable roles\n" +
+                $"{mode}\n\nThis removes the published panel and its saved configuration.")
             .WithColor(Color.Red)
             .Build();
     }
 
     internal static MessageComponent BuildDeleteConfirmationComponents(
         ulong userId,
-        ObjectId menuId)
+        ObjectId menuId,
+        ulong channelId,
+        ulong messageId,
+        bool requireCurrentPanel = true)
         => new ComponentBuilder()
             .WithButton(
                 "Delete",
-                RoleMenuCustomIds.DeleteConfirm(userId, menuId),
+                RoleMenuCustomIds.DeleteConfirm(
+                    userId, menuId, channelId, messageId, requireCurrentPanel),
                 ButtonStyle.Danger)
             .WithButton(
                 "Cancel",

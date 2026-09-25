@@ -27,7 +27,7 @@ Discord does not allow BeanBot to assign `@everyone`, integration-managed roles,
 
 The preview expires after 10 minutes. BeanBot holds at most 64 previews at once and replaces an administrator's previous preview in the same server when they create a new one. A failed persistence write rolls back the newly posted panel when Discord permits it. If BeanBot cannot confirm whether Discord posted the panel or MongoDB saved its settings, it closes the preview and disables automatic retry to avoid creating a duplicate. Inspect the target channel, remove any orphaned panel, and confirm the saved state before creating a replacement.
 
-Each public panel contains a stable **Manage Roles** button and its menu ID in the embed footer. Saved settings include the server, channel, message, title, description, allowlisted role IDs, selection mode, and UTC timestamps, so published panels continue to work after BeanBot restarts.
+Each public panel contains a stable **Manage Roles** button. Internal menu IDs stay in persistence and component routing, not in the public embed. Saved settings include the server, channel, message, title, description, allowlisted role IDs, selection mode, and UTC timestamps, so published panels continue to work after BeanBot restarts. Older panels retain their working controls and lose their old ID footer only if a later operation rewrites them.
 
 ## Member behavior
 
@@ -42,7 +42,7 @@ Submissions for the same member are serialized, including submissions from overl
 
 ## Delete a panel
 
-Run `/role-menu delete` to choose from the 25 newest saved menus. For an older menu, copy the ID from its panel footer and run `/role-menu delete menu-id:<id>`.
+Right-click the published panel and choose **Apps → Delete Role Menu**. BeanBot checks that the selected message is a current panel and shows a private confirmation with the title, channel, role count, and selection mode. **Cancel** leaves it unchanged. Administrators can also run `/role-menu delete` for a private selector. **Next page** reaches menus beyond the first 25 without a menu ID.
 
 Deletion requires a private confirmation. BeanBot deletes a matching BeanBot-owned panel before removing its saved configuration. A missing panel is treated as already removed. If the referenced message no longer looks like the saved BeanBot panel, it is left untouched while the stale configuration is removed. If Discord denies panel deletion, the saved configuration is retained so an administrator can correct permissions and retry.
 
@@ -58,9 +58,10 @@ Use a test server with BeanBot's role below one test role and above two other te
 6. Publish a single menu, switch between its roles, and confirm no gap is introduced when the replacement can be added.
 7. Delete one configured role in Discord and confirm the stale panel fails privately without changing any remaining or unrelated role.
 8. Restart BeanBot and confirm the remaining panels still work from their persisted configuration.
-9. Delete a panel through `/role-menu delete`, then confirm its old controls cannot mutate roles.
-10. Temporarily remove BeanBot's hierarchy or permissions and confirm operations fail privately without exposing exception details or changing unrelated roles.
-11. Use an existing legacy reaction-role panel and confirm its reactions still add and remove roles exactly as before.
+9. Right-click a published panel and choose **Apps → Delete Role Menu**. Cancel once, then confirm deletion and verify its old controls cannot mutate roles. Also verify a normal BeanBot message is rejected.
+10. Check that `/role-menu delete` lists human-readable menus, including an older menu reached through **Next page**.
+11. Temporarily remove BeanBot's hierarchy or permissions and confirm operations fail privately without exposing exception details or changing unrelated roles.
+12. Use an existing legacy reaction-role panel and confirm its reactions still add and remove roles exactly as before.
 
 ## Code organization
 
