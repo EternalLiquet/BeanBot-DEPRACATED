@@ -4,8 +4,8 @@ using BeanBot.Persistence.Models;
 using BeanBot.Persistence.Repositories;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
-using Testcontainers.Builders;
-using Testcontainers.Containers;
+using DotNet.Testcontainers.Builders;
+using DotNet.Testcontainers.Containers;
 using Xunit;
 
 namespace BeanBot.Tests.Integration;
