@@ -4,7 +4,8 @@ using BeanBot.Persistence.Models;
 using BeanBot.Persistence.Repositories;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
-using Testcontainers.MongoDb;
+using Testcontainers.Builders;
+using Testcontainers.Containers;
 using Xunit;
 
 namespace BeanBot.Tests.Integration;
@@ -157,11 +158,16 @@ public sealed class MongoDbIntegrationFixture : IAsyncLifetime
 {
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(30);
+    private const ushort MongoPort = 27017;
     private const string MongoImage =
         "mongo:8.2.12-noble@sha256:dc23b0dde2221277b581dd76933f39f8a765fee9dbd99b9deb19184c063c061f";
-    private readonly MongoDbContainer _container = new MongoDbBuilder(MongoImage).Build();
+    private readonly IContainer _container = new ContainerBuilder(MongoImage)
+        .WithPortBinding(MongoPort, true)
+        .WithWaitStrategy(Wait.ForUnixContainer().UntilMessageIsLogged("Waiting for connections"))
+        .Build();
 
-    public string ConnectionString => _container.GetConnectionString();
+    public string ConnectionString
+        => $"mongodb://{_container.Hostname}:{_container.GetMappedPublicPort(MongoPort)}";
 
     public async Task InitializeAsync()
     {
