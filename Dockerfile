@@ -16,7 +16,7 @@ RUN dotnet publish "BeanBot.csproj" -c Release -o /app/publish --no-restore \
 RUN test -s /app/publish/Resources/puns.csv \
     && mkdir -p /app/publish/BeanBotFiles/Logs
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra@sha256:6385dc0eaef704fad88d3f65c334e791a371bbe448f52ca39d83d2df49251e28 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra@sha256:00e0ad6a7ef8c0c1391b87f05c7ac757a15740455688f2bfcd146a3f4b987efd AS final
 WORKDIR /app
 
 ARG BEANBOT_VERSION=0.0.0-local
