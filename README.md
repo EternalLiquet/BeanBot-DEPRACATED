@@ -3,7 +3,9 @@
 
 # Bean Bot
 
-Bean Bot is a .NET 10 Discord bot with MongoDB-backed role reaction storage and a small set of server utilities.
+Bean Bot is a .NET 10 Discord bot with MongoDB-backed role menus, legacy reaction-role storage, and a small set of server utilities.
+
+Server administrators can publish persistent, dropdown-based self-service role panels with `/role-menu create`. See the [role-menu guide](docs/role-menus.md) for permissions, limits, deletion, and validation behavior.
 
 ## Configuration
 
@@ -18,6 +20,19 @@ BEANBOT_YOSHIMARU_URL=
 ```
 
 Configuration is bound through the .NET configuration and Options pipeline and validated when the host starts. Missing or malformed settings stop startup with messages that name the affected variable without printing its value. For backwards compatibility, the legacy variable names (`botToken`, `mongoConnectionString`, and so on) are still accepted, but the `BEANBOT_*` names are the intended format. Canonical names take precedence over legacy aliases, and real environment variables take precedence over values from `.env`.
+
+### New-member welcome DM
+
+New-member welcome DMs remain enabled by default and preserve BeanBot's existing welcome text when no override is configured. They can be disabled or customized without rebuilding the bot:
+
+```env
+BEANBOT_NEW_MEMBER_WELCOME_ENABLED=true
+BEANBOT_NEW_MEMBER_WELCOME_MESSAGE=Welcome to the server!
+```
+
+`BEANBOT_NEW_MEMBER_WELCOME_MESSAGE` is optional; leave it unset to use the built-in message. When welcomes are enabled, a configured message must be non-empty and no longer than Discord's 2,000-character message limit. Validation errors identify the setting but do not print the configured message body.
+
+Welcome delivery is intentionally decoupled from Discord's `UserJoined` Gateway callback. BeanBot admits human joins into a bounded in-memory queue, uses finite worker concurrency and bounded Discord REST waits, suppresses duplicate pending work for the same user, and does not retry a timed-out send because Discord delivery status may be ambiguous. During shutdown the queue stops accepting new work and is boundedly drained/canceled before Discord teardown; if a timed-out Discord operation still owns the client, BeanBot skips explicit Discord teardown and lets process exit reclaim it safely.
 
 ### Discord Gateway Intents
 
@@ -39,15 +54,21 @@ BEANBOT_HEALTHCHECK_RATE_LIMIT_SECONDS=90
 
 When `BEANBOT_HEALTHCHECK_PORT` is set, the bot exposes a Kestrel-hosted `GET /healthz` and `HEAD /healthz` endpoint on that port:
 
-- `200 OK`: process is up and the Discord gateway session is ready.
+- `200 OK`: process is up, the Discord gateway session is ready, and MongoDB passed a recent readiness probe.
 - `401 Unauthorized`: the bearer token is missing or invalid.
-- `503 Service Unavailable`: process is up, but Discord is not currently connected or ready.
+- `503 Service Unavailable`: process is up, but Discord is not ready or MongoDB is unavailable/stale.
 - `429 Too Many Requests`: the same client polled again before the configured rate limit expired.
 - no response / connection failure: the bot process is down or unreachable.
 
-Successful and unhealthy JSON responses also include the non-secret release version and Git commit SHA so an operator can identify the running image.
+Successful and unhealthy JSON responses include the non-secret release version and Git commit SHA, the existing Discord lifecycle fields, and sanitized `mongoReachable` / `mongoLastCheckedAtUtc` fields so an operator can distinguish Gateway and persistence readiness without exposing MongoDB connection details.
+
+Mongo readiness uses a lightweight single-flight ping. A completed result is reused for at most 10 seconds, and a stale result triggers a fresh probe. Each probe has a 2-second application-owned deadline. If the underlying driver call does not settle by that deadline, `/healthz` reports MongoDB unavailable while BeanBot retains ownership of that single late probe until it completes; later polls do not fan out additional Mongo operations. Recovery is reflected by the next probe after the cached unhealthy result expires, without restarting BeanBot.
 
 If you bind the endpoint to anything other than `127.0.0.1`, set `BEANBOT_HEALTHCHECK_BEARER_TOKEN` and send `Authorization: Bearer <token>` from Home Assistant.
+
+The same listener also exposes dependency-free `GET /livez` and `HEAD /livez` liveness checks. `/livez` returns `200 OK` with only the non-secret build identity while the BeanBot process and Kestrel health surface can answer; it does not query Discord, MongoDB, external services, or persistence. It uses the same bearer-token policy, Kestrel limits, bounded client tracking, and poll interval as `/healthz` without opening another port.
+
+Use `/livez` for process/container liveness and restart decisions, and use `/healthz` for application readiness/availability monitoring. A recoverable required-dependency outage may therefore produce `/healthz = 503` while `/livez = 200`; that divergence is expected. A supervisor should not restart BeanBot solely because readiness is temporarily unavailable unless its operational policy deliberately chooses to do so.
 
 ## Local Development
 
@@ -70,13 +91,30 @@ Repository changes use a Codex-native Planner → Implementer → Verifier → R
 BeanBot remains a single application project, organized by responsibility:
 
 - `Configuration` binds and validates runtime settings.
-- `Discord` contains commands, event handlers, gateway lifecycle, messaging helpers, and reaction-role behavior.
-- `Health` owns gateway health snapshots and the authenticated `/healthz` endpoint.
+- `Discord` contains commands, event handlers, gateway lifecycle, messaging helpers, role-menu behavior, and legacy reaction-role behavior.
+- `Health` owns Gateway and MongoDB readiness snapshots and the authenticated `/healthz` endpoint.
 - `Hosting` composes the Generic Host and coordinates startup and shutdown.
 - `Logging` contains structured log messages and Discord owner-alert delivery.
 - `Persistence` contains runtime directory setup, persisted models, outage state, and MongoDB repositories.
 
-Tests mirror these production responsibilities where useful, with cross-component scenarios kept under `BeanBot.Tests/Integration`.
+Within `Discord`, folders separate the command entry points from the behavior they call:
+
+| Folder | Responsibility |
+| --- | --- |
+| `Commands` | Prefix command modules, routing preconditions, and command feedback |
+| `Events` | Gateway event subscriptions and bounded event admission |
+| `Fortunes` | Fortune answers, overrides, question validation, and edited-response handling |
+| `Puns` | Pun data/provider and scheduled `DailyPunService` |
+| `Media` | External image/meme providers, request limits, and admission guards |
+| `Messaging` | Bounded sends, cleanup, message waiting, and pagination |
+| `ReactionRoles` | Legacy reaction-role assignment, cache, validation, and mutation coordination |
+| `RoleMenus` | Dropdown role-menu setup, member choices, publication, deletion, and reconciliation |
+| `Interactions` | Slash/component dispatch, registration, responses, and execution ownership |
+| `Lifecycle` | Discord startup, connection recovery, and outage notification |
+
+File names follow the main type they contain. Service and handler names describe their behavior: `ReactionRoleService`, `ReactionRoleHandler`, `FortuneResponseEditService`, and `FortuneMessageEditHandler`. Persistence uses `ReactionRoleSettings` and `ReactionRoleRepository`, distinguishing reaction roles from dropdown role menus while keeping existing stored collection and field names compatible.
+
+Tests mirror these production responsibilities where useful, with cross-component scenarios kept under `BeanBot.Tests/Integration`. Resources keep stable publish-relative names because those paths are part of the runtime contract.
 
 Repository-wide compiler settings are defined in `Directory.Build.props`, package
 versions in `Directory.Packages.props`, and formatting and naming conventions in
@@ -94,6 +132,7 @@ dotnet run --project BeanBot/BeanBot.csproj
 ```
 
 The bot requires access to the MongoDB instance configured by `BEANBOT_MONGO_CONNECTION_STRING`. If a `.env` file exists in the repo root, `dotnet run` loads it automatically.
+The scheduled daily pun also uses MongoDB for one bounded checkpoint document. BeanBot defaults to 16:20 America/Chicago, with a [configurable schedule](docs/daily-pun-schedule.md). If the process returns within 45 minutes after an occurrence and its local date has not yet been claimed, it performs a catch-up attempt. If the checkpoint cannot be trusted, the scheduler fails closed instead of risking a duplicate sequence.
 BeanBot runs through the .NET Generic Host, so Ctrl+C and normal process-stop signals trigger the same bounded graceful-shutdown path used in production.
 
 ## Docker

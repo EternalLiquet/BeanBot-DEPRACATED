@@ -170,6 +170,20 @@ def validate_workflows() -> None:
     producer_steps = {step.get("name"): step for step in producer.get("steps", [])}
     consumer_steps = {step.get("name"): step for step in consumer.get("steps", [])}
 
+    expected_producer_permissions = {
+        "contents": "read",
+        "packages": "write",
+        "id-token": "write",
+        "attestations": "write",
+    }
+    if producer.get("permissions") != expected_producer_permissions:
+        fail("release image job permissions must remain least-privilege for GHCR and attestations")
+    consumer_needs = consumer.get("needs", [])
+    if isinstance(consumer_needs, str):
+        consumer_needs = [consumer_needs]
+    if not isinstance(consumer_needs, list) or "verify-and-publish-image" not in consumer_needs:
+        fail("GitHub Release publication must depend on the verified image job succeeding")
+
     upload_step = producer_steps.get("Upload release evidence", {})
     download_step = consumer_steps.get("Download release evidence", {})
     upload_inputs = upload_step.get("with", {})
@@ -212,12 +226,57 @@ def validate_workflows() -> None:
 
     generate_step = producer_steps.get("Generate build provenance", {})
     verify_step = producer_steps.get("Verify existing build provenance", {})
+    sbom_attest_step = producer_steps.get("Attest image SBOM", {})
     if generate_step.get("if") != "steps.selected-image.outputs.provenance-action == 'generate'":
         fail("build provenance generation must be limited to the digest staged by this attempt")
     if verify_step.get("if") != "steps.selected-image.outputs.provenance-action == 'verify'":
         fail("reused image digests must take the existing-provenance verification path")
-    if not str(generate_step.get("uses", "")).startswith("actions/attest-build-provenance@"):
-        fail("newly staged images must use the pinned build-provenance action")
+
+    release_action_uses = [
+        str(step.get("uses", ""))
+        for job in release_jobs.values()
+        for step in job.get("steps", [])
+        if step.get("uses")
+    ]
+    for deprecated_action in ("actions/attest-build-provenance@", "actions/attest-sbom@"):
+        if any(action.startswith(deprecated_action) for action in release_action_uses):
+            fail(f"release workflow must not reference deprecated attestation wrapper: {deprecated_action}")
+
+    generate_action = str(generate_step.get("uses", ""))
+    sbom_action = str(sbom_attest_step.get("uses", ""))
+    if not generate_action.startswith("actions/attest@"):
+        fail("newly staged images must use the consolidated actions/attest action")
+    if sbom_action != generate_action:
+        fail("build provenance and SBOM attestation must use the same pinned actions/attest action")
+    if sum(action.startswith("actions/attest@") for action in release_action_uses) != 2:
+        fail("release workflow must use actions/attest exactly once for provenance and once for SBOM")
+
+    expected_subject_inputs = {
+        "subject-name": "${{ steps.selected-image.outputs.image-name }}",
+        "subject-digest": "${{ steps.selected-image.outputs.image-digest }}",
+        "push-to-registry": True,
+        "create-storage-record": False,
+    }
+    for step_name, step in (
+        ("Generate build provenance", generate_step),
+        ("Attest image SBOM", sbom_attest_step),
+    ):
+        inputs = step.get("with", {})
+        for input_name, expected_value in expected_subject_inputs.items():
+            if inputs.get(input_name) != expected_value:
+                fail(f"{step_name} has unexpected {input_name} input")
+        if step.get("continue-on-error", False):
+            fail(f"{step_name} must fail closed before evidence or publication")
+
+    generate_inputs = generate_step.get("with", {})
+    for custom_predicate_input in ("sbom-path", "predicate-type", "predicate", "predicate-path"):
+        if custom_predicate_input in generate_inputs:
+            fail("build provenance must use actions/attest provenance mode without a custom predicate")
+
+    sbom_inputs = sbom_attest_step.get("with", {})
+    if sbom_inputs.get("sbom-path") != ".artifacts/release/beanbot.spdx.json":
+        fail("SBOM attestation must bind the generated SPDX document")
+
     verify_script = verify_step.get("run", "")
     for fragment in (
         "./scripts/verify-release-provenance.sh",
@@ -234,13 +293,14 @@ def validate_workflows() -> None:
     generate_position = step_names.index("Generate build provenance")
     verify_position = step_names.index("Verify existing build provenance")
     sbom_position = step_names.index("Generate SPDX SBOM")
+    sbom_attest_position = step_names.index("Attest image SBOM")
     evidence_position = step_names.index("Upload release evidence")
     promotion_position = step_names.index("Promote immutable image tags")
     if not (
-        generate_position < sbom_position < evidence_position < promotion_position
-        and verify_position < sbom_position < evidence_position < promotion_position
+        generate_position < sbom_position < sbom_attest_position < evidence_position < promotion_position
+        and verify_position < sbom_position < sbom_attest_position < evidence_position < promotion_position
     ):
-        fail("provenance establishment must precede SBOM evidence and immutable tag promotion")
+        fail("provenance and SBOM attestation must precede evidence and immutable tag promotion")
 
     for fragment in ("fail-on-severity: high", "timeout-minutes:"):
         if fragment not in dependency_review:

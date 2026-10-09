@@ -11,12 +11,32 @@ public sealed class BeanBotOptions
         Uri hatoeteImageUrl,
         Uri yoshimaruImageUrl,
         HealthCheckOptions healthCheck)
+        : this(
+            botToken,
+            mongoConnectionString,
+            generalChannelId,
+            hatoeteImageUrl,
+            yoshimaruImageUrl,
+            DailyPunSchedule.CreateDefault(),
+            healthCheck)
+    {
+    }
+
+    public BeanBotOptions(
+        string botToken,
+        string mongoConnectionString,
+        ulong generalChannelId,
+        Uri hatoeteImageUrl,
+        Uri yoshimaruImageUrl,
+        DailyPunSchedule dailyPun,
+        HealthCheckOptions healthCheck)
     {
         BotToken = botToken;
         MongoConnectionString = mongoConnectionString;
         GeneralChannelId = generalChannelId;
         HatoeteImageUrl = hatoeteImageUrl;
         YoshimaruImageUrl = yoshimaruImageUrl;
+        DailyPun = dailyPun ?? throw new ArgumentNullException(nameof(dailyPun));
         HealthCheck = healthCheck;
     }
 
@@ -25,6 +45,7 @@ public sealed class BeanBotOptions
     public ulong GeneralChannelId { get; }
     public Uri HatoeteImageUrl { get; }
     public Uri YoshimaruImageUrl { get; }
+    public DailyPunSchedule DailyPun { get; }
     public HealthCheckOptions HealthCheck { get; }
 }
 

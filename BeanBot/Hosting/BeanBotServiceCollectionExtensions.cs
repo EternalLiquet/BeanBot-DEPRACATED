@@ -1,9 +1,13 @@
 using BeanBot.Configuration;
 using BeanBot.Discord.Commands;
 using BeanBot.Discord.Events;
+using BeanBot.Discord.Fortunes;
 using BeanBot.Discord.Lifecycle;
+using BeanBot.Discord.Media;
 using BeanBot.Discord.Messaging;
+using BeanBot.Discord.Puns;
 using BeanBot.Discord.ReactionRoles;
+using BeanBot.Discord.RoleMenus;
 using BeanBot.Health;
 using BeanBot.Logging;
 using BeanBot.Persistence;
@@ -42,9 +46,12 @@ internal static class BeanBotServiceCollectionExtensions
             .ValidateOnStart();
         services.AddSingleton(provider => BeanBotOptionsFactory.Create(
             provider.GetRequiredService<IOptions<BeanBotSettings>>().Value));
+        services.AddSingleton(provider => NewMemberWelcomeOptions.Create(
+            provider.GetRequiredService<IOptions<BeanBotSettings>>().Value.NewMemberWelcome));
         services.AddSingleton(_ => new CommandService(new CommandServiceConfig
         {
             LogLevel = LogSeverity.Verbose,
+            DefaultRunMode = RunMode.Sync,
             CaseSensitiveCommands = false
         }));
 
@@ -52,6 +59,9 @@ internal static class BeanBotServiceCollectionExtensions
             new MongoClient(provider.GetRequiredService<BeanBotOptions>().MongoConnectionString));
         services.AddSingleton<IMongoDatabase>(provider =>
             provider.GetRequiredService<MongoClient>().GetDatabase("BeanBotDB"));
+        services.AddSingleton<IDailyPunClaimStore, MongoDailyPunClaimStore>();
+        services.AddSingleton<IMongoReadinessProbe, MongoReadinessProbe>();
+        services.AddSingleton<MongoReadinessMonitor>();
 
         services.AddSingleton<DiscordConnectionHealth>();
         services.AddSingleton<DiscordLifecycleCoordinator>();
@@ -99,6 +109,11 @@ internal static class BeanBotServiceCollectionExtensions
             provider.GetRequiredService<DiscordOwnerErrorNotifier>());
         services.AddSingleton<DiscordOutageRecoveryNotifier>();
         services.AddSingleton<LogHandler>();
+        services.AddSingleton<LegacyCommandReplySender>();
+        services.AddSingleton<DiscordLegacyCommandFeedbackDelivery>();
+        services.AddSingleton<ILegacyCommandFeedbackDelivery>(provider =>
+            provider.GetRequiredService<DiscordLegacyCommandFeedbackDelivery>());
+        services.AddSingleton<LegacyCommandFeedbackResponder>();
 
         services.AddSingleton<DiscordGatewayRecoveryService>(provider =>
         {
@@ -117,22 +132,39 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<PunProvider>();
         services.AddSingleton<IPunProvider>(provider =>
             provider.GetRequiredService<PunProvider>());
+        services.AddSingleton(ExternalMediaCommandOptions.Default);
+        services.AddSingleton<ExternalMediaAdmissionGuard>();
+        services.AddSingleton<ExternalImageClient>();
+        services.AddSingleton<IExternalImageClient>(provider =>
+            provider.GetRequiredService<ExternalImageClient>());
+        services.AddSingleton<MemeProvider>();
+        services.AddSingleton<IMemeProvider>(provider =>
+            provider.GetRequiredService<MemeProvider>());
+        services.AddSingleton(NewMemberWelcomeRuntimeOptions.Default);
+        services.AddSingleton<DiscordNewMemberWelcomeDelivery>();
+        services.AddSingleton<INewMemberWelcomeDelivery>(provider =>
+            provider.GetRequiredService<DiscordNewMemberWelcomeDelivery>());
+        services.AddSingleton<NewMemberWelcomeService>();
         services.AddSingleton<DiscordMessageWaiter>();
         services.AddSingleton<DiscordPaginatorService>();
-        services.AddSingleton<EditMessageEventServices>();
-        services.AddSingleton<RoleReactRepository>();
-        services.AddSingleton<RoleReactService>();
+        services.AddSingleton<FortuneResponseEditService>();
+        services.AddSingleton<ReactionRoleRepository>();
+        services.AddSingleton<ReactionRoleService>();
+        services.AddSingleton<RoleMenuRepository>();
+        services.AddSingleton<RoleMenuDraftRegistry>();
+        services.AddSingleton(_ => new RoleMenuMutationCoordinator());
         services.AddSingleton<DiscordMessageCleanupService>();
 
         services.AddSingleton<CommandHandler>();
-        services.AddSingleton<PunHandler>();
-        services.AddSingleton<EditMessageHandler>();
+        services.AddSingleton<DailyPunService>();
+        services.AddSingleton<FortuneMessageEditHandler>();
         services.AddSingleton<NewMemberHandler>();
-        services.AddSingleton<ReactHandler>();
+        services.AddSingleton<ReactionRoleHandler>();
         services.AddSingleton<HealthCheckServer>(provider => new HealthCheckServer(
             provider.GetRequiredService<BeanBotOptions>().HealthCheck,
             provider.GetRequiredService<DiscordSocketClient>(),
             provider.GetRequiredService<DiscordConnectionHealth>(),
+            provider.GetRequiredService<MongoReadinessMonitor>(),
             provider.GetRequiredService<ILogger<HealthCheckServer>>()));
 
         services.AddSingleton<BeanBotRuntime>();

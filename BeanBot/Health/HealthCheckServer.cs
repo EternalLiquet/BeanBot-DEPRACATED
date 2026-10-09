@@ -26,6 +26,7 @@ public sealed class HealthCheckServer : IAsyncDisposable
     internal const int MaxHeaderCharacters = 32 * 1024;
     internal const int DefaultMaximumConcurrentClients = 64;
     internal const int DefaultMaximumTrackedRateLimitClients = 4096;
+    internal const string LivenessPath = "/livez";
     private static readonly TimeSpan DefaultRequestHeadersTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DefaultShutdownTimeout = TimeSpan.FromSeconds(1);
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -36,6 +37,7 @@ public sealed class HealthCheckServer : IAsyncDisposable
     private readonly object _syncRoot = new();
     private readonly HealthCheckOptions _options;
     private readonly Func<DiscordHealthSnapshot> _createHealthSnapshot;
+    private readonly Func<CancellationToken, Task<MongoReadinessSnapshot>> _getMongoReadinessSnapshot;
     private readonly TimeSpan _requestHeadersTimeout;
     private readonly TimeSpan _shutdownTimeout;
     private readonly int _maximumConcurrentClients;
@@ -49,10 +51,12 @@ public sealed class HealthCheckServer : IAsyncDisposable
         HealthCheckOptions options,
         DiscordSocketClient discordClient,
         DiscordConnectionHealth discordConnectionHealth,
+        MongoReadinessMonitor mongoReadinessMonitor,
         ILogger<HealthCheckServer> logger)
         : this(
             options,
             CreateSnapshotFactory(discordClient, discordConnectionHealth),
+            CreateMongoReadinessFactory(mongoReadinessMonitor),
             logger,
             DefaultRequestHeadersTimeout,
             DefaultMaximumConcurrentClients,
@@ -69,9 +73,31 @@ public sealed class HealthCheckServer : IAsyncDisposable
         int maximumConcurrentClients = DefaultMaximumConcurrentClients,
         int maximumTrackedRateLimitClients = DefaultMaximumTrackedRateLimitClients,
         TimeSpan? shutdownTimeout = null)
+        : this(
+            options,
+            createHealthSnapshot,
+            CreateAssumedMongoReadinessSnapshotAsync,
+            logger,
+            requestHeadersTimeout,
+            maximumConcurrentClients,
+            maximumTrackedRateLimitClients,
+            shutdownTimeout)
+    {
+    }
+
+    internal HealthCheckServer(
+        HealthCheckOptions options,
+        Func<DiscordHealthSnapshot> createHealthSnapshot,
+        Func<CancellationToken, Task<MongoReadinessSnapshot>> getMongoReadinessSnapshot,
+        ILogger<HealthCheckServer> logger,
+        TimeSpan? requestHeadersTimeout = null,
+        int maximumConcurrentClients = DefaultMaximumConcurrentClients,
+        int maximumTrackedRateLimitClients = DefaultMaximumTrackedRateLimitClients,
+        TimeSpan? shutdownTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(createHealthSnapshot);
+        ArgumentNullException.ThrowIfNull(getMongoReadinessSnapshot);
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumConcurrentClients);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumTrackedRateLimitClients);
@@ -83,6 +109,7 @@ public sealed class HealthCheckServer : IAsyncDisposable
 
         _options = options;
         _createHealthSnapshot = createHealthSnapshot;
+        _getMongoReadinessSnapshot = getMongoReadinessSnapshot;
         _logger = logger;
         _requestHeadersTimeout = effectiveRequestHeadersTimeout;
         _shutdownTimeout = effectiveShutdownTimeout;
@@ -225,6 +252,20 @@ public sealed class HealthCheckServer : IAsyncDisposable
         return () => discordConnectionHealth.CreateSnapshot(discordClient);
     }
 
+    private static Func<CancellationToken, Task<MongoReadinessSnapshot>> CreateMongoReadinessFactory(
+        MongoReadinessMonitor mongoReadinessMonitor)
+    {
+        ArgumentNullException.ThrowIfNull(mongoReadinessMonitor);
+        return mongoReadinessMonitor.GetSnapshotAsync;
+    }
+
+    private static Task<MongoReadinessSnapshot> CreateAssumedMongoReadinessSnapshotAsync(
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(new MongoReadinessSnapshot(true, DateTimeOffset.UnixEpoch));
+    }
+
     private WebApplication CreateApplication()
     {
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
@@ -247,6 +288,12 @@ public sealed class HealthCheckServer : IAsyncDisposable
         });
 
         var application = builder.Build();
+        application.MapWhen(
+            context => string.Equals(
+                context.Request.Path.Value,
+                LivenessPath,
+                StringComparison.OrdinalIgnoreCase),
+            branch => branch.Run(HandleLivenessRequestAsync));
         application.Run(HandleRequestAsync);
         return application;
     }
@@ -273,6 +320,61 @@ public sealed class HealthCheckServer : IAsyncDisposable
             .Where(port => port > 0)
             .DefaultIfEmpty(0)
             .Min();
+    }
+
+    private async Task HandleLivenessRequestAsync(HttpContext context)
+    {
+        context.Response.Headers.Connection = "close";
+        var isHeadRequest = HttpMethods.IsHead(context.Request.Method);
+        if (!HttpMethods.IsGet(context.Request.Method) && !isHeadRequest)
+        {
+            context.Response.Headers.Allow = "GET, HEAD";
+            await WritePlainTextResponseAsync(
+                context,
+                StatusCodes.Status405MethodNotAllowed,
+                "Only GET and HEAD are supported.",
+                suppressBody: false);
+            return;
+        }
+
+        if (!IsAuthorized(context.Request))
+        {
+            context.Response.Headers.WWWAuthenticate = "Bearer";
+            await WritePlainTextResponseAsync(
+                context,
+                StatusCodes.Status401Unauthorized,
+                "Missing or invalid bearer token.",
+                isHeadRequest);
+            return;
+        }
+
+        var clientIdentifier = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        if (_rateLimiter.IsRateLimited($"live|{clientIdentifier}", out var retryAfterSeconds))
+        {
+            context.Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+            await WriteJsonResponseAsync(
+                context,
+                StatusCodes.Status429TooManyRequests,
+                new
+                {
+                    status = "rate_limited",
+                    message = $"Wait {retryAfterSeconds} more seconds before polling {LivenessPath} again.",
+                    retryAfterSeconds
+                },
+                isHeadRequest);
+            return;
+        }
+
+        await WriteJsonResponseAsync(
+            context,
+            StatusCodes.Status200OK,
+            new
+            {
+                status = "alive",
+                version = BuildIdentity.Current.Version,
+                commitSha = BuildIdentity.Current.CommitSha
+            },
+            isHeadRequest);
     }
 
     private async Task HandleRequestAsync(HttpContext context)
@@ -328,27 +430,45 @@ public sealed class HealthCheckServer : IAsyncDisposable
             return;
         }
 
-        var healthSnapshot = _createHealthSnapshot();
+        var discordSnapshot = _createHealthSnapshot();
+        var mongoSnapshot = await _getMongoReadinessSnapshot(context.RequestAborted);
+        var isHealthy = discordSnapshot.IsHealthy && mongoSnapshot.IsReachable;
         await WriteJsonResponseAsync(
             context,
-            healthSnapshot.IsHealthy
+            isHealthy
                 ? StatusCodes.Status200OK
                 : StatusCodes.Status503ServiceUnavailable,
             new
             {
-                status = healthSnapshot.IsHealthy ? "ok" : "unhealthy",
+                status = isHealthy ? "ok" : "unhealthy",
                 version = BuildIdentity.Current.Version,
                 commitSha = BuildIdentity.Current.CommitSha,
-                discordConnected = healthSnapshot.IsHealthy,
-                message = healthSnapshot.StatusMessage,
-                loginState = healthSnapshot.LoginState,
-                connectionState = healthSnapshot.ConnectionState,
-                lastReadyAtUtc = healthSnapshot.LastReadyAtUtc,
-                lastDisconnectedAtUtc = healthSnapshot.LastDisconnectedAtUtc,
-                unhealthySinceAtUtc = healthSnapshot.UnhealthySinceAtUtc,
-                mostRecentDisconnectReason = healthSnapshot.MostRecentDisconnectReason
+                discordConnected = discordSnapshot.IsHealthy,
+                mongoReachable = mongoSnapshot.IsReachable,
+                mongoLastCheckedAtUtc = mongoSnapshot.LastCheckedAtUtc,
+                message = GetStatusMessage(discordSnapshot, mongoSnapshot),
+                loginState = discordSnapshot.LoginState,
+                connectionState = discordSnapshot.ConnectionState,
+                lastReadyAtUtc = discordSnapshot.LastReadyAtUtc,
+                lastDisconnectedAtUtc = discordSnapshot.LastDisconnectedAtUtc,
+                unhealthySinceAtUtc = discordSnapshot.UnhealthySinceAtUtc,
+                mostRecentDisconnectReason = discordSnapshot.MostRecentDisconnectReason
             },
             isHeadRequest);
+    }
+
+    private static string GetStatusMessage(
+        DiscordHealthSnapshot discordSnapshot,
+        MongoReadinessSnapshot mongoSnapshot)
+    {
+        if (!discordSnapshot.IsHealthy)
+        {
+            return discordSnapshot.StatusMessage;
+        }
+
+        return mongoSnapshot.IsReachable
+            ? discordSnapshot.StatusMessage
+            : "MongoDB is not reachable.";
     }
 
     private bool IsAuthorized(HttpRequest request)

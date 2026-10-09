@@ -41,6 +41,27 @@ public class DiscordLifecycleCoordinatorTests
     }
 
     [Fact]
+    public async Task UnfinishedOperationLateFailure_UsesLoggingFallbackAndReleasesOwnership()
+    {
+        var operation = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var coordinator = new DiscordLifecycleCoordinator(
+            NullLogger<DiscordLifecycleCoordinator>.Instance);
+
+        var outcome = await coordinator.RunSequenceAsync(
+            "recovery",
+            [new("logout", () => operation.Task)],
+            TimeSpan.FromMilliseconds(20),
+            CancellationToken.None);
+
+        Assert.Equal(DiscordLifecycleOutcomeKind.Unfinished, outcome.Kind);
+        Assert.True(coordinator.HasActiveSequence);
+
+        operation.SetException(new InvalidOperationException("late failure"));
+        await WaitUntilAsync(() => !coordinator.HasActiveSequence);
+    }
+
+    [Fact]
     public async Task CancellationAfterSequenceStartsLeavesOperationOwnedButDoesNotBlockLaterCleanup()
     {
         var operation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -1,9 +1,13 @@
-﻿using BeanBot.Configuration;
+using BeanBot.Configuration;
+using BeanBot.Discord.Fortunes;
+using BeanBot.Discord.Media;
 using BeanBot.Discord.Messaging;
+using BeanBot.Discord.Puns;
 using BeanBot.Logging;
 using Discord;
 using Discord.Commands;
 using MemeApiDotNetWrapper;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace BeanBot.Discord.Commands;
@@ -11,12 +15,20 @@ namespace BeanBot.Discord.Commands;
 [Name("Meme Commands")]
 public class MemeModule : ModuleBase<SocketCommandContext>
 {
-    private static readonly HttpClient HttpClient = new();
-    private readonly MemeMachine _memeMachine = new();
+    internal const string ExternalMediaBudgetKey = "external-media";
+    private const string ExternalMediaAdmissionRejectedMessage =
+        "That command is cooling down; try again in a few seconds.";
+
     private readonly BeanBotOptions _options;
     private readonly FortuneAnswerStore _fortuneAnswers;
     private readonly DiscordPaginatorService _paginator;
     private readonly IPunProvider _punProvider;
+    private readonly IExternalImageClient _externalImageClient;
+    private readonly IMemeProvider _memeProvider;
+    private readonly ExternalMediaCommandOptions _mediaOptions;
+    private readonly ExternalMediaAdmissionGuard _mediaAdmissionGuard;
+    private readonly IHostApplicationLifetime _applicationLifetime;
+    private readonly LegacyCommandReplySender _replySender;
     private readonly ILogger<MemeModule> _logger;
 
     public MemeModule(
@@ -24,12 +36,24 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         FortuneAnswerStore fortuneAnswers,
         DiscordPaginatorService paginator,
         IPunProvider punProvider,
+        IExternalImageClient externalImageClient,
+        IMemeProvider memeProvider,
+        ExternalMediaCommandOptions mediaOptions,
+        ExternalMediaAdmissionGuard mediaAdmissionGuard,
+        IHostApplicationLifetime applicationLifetime,
+        LegacyCommandReplySender replySender,
         ILogger<MemeModule> logger)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _fortuneAnswers = fortuneAnswers ?? throw new ArgumentNullException(nameof(fortuneAnswers));
         _paginator = paginator ?? throw new ArgumentNullException(nameof(paginator));
         _punProvider = punProvider ?? throw new ArgumentNullException(nameof(punProvider));
+        _externalImageClient = externalImageClient ?? throw new ArgumentNullException(nameof(externalImageClient));
+        _memeProvider = memeProvider ?? throw new ArgumentNullException(nameof(memeProvider));
+        _mediaOptions = mediaOptions ?? throw new ArgumentNullException(nameof(mediaOptions));
+        _mediaAdmissionGuard = mediaAdmissionGuard ?? throw new ArgumentNullException(nameof(mediaAdmissionGuard));
+        _applicationLifetime = applicationLifetime ?? throw new ArgumentNullException(nameof(applicationLifetime));
+        _replySender = replySender ?? throw new ArgumentNullException(nameof(replySender));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -65,7 +89,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     public async Task UserSucc([Summary("The (optional) user to succ")] params string[] input)
     {
         var userToSucc = NormalizeSuccTarget(input, Context.Message.Author.Mention);
-        await ReplyAsync($"*succ succ succ* lol you're gay {userToSucc}");
+        await ReplyWithReflectedContentAsync($"*succ succ succ* lol you're gay {userToSucc}");
     }
 
     [Command("2am")]
@@ -75,7 +99,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [RequireBotPermission(ChannelPermission.SendMessages)]
     public async Task McDonalds()
     {
-        await ReplyAsync("<:mcdonalds:661337575704887337>");
+        await _replySender.SendMessageAsync(Context, "<:mcdonalds:661337575704887337>");
     }
 
     [Command("fancy ocho ocho")]
@@ -87,14 +111,13 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         await ReplyWithOchoOcho();
     }
 
-
     [Command("420")]
     [Summary("Astolfour-twenty blaze it")]
     [Alias("blaze", "blaze it", "weed")]
     [RequireBotPermission(ChannelPermission.SendMessages)]
     public async Task BlazeIt()
     {
-        await ReplyAsync("<:420stolfoit:675553715759087618>");
+        await _replySender.SendMessageAsync(Context, "<:420stolfoit:675553715759087618>");
     }
 
     [Command("toes")]
@@ -104,7 +127,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [RequireBotPermission(ChannelPermission.AttachFiles)]
     public async Task Toes()
     {
-        await SendImageFromUrl(_options.HatoeteImageUrl);
+        await RunExternalMediaCommandAsync(() => SendImageFromUrl(_options.HatoeteImageUrl));
     }
 
     [Command("yoshimaru")]
@@ -114,7 +137,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [RequireBotPermission(ChannelPermission.AttachFiles)]
     public async Task YoshiMaru()
     {
-        await SendImageFromUrl(_options.YoshimaruImageUrl);
+        await RunExternalMediaCommandAsync(() => SendImageFromUrl(_options.YoshimaruImageUrl));
     }
 
     [Command("echo")]
@@ -131,7 +154,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         {
             BeanBotLog.EchoSourceDeleteFailed(_logger, Context.Message.Id, exception);
         }
-        await ReplyAsync(text);
+        await ReplyWithReflectedContentAsync(text);
     }
 
     [Command("8ball")]
@@ -157,31 +180,30 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [RequireBotPermission(ChannelPermission.SendMessages)]
     public async Task Meme(string subreddit = "")
     {
-        await InvokeMemeApi(subreddit);
+        await RunExternalMediaCommandAsync(() => InvokeMemeApi(subreddit));
     }
+
     private async Task InvokeMemeApi(string subreddit)
     {
         Meme? meme;
+        var cancellationToken = _applicationLifetime.ApplicationStopping;
         try
         {
-            if (string.IsNullOrEmpty(subreddit))
-            {
-                meme = await _memeMachine.GetMemeAsync();
-            }
-            else
-            {
-                meme = await _memeMachine.GetMemeAsync(subreddit);
-            }
+            meme = await _memeProvider.GetMemeAsync(subreddit, cancellationToken);
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            BeanBotLog.MemeApiFailed(_logger, ex);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            BeanBotLog.MemeApiFailed(_logger, exception);
             meme = null;
         }
 
         if (meme == null)
         {
-            await ReplyAsync("The meme machine is down, quick, call 911!");
+            await _replySender.SendMessageAsync(Context, "The meme machine is down, quick, call 911!");
         }
         else
         {
@@ -191,7 +213,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
                 Description = $"/r/{meme.SubReddit}",
                 ImageUrl = meme.ImageUrl
             };
-            await ReplyAsync(embed: memeBuilder.Build());
+            await _replySender.SendMessageAsync(Context, embed: memeBuilder.Build());
         }
     }
 
@@ -201,7 +223,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [RequireBotPermission(ChannelPermission.SendMessages)]
     public async Task NationalBird()
     {
-        await ReplyAsync("The Texas Offical National Bird is the AR-15");
+        await _replySender.SendMessageAsync(Context, "The Texas Offical National Bird is the AR-15");
     }
 
     [Command("texasnationalflower")]
@@ -209,7 +231,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     [Remarks("texasnationalflower")]
     public async Task NationalFlower()
     {
-        await ReplyAsync("The Texas Official National Flower is the Jimmy Dean breakfast taco");
+        await _replySender.SendMessageAsync(Context, "The Texas Official National Flower is the Jimmy Dean breakfast taco");
     }
 
     [Command("texasfacts")]
@@ -218,19 +240,18 @@ public class MemeModule : ModuleBase<SocketCommandContext>
     public async Task TexasFacts()
     {
         var fact = TexasFactResponses[Random.Shared.Next(TexasFactResponses.Length)];
-        await ReplyAsync($"Did you know: {fact}");
+        await _replySender.SendMessageAsync(Context, $"Did you know: {fact}");
     }
-
 
     private async Task ChooseRandomPun()
     {
         if (!_punProvider.TryGetRandomPun(out var pun))
         {
-            await ReplyAsync("The PunMaster is temporarily out of material.");
+            await _replySender.SendMessageAsync(Context, "The PunMaster is temporarily out of material.");
             return;
         }
 
-        await ReplyAsync(pun);
+        await _replySender.SendMessageAsync(Context, pun);
     }
 
     private async Task ChooseRandomAnswer(string question)
@@ -239,7 +260,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         if (responseOverride != null)
         {
             var hasQueuedAnswer = _fortuneAnswers.TryReserve(Context.Message.Author.Id, out var reservation);
-            await ReplyAsync($"> {question} \n{responseOverride}");
+            await ReplyWithReflectedContentAsync($"> {question} \n{responseOverride}");
             if (hasQueuedAnswer)
             {
                 _fortuneAnswers.Consume(reservation);
@@ -258,19 +279,19 @@ public class MemeModule : ModuleBase<SocketCommandContext>
                     if (reservation.Answer == "positive")
                     {
                         var answer = EightBallResponses[Random.Shared.Next(0, 3)];
-                        await ReplyAsync($"> {question} \n{answer}");
+                        await ReplyWithReflectedContentAsync($"> {question} \n{answer}");
                     }
                     else
                     {
                         var answer = EightBallResponses[Random.Shared.Next(3, 5)];
-                        await ReplyAsync($"> {question} \n{answer}");
+                        await ReplyWithReflectedContentAsync($"> {question} \n{answer}");
                     }
                     _fortuneAnswers.Consume(reservation);
                 }
                 else
                 {
                     var answer = EightBallResponses[Random.Shared.Next(EightBallResponses.Length)];
-                    await ReplyAsync($"> {question} \n{answer}");
+                    await ReplyWithReflectedContentAsync($"> {question} \n{answer}");
                 }
             }
         }
@@ -278,14 +299,31 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         {
             var gordonGif = Random.Shared.Next(1, 9);
             var rejection = $"> {question} \nThat is not a question";
+            var safeRejection = CreateMentionSafeReply(rejection);
             try
             {
-                await Context.Channel.SendFileAsync($"Resources/gordon{gordonGif}.gif", rejection);
+                await _replySender.SendFileAsync(
+                    Context,
+                    $"Resources/gordon{gordonGif}.gif",
+                    safeRejection.Content,
+                    safeRejection.AllowedMentions);
+            }
+            catch (LegacyCommandReplyTimeoutException)
+            {
+                throw;
+            }
+            catch (LegacyCommandReplyRejectedException)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception exception)
             {
                 BeanBotLog.GordonAttachmentFailed(_logger, exception);
-                await ReplyAsync(rejection);
+                await ReplyWithReflectedContentAsync(rejection);
             }
         }
     }
@@ -296,7 +334,7 @@ public class MemeModule : ModuleBase<SocketCommandContext>
             question.Contains("rigged", StringComparison.OrdinalIgnoreCase) && !question.Contains("not", StringComparison.OrdinalIgnoreCase) ||
             question.Contains("ban", StringComparison.OrdinalIgnoreCase) && question.Contains("padoru", StringComparison.OrdinalIgnoreCase) && !question.Contains("not", StringComparison.OrdinalIgnoreCase))
         {
-            await ReplyAsync($"> {question} \nThe spirit of Texas tells me No");
+            await ReplyWithReflectedContentAsync($"> {question} \nThe spirit of Texas tells me No");
         }
         else
         {
@@ -304,17 +342,17 @@ public class MemeModule : ModuleBase<SocketCommandContext>
             if (chance >= 1 && chance <= 10)
             {
                 var positiveAns = EightBallResponses[Random.Shared.Next(0, 3)];
-                await ReplyAsync($"> {question} \n{positiveAns}");
+                await ReplyWithReflectedContentAsync($"> {question} \n{positiveAns}");
             }
             else if (chance > 10 && chance <= 40)
             {
                 var negativeAns = EightBallResponses[Random.Shared.Next(3, 5)];
-                await ReplyAsync($"> {question} \n{negativeAns}");
+                await ReplyWithReflectedContentAsync($"> {question} \n{negativeAns}");
             }
             else
             {
                 var succAns = EightBallResponses[Random.Shared.Next(5, 8)];
-                await ReplyAsync($"> {question} \n{succAns}");
+                await ReplyWithReflectedContentAsync($"> {question} \n{succAns}");
             }
         }
     }
@@ -324,20 +362,79 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         return (Context.Message.Author.Id == 262010462323998720);
     }
 
+    private async Task RunExternalMediaCommandAsync(Func<Task> operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+
+        var result = await _mediaAdmissionGuard.RunAsync(
+            Context.Message.Author.Id,
+            ExternalMediaBudgetKey,
+            operation);
+        if (result == ExternalMediaAdmissionResult.Accepted)
+        {
+            return;
+        }
+
+        var rejection = CreateExternalMediaAdmissionReply();
+        await _replySender.SendMessageAsync(Context, rejection.Content, allowedMentions: rejection.AllowedMentions);
+    }
+
     private async Task SendImageFromUrl(Uri url)
     {
+        var cancellationToken = _applicationLifetime.ApplicationStopping;
+        byte[] imageContent;
         try
         {
-            using var response = await HttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
-            using Stream image = await response.Content.ReadAsStreamAsync();
-            await Context.Channel.SendFileAsync(image, "image.png");
+            imageContent = await _externalImageClient.DownloadImageAsync(url, cancellationToken);
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            BeanBotLog.ImageDownloadFailed(_logger, url, ex);
-            await ReplyAsync("I couldn't download that image right now.");
+            throw;
         }
+        catch (Exception exception)
+        {
+            await HandleExternalMediaFailureAsync("download", url, exception);
+            return;
+        }
+
+        try
+        {
+            await BoundedDiscordFileSender.SendAsync(
+                async (stream, requestOptions) =>
+                    await Context.Channel.SendFileAsync(
+                        stream,
+                        "image.png",
+                        options: requestOptions),
+                imageContent,
+                _mediaOptions.DiscordUploadTimeout,
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            await HandleExternalMediaFailureAsync("upload", url, exception);
+        }
+    }
+
+    private async Task HandleExternalMediaFailureAsync(string stage, Uri url, Exception exception)
+    {
+        BeanBotLog.ExternalMediaCommandFailed(
+            _logger,
+            stage,
+            GetSafeMediaSource(url),
+            exception.GetType().Name);
+        await _replySender.SendMessageAsync(Context, "I couldn't download that image right now.");
+    }
+
+    internal static string GetSafeMediaSource(Uri url)
+    {
+        ArgumentNullException.ThrowIfNull(url);
+        return url.GetComponents(
+            UriComponents.SchemeAndServer | UriComponents.Path,
+            UriFormat.SafeUnescaped);
     }
 
     internal static string NormalizeSuccTarget(IEnumerable<string> input, string authorMention)
@@ -357,6 +454,24 @@ public class MemeModule : ModuleBase<SocketCommandContext>
         }
 
         return target;
+    }
+
+    internal static (string Content, AllowedMentions AllowedMentions) CreateMentionSafeReply(string content)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        return (content, AllowedMentions.None);
+    }
+
+    internal static (string Content, AllowedMentions AllowedMentions) CreateExternalMediaAdmissionReply()
+        => (ExternalMediaAdmissionRejectedMessage, AllowedMentions.None);
+
+    private Task<IUserMessage> ReplyWithReflectedContentAsync(string content)
+    {
+        var reply = CreateMentionSafeReply(content);
+        return _replySender.SendMessageAsync(
+            Context,
+            reply.Content,
+            allowedMentions: reply.AllowedMentions);
     }
 
     private async Task ReplyWithOchoOcho()

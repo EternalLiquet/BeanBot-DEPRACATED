@@ -24,6 +24,43 @@
 - Keep `/healthz` truthful about process and gateway state. Do not weaken health authentication or rate limiting.
 - Preserve safe reaction-role persistence/cache consistency and cleanup behavior.
 
+## Customer-Facing Text
+
+This applies to everything a Discord member or administrator can read: replies, embeds, buttons, select options, placeholders, modal labels, slash-command and option descriptions, confirmations, and error messages. It applies to every feature, not only role menus. It is a review standard, not a guarantee that wording mistakes can never happen.
+
+- Write the way a helpful person would talk in Discord. Use ordinary words and short sentences. Avoid stiff, robotic, or filler phrasing.
+- Bean Bot speaks in the first person ("I couldn't…"). Address the reader as "you". Keep that voice consistent within a feature.
+- Routine success says what happened and stops. Do not add reassurance, recaps, or narration about how the result was checked.
+- Prompts and errors say what went wrong in plain terms and give the next safe step, such as the exact command to run again.
+- Keep internal state, protocol, and storage details (database names, "reconciliation", "committed", "configuration", "panel state", menu internals, exception text) out of routine copy. Put diagnostics in the existing safe logs. Mention saved data only when a partial failure makes it relevant, and then describe it plainly ("saved settings").
+- Partial and unknown results must stay truthful. Never imply full success, rollback, or "nothing changed" unless the code confirmed it. Say what was confirmed, what wasn't, and what to check before retrying, especially when a retry could create a duplicate.
+- Use correct singular and plural forms, and readable lists ("A", "A and B", "A, B, and C"). Cover zero, one, and many.
+- Don't accuse users. Expired, tampered, or foreign controls get a neutral "this has expired or belongs to someone else" message, while the server-side rejection stays in place.
+- Wording changes must not weaken permission or hierarchy checks, ephemeral privacy, user-bound controls, mention suppression, Discord length limits, cancellation, or persistence behavior.
+
+Examples:
+
+| Before | After |
+| --- | --- |
+| "Removed (1): Test Role" + "Bean Bot rechecked Discord's current role state. No roles outside this menu were changed." | "Removed Test Role." |
+| "Discord's current role state already matches your selection." | "You already have Gamer." |
+| "That role selection was invalid or had been tampered with. No roles were changed." | "That selection is no longer valid. Open the menu again and choose your roles. No roles were changed." |
+| "Confirm this destructive action." | "Delete this role menu?" |
+| "Role-menu deletion cancelled." | "Deletion cancelled." |
+| "The published panel is gone, but Bean Bot couldn't delete the saved configuration. Retry this command to finish cleanup." | "The menu message is gone, but I couldn't remove its saved settings. Run `/role-menu delete` again to finish." |
+
+Copy review checklist for any change that adds or edits user-visible text:
+
+- [ ] Would a regular server member understand this without knowing how Bean Bot works?
+- [ ] Does a success message say only what changed?
+- [ ] Does every error or prompt give a clear next step?
+- [ ] Are partial and unknown outcomes still accurate about what was and wasn't confirmed?
+- [ ] Are internal terms, IDs that aren't needed, and storage details kept out of routine copy and in the logs instead?
+- [ ] Are singular, plural, and empty cases correct?
+- [ ] Do labels and descriptions fit Discord's length limits?
+- [ ] Are related screens (create, preview, publish, edit, delete, cancel) worded consistently?
+- [ ] Were tests that assert the old text updated without dropping their behavioral checks?
+
 ## Development Loop
 
 - Use Planner → approved plan → Implementer → Verifier → Reviewer for coding changes.

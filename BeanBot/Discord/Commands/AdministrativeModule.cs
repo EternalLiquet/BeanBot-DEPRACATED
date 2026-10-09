@@ -25,102 +25,179 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
 
     internal readonly record struct RoleResolution(RoleResolutionStatus Status, ulong? RoleId);
 
-    private const int MaximumRolesPerGroup = 25;
     private static readonly TimeSpan InteractionTimeout = TimeSpan.FromSeconds(60);
-    private readonly RoleReactService _roleReactService;
+    private readonly ReactionRoleService _reactionRoleService;
     private readonly DiscordMessageCleanupService _messageCleanupService;
     private readonly DiscordMessageWaiter _messageWaiter;
+    private readonly LegacyCommandReplySender _replySender;
     private readonly ILogger<AdministrativeModule> _logger;
 
     public AdministrativeModule(
-        RoleReactService roleReactService,
+        ReactionRoleService reactionRoleService,
         DiscordMessageCleanupService messageCleanupService,
         DiscordMessageWaiter messageWaiter,
+        LegacyCommandReplySender replySender,
         ILogger<AdministrativeModule> logger)
     {
-        _roleReactService = roleReactService ?? throw new ArgumentNullException(nameof(roleReactService));
+        _reactionRoleService = reactionRoleService ?? throw new ArgumentNullException(nameof(reactionRoleService));
         _messageCleanupService = messageCleanupService ?? throw new ArgumentNullException(nameof(messageCleanupService));
         _messageWaiter = messageWaiter ?? throw new ArgumentNullException(nameof(messageWaiter));
+        _replySender = replySender ?? throw new ArgumentNullException(nameof(replySender));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    [Command("role setting", RunMode = RunMode.Async)]
-    [Summary("Will create a message for auto-role based on reactions")]
+    [Command("role setting", RunMode = RunMode.Sync)]
+    [Summary("Create a reaction-role panel; reply cancel at any setup prompt to stop.")]
     [Alias("rolesetting", "role settings", "rolesettings")]
     [Remarks("role setting")]
     [RequireGuild]
     [RequireUserPermission(GuildPermission.ManageRoles)]
-    [RequireBotPermission(GuildPermission.EmbedLinks)]
+    [RequireBotPermission(GuildPermission.ManageRoles)]
+    [RequireBotPermission(ChannelPermission.EmbedLinks | ChannelPermission.AddReactions)]
     public Task RoleSetting() => InvokeRoleSettingsAsync();
 
     internal async Task InvokeRoleSettingsAsync()
     {
         var messagesInInteraction = new List<IMessage> { Context.Message };
+        IDisposable? interactionSession = null;
+
+        async Task<SocketMessage?> WaitForReplyAsync()
+        {
+            var message = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
+            if (message is not null)
+            {
+                messagesInInteraction.Add(message);
+            }
+
+            return message;
+        }
+
+        async Task SendInputFeedbackAsync(string feedback)
+        {
+            messagesInInteraction.Add(await _replySender.SendMessageAsync(Context, feedback));
+        }
+
         try
         {
-            var roleEmotePairs = new List<RoleEmotePair>();
-            messagesInInteraction.Add(await ReplyAsync($"How many roles do you wish to configure? (1-{MaximumRolesPerGroup})"));
-            var amountMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
-            var roleCountResult = await GetRoleCountAsync(messagesInInteraction, amountMessage);
-            if (!roleCountResult.Success)
+            var sessionResult = _messageWaiter.AcquireInteractionSession(Context, out interactionSession);
+            var sessionFailureMessage = GetInteractionSessionFailureMessage(sessionResult);
+            if (sessionFailureMessage is not null)
+            {
+                messagesInInteraction.Add(await _replySender.SendMessageAsync(Context, sessionFailureMessage));
+                return;
+            }
+
+            async Task<LegacyRoleSetupInput.RoleChoice?> ResolveSelectedRoleAsync(SocketMessage message)
+            {
+                var role = await GetRoleAsync(messagesInInteraction, message);
+                return role is null ? null : new LegacyRoleSetupInput.RoleChoice(role.Id, role.Name);
+            }
+
+            async Task<ulong?> ResolveSelectedEmoteAsync(SocketMessage message)
+                => (await GetEmoteAsync(messagesInInteraction, message))?.Id;
+
+            var setup = await LegacyRoleSetupInput.RunAsync(
+                WaitForReplyAsync,
+                message => message.Content,
+                ResolveSelectedRoleAsync,
+                ResolveSelectedEmoteAsync,
+                SendInputFeedbackAsync);
+            if (setup is null)
             {
                 return;
             }
 
-            for (var index = 0; index < roleCountResult.RoleCount; index++)
-            {
-                messagesInInteraction.Add(await ReplyAsync("Which role would you like to set up?"));
-                var roleMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
-                var role = await GetRoleAsync(messagesInInteraction, roleMessage);
-                if (role == null)
-                {
-                    return;
-                }
-
-                messagesInInteraction.Add(await ReplyAsync($"Which emote would you like to set up with the role {role.Name}?"));
-                var emoteMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
-                var emote = await GetEmoteAsync(messagesInInteraction, emoteMessage);
-                if (emote == null)
-                {
-                    return;
-                }
-
-                if (roleEmotePairs.Any(pair =>
-                    pair.RoleId == role.Id.ToString(CultureInfo.InvariantCulture)
-                    || pair.EmojiId == emote.Id.ToString(CultureInfo.InvariantCulture)))
-                {
-                    messagesInInteraction.Add(await ReplyAsync("That role or emote is already being configured. Please start again."));
-                    return;
-                }
-
-                roleEmotePairs.Add(new RoleEmotePair(
-                    role.Id.ToString(CultureInfo.InvariantCulture),
-                    emote.Id.ToString(CultureInfo.InvariantCulture)));
-            }
-
-            messagesInInteraction.Add(await ReplyAsync("Please label this group of roles (i.e. Games, Position, NSFW, etc)."));
-            var labelMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
-            if (labelMessage == null)
-            {
-                messagesInInteraction.Add(await ReplyAsync("Time has expired, please try again."));
-                return;
-            }
-
-            messagesInInteraction.Add(labelMessage);
-            await ReactionRoleSetupTransaction.ExecuteAsync(
-                () => CreateRoleMessageAsync(roleEmotePairs, labelMessage.Content),
+            var roleEmotePairs = setup.Pairs;
+            var setupStatus = await ReactionRoleSetupTransaction.ExecuteIfAssignableAsync(
+                () => ValidateSelectedRoles(roleEmotePairs),
+                () => CreateRoleMessageAsync(roleEmotePairs, setup.Label),
                 async messageToListen =>
                 {
                     await AddRoleReactionsAsync(messageToListen, roleEmotePairs);
-                    await _roleReactService.SaveRoleSettings(roleEmotePairs, messageToListen);
+                    await _reactionRoleService.SaveRoleSettings(roleEmotePairs, messageToListen);
                 },
                 messageToListen => messageToListen.DeleteAsync(),
                 exception => BeanBotLog.IncompleteReactionRoleCleanupFailed(_logger, exception));
+            var setupFailure = GetRoleValidationMessage(setupStatus);
+            if (setupFailure is not null)
+            {
+                messagesInInteraction.Add(await SendRoleValidationMessageAsync(_replySender, Context, setupFailure));
+            }
         }
         finally
         {
+            interactionSession?.Dispose();
             await CleanUpMessagesAsync(messagesInInteraction);
         }
+    }
+
+    internal static string? GetInteractionSessionFailureMessage(InteractionSessionAcquireResult result)
+    {
+        return result switch
+        {
+            InteractionSessionAcquireResult.Acquired => null,
+            InteractionSessionAcquireResult.AlreadyActive =>
+                "A role setup is already active for you in this channel. Finish it before starting another.",
+            InteractionSessionAcquireResult.CapacityReached =>
+                "Bean Bot is already handling the maximum number of interactive setup sessions. Try again shortly.",
+            _ => throw new ArgumentOutOfRangeException(nameof(result), result, null)
+        };
+    }
+
+    internal static Task<IUserMessage> SendRoleValidationMessageAsync(
+        LegacyCommandReplySender replySender, ICommandContext context, string message)
+        => replySender.SendMessageAsync(context, message, allowedMentions: AllowedMentions.None);
+
+    internal static string? GetRoleValidationMessage(ReactionRoleAssignabilityStatus status)
+    {
+        return status switch
+        {
+            ReactionRoleAssignabilityStatus.Allowed => null,
+            ReactionRoleAssignabilityStatus.EveryoneRole =>
+                "The @everyone role cannot be used for self-assignment. Please start again.",
+            ReactionRoleAssignabilityStatus.ManagedRole =>
+                "That role is managed by Discord or an integration and cannot be self-assigned. Please start again.",
+            ReactionRoleAssignabilityStatus.BotMissingManageRoles =>
+                "Bean Bot needs the Manage Roles permission before this role can be configured. Please start again after fixing its permissions.",
+            ReactionRoleAssignabilityStatus.BotHierarchyTooLow =>
+                "Bean Bot's highest role must be above the selected role. Please move Bean Bot higher in the role list and start again.",
+            ReactionRoleAssignabilityStatus.InvokerHierarchyTooLow =>
+                "You can only configure roles below your highest role. Please choose a lower role and start again.",
+            ReactionRoleAssignabilityStatus.RoleMissing =>
+                "That role is no longer available. Please choose another role and start again.",
+            _ => throw new ArgumentOutOfRangeException(nameof(status), status, null)
+        };
+    }
+
+    private ReactionRoleAssignabilityStatus ValidateSelectedRoles(IEnumerable<RoleEmotePair> pairs)
+    {
+        var invokingUser = Context.Guild.GetUser(Context.User.Id);
+        if (invokingUser is null)
+        {
+            return ReactionRoleAssignabilityStatus.InvokerHierarchyTooLow;
+        }
+
+        var botUser = Context.Guild.CurrentUser;
+        foreach (var pair in pairs)
+        {
+            var role = ulong.TryParse(pair.RoleId, out var roleId) ? Context.Guild.GetRole(roleId) : null;
+            var status = ReactionRoleAssignabilityPolicy.EvaluateForSetup(
+                new ReactionRoleAssignabilityFacts(
+                    RoleExists: role is not null,
+                    IsEveryoneRole: role?.Id == Context.Guild.Id,
+                    IsManagedRole: role?.IsManaged ?? false,
+                    BotCanManageRoles: botUser.GuildPermissions.ManageRoles,
+                    TargetRolePosition: role?.Position ?? 0,
+                    BotHierarchy: botUser.Hierarchy),
+                invokerIsGuildOwner: invokingUser.Id == Context.Guild.OwnerId,
+                invokerHierarchy: invokingUser.Hierarchy);
+            if (status != ReactionRoleAssignabilityStatus.Allowed)
+            {
+                return status;
+            }
+        }
+
+        return ReactionRoleAssignabilityStatus.Allowed;
     }
 
     private async Task<IUserMessage> CreateRoleMessageAsync(IEnumerable<RoleEmotePair> roleEmotePairs, string roleGroupLabel)
@@ -135,7 +212,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         }
 
         roleEmbed.WithFooter(footer => footer.Text = $"Role Group: {roleGroupLabel}");
-        return await ReplyAsync(embed: roleEmbed.Build());
+        return await _replySender.SendMessageAsync(Context, embed: roleEmbed.Build());
     }
 
     private async Task AddRoleReactionsAsync(IUserMessage messageToListen, IEnumerable<RoleEmotePair> roleEmotePairs)
@@ -150,33 +227,14 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         }
     }
 
-    private async Task<(bool Success, int RoleCount)> GetRoleCountAsync(List<IMessage> messages, SocketMessage? response)
-    {
-        if (response == null)
-        {
-            messages.Add(await ReplyAsync("Time has expired, please try again."));
-            return (false, 0);
-        }
-
-        messages.Add(response);
-        if (!int.TryParse(response.Content, out var roleCount) || roleCount < 1 || roleCount > MaximumRolesPerGroup)
-        {
-            messages.Add(await ReplyAsync($"Please enter a whole number from 1 to {MaximumRolesPerGroup}."));
-            return (false, 0);
-        }
-
-        return (true, roleCount);
-    }
-
     private async Task<SocketRole?> GetRoleAsync(List<IMessage> messages, SocketMessage? response)
     {
         if (response == null)
         {
-            messages.Add(await ReplyAsync("Time has expired, please try again."));
+            messages.Add(await _replySender.SendMessageAsync(Context, "Time has expired, please try again."));
             return null;
         }
 
-        messages.Add(response);
         var availableRoles = Context.Guild.Roles.ToList();
         var roleResolution = ResolveRole(
             response.Content,
@@ -185,23 +243,55 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
 
         if (roleResolution.Status == RoleResolutionStatus.MultipleMentions)
         {
-            messages.Add(await ReplyAsync("Please mention only one role. Please start again."));
+            messages.Add(await _replySender.SendMessageAsync(Context, "Please mention only one role. Please start again."));
             return null;
         }
 
         if (roleResolution.Status == RoleResolutionStatus.AmbiguousName)
         {
-            messages.Add(await ReplyAsync("Multiple roles have that name. Please mention the role you want and start again."));
+            messages.Add(await _replySender.SendMessageAsync(
+                Context,
+                "Multiple roles have that name. Please mention the role you want and start again."));
             return null;
         }
 
         if (roleResolution.Status == RoleResolutionStatus.NotFound)
         {
-            messages.Add(await ReplyAsync($"The role {response.Content} does not exist. Please start again."));
+            messages.Add(await _replySender.SendMessageAsync(
+                Context,
+                $"The role {response.Content} does not exist. Please start again."));
             return null;
         }
 
-        return availableRoles.Single(role => role.Id == roleResolution.RoleId);
+        var role = availableRoles.Single(candidate => candidate.Id == roleResolution.RoleId);
+        var invokingUser = Context.User as SocketGuildUser ?? Context.Guild.GetUser(Context.User.Id);
+        if (invokingUser == null)
+        {
+            messages.Add(await _replySender.SendMessageAsync(
+                Context,
+                "Bean Bot could not verify your current role hierarchy. Please try again."));
+            return null;
+        }
+
+        var botUser = Context.Guild.CurrentUser;
+        var assignabilityStatus = ReactionRoleAssignabilityPolicy.EvaluateForSetup(
+            new ReactionRoleAssignabilityFacts(
+                RoleExists: true,
+                IsEveryoneRole: role.Id == Context.Guild.Id,
+                IsManagedRole: role.IsManaged,
+                BotCanManageRoles: botUser.GuildPermissions.ManageRoles,
+                TargetRolePosition: role.Position,
+                BotHierarchy: botUser.Hierarchy),
+            invokerIsGuildOwner: invokingUser.Id == Context.Guild.OwnerId,
+            invokerHierarchy: invokingUser.Hierarchy);
+        var validationMessage = GetRoleValidationMessage(assignabilityStatus);
+        if (validationMessage is not null)
+        {
+            messages.Add(await SendRoleValidationMessageAsync(_replySender, Context, validationMessage));
+            return null;
+        }
+
+        return role;
     }
 
     internal static RoleResolution ResolveRole(
@@ -250,16 +340,17 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
     {
         if (response == null)
         {
-            messages.Add(await ReplyAsync("Time has expired, please try again."));
+            messages.Add(await _replySender.SendMessageAsync(Context, "Time has expired, please try again."));
             return null;
         }
 
-        messages.Add(response);
         var emote = Context.Guild.Emotes.FirstOrDefault(candidate =>
             response.Content.Contains(candidate.Name, StringComparison.OrdinalIgnoreCase));
         if (emote == null)
         {
-            messages.Add(await ReplyAsync($"The emote {response.Content} does not exist. Please start again."));
+            messages.Add(await _replySender.SendMessageAsync(
+                Context,
+                $"The emote {response.Content} does not exist. Please start again."));
             return null;
         }
 

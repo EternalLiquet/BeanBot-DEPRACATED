@@ -1,7 +1,8 @@
-﻿using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using BeanBot.Discord;
 using BeanBot.Discord.Commands;
+using BeanBot.Discord.Fortunes;
 using BeanBot.Discord.Messaging;
 using BeanBot.Logging;
 using Discord.Commands;
@@ -13,13 +14,34 @@ namespace BeanBot.Discord.Events;
 
 public sealed class CommandHandler : IDisposable
 {
+    internal enum CommandPrefixKind
+    {
+        None,
+        Succ,
+        Mention,
+        Percent
+    }
+
+    internal enum CommandMessageRoute
+    {
+        Ignore,
+        PublishToMessageWaiter,
+        ExecuteCommand
+    }
+
     private readonly DiscordSocketClient _discordClient;
     private readonly CommandService _commandService;
     private readonly IServiceProvider _services;
     private readonly FortuneAnswerStore _fortuneAnswers;
     private readonly DiscordMessageWaiter _messageWaiter;
     private readonly LogHandler _logHandler;
+    private readonly LegacyCommandFeedbackResponder _feedbackResponder;
     private readonly ILogger<CommandHandler> _logger;
+    private readonly object _lifecycleGate = new();
+    private readonly LegacyCommandExecutionCoordinator _executionCoordinator = new();
+    private Task<LegacyCommandDrainResult>? _stopTask;
+    private Task? _completionUnsubscribeTask;
+    private bool _completionSubscribed;
     private bool _initialized;
 
     public CommandHandler(
@@ -33,6 +55,7 @@ public sealed class CommandHandler : IDisposable
         _commandService = commandService ?? throw new ArgumentNullException(nameof(commandService));
         _services = services ?? throw new ArgumentNullException(nameof(services));
         _logHandler = logHandler ?? throw new ArgumentNullException(nameof(logHandler));
+        _feedbackResponder = _services.GetRequiredService<LegacyCommandFeedbackResponder>();
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _fortuneAnswers = _services.GetRequiredService<FortuneAnswerStore>();
         _messageWaiter = _services.GetRequiredService<DiscordMessageWaiter>();
@@ -41,40 +64,69 @@ public sealed class CommandHandler : IDisposable
 
     public async Task InitializeCommandsAsync()
     {
-        if (_initialized)
+        lock (_lifecycleGate)
         {
-            return;
+            if (_initialized || _executionCoordinator.IsStopping)
+            {
+                return;
+            }
         }
 
         BeanBotLog.CommandsInstalling(_logger);
-        _discordClient.MessageReceived += HandleCommandAsync;
-        _commandService.CommandExecuted += _logHandler.LogCommands;
         await _commandService.AddModulesAsync(assembly: Assembly.GetEntryAssembly() ?? typeof(CommandHandler).Assembly,
                                               services: _services);
-        _initialized = true;
+
+        lock (_lifecycleGate)
+        {
+            if (_initialized || _executionCoordinator.IsStopping)
+            {
+                return;
+            }
+
+            _discordClient.MessageReceived += HandleCommandAsync;
+            _commandService.CommandExecuted += _logHandler.LogCommands;
+            _commandService.CommandExecuted += _feedbackResponder.RespondAsync;
+            _completionSubscribed = true;
+            _initialized = true;
+        }
+    }
+
+    internal Task<LegacyCommandDrainResult> StopAsync()
+    {
+        lock (_lifecycleGate)
+        {
+            if (_stopTask is not null)
+            {
+                return _stopTask;
+            }
+
+            _executionCoordinator.StopAdmission();
+            StopSubscriptionsCore();
+            _stopTask = DrainCommandsAsync();
+            return _stopTask;
+        }
     }
 
     public void Dispose()
     {
-        if (_initialized)
+        lock (_lifecycleGate)
         {
-            _discordClient.MessageReceived -= HandleCommandAsync;
-            _commandService.CommandExecuted -= _logHandler.LogCommands;
-            _initialized = false;
+            _executionCoordinator.StopAdmission();
+            StopSubscriptionsCore();
         }
-
     }
 
-    internal async Task HandleCommandAsync(SocketMessage messageEvent)
+    internal Task HandleCommandAsync(SocketMessage messageEvent)
     {
-        _messageWaiter.TryPublish(messageEvent);
         var discordMessage = messageEvent as SocketUserMessage;
         if (MessageIsSystemMessage(discordMessage))
         {
-            return; //Return and ignore if the message is a discord system message
+            return Task.CompletedTask;
         }
 
-        int argPos = 0;
+        var argPos = 0;
+        var commandPrefix = GetCommandPrefix(discordMessage, ref argPos);
+
         if (discordMessage.Author.Id == BotOwner.DiscordUserId &&
             discordMessage.Content.Contains("queue8", StringComparison.OrdinalIgnoreCase))
         {
@@ -82,27 +134,115 @@ public sealed class CommandHandler : IDisposable
                 discordMessage.Author.Id,
                 discordMessage.Content.Contains("yes", StringComparison.OrdinalIgnoreCase));
         }
-        if (!MessageHasCommandPrefix(discordMessage, ref argPos) ||
-            messageEvent.Author.IsBot)
+
+        var route = ResolveMessageRoute(
+            isSystemMessage: false,
+            messageEvent.Author.IsBot,
+            commandPrefix);
+        if (route == CommandMessageRoute.PublishToMessageWaiter)
         {
-            return; //Return and ignore if the discord message does not have the command prefixes or if the author of the message is a bot
+            _messageWaiter.TryPublish(messageEvent);
+            return Task.CompletedTask;
         }
 
-        var context = new SocketCommandContext(_discordClient, discordMessage);
-        await _commandService.ExecuteAsync(
-            context: context,
-            argPos: argPos,
-            services: _services);
+        if (route == CommandMessageRoute.Ignore)
+        {
+            return Task.CompletedTask;
+        }
+
+        var admissionResult = _executionCoordinator.TryStart(() =>
+        {
+            var context = new SocketCommandContext(_discordClient, discordMessage);
+            return _commandService.ExecuteAsync(
+                context: context,
+                argPos: argPos,
+                services: _services);
+        }, exception => LegacyCommandLog.LateFailure(_logger, exception), out _);
+
+        if (admissionResult == LegacyCommandAdmissionResult.RejectedCapacity)
+        {
+            LegacyCommandLog.CapacityRejected(
+                _logger,
+                _executionCoordinator.ActiveExecutionCount,
+                _executionCoordinator.MaximumConcurrentExecutions);
+        }
+        else if (admissionResult == LegacyCommandAdmissionResult.RejectedStopping)
+        {
+            LegacyCommandLog.ShutdownRejected(_logger);
+        }
+
+        return Task.CompletedTask;
     }
 
-    internal bool MessageHasCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
+    internal CommandPrefixKind GetCommandPrefix(SocketUserMessage discordMessage, ref int argPos)
     {
-        return (discordMessage.HasStringPrefix("succ ", ref argPos, StringComparison.OrdinalIgnoreCase) ||
-                        discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos) ||
-                        discordMessage.HasCharPrefix('%', ref argPos));
+        if (discordMessage.HasStringPrefix("succ ", ref argPos, StringComparison.OrdinalIgnoreCase))
+        {
+            return CommandPrefixKind.Succ;
+        }
+
+        if (discordMessage.HasMentionPrefix(_discordClient.CurrentUser, ref argPos))
+        {
+            return CommandPrefixKind.Mention;
+        }
+
+        return discordMessage.HasCharPrefix('%', ref argPos)
+            ? CommandPrefixKind.Percent
+            : CommandPrefixKind.None;
+    }
+
+    internal static CommandMessageRoute ResolveMessageRoute(
+        bool isSystemMessage,
+        bool isBot,
+        CommandPrefixKind commandPrefix)
+    {
+        if (isSystemMessage || isBot)
+        {
+            return CommandMessageRoute.Ignore;
+        }
+
+        return commandPrefix == CommandPrefixKind.None
+            ? CommandMessageRoute.PublishToMessageWaiter
+            : CommandMessageRoute.ExecuteCommand;
     }
 
     internal static bool MessageIsSystemMessage([NotNullWhen(false)] SocketUserMessage? discordMessage)
         => discordMessage == null;
 
+    private async Task<LegacyCommandDrainResult> DrainCommandsAsync()
+    {
+        var result = await _executionCoordinator.DrainAsync();
+        if (!result.IsDrained)
+        {
+            LegacyCommandLog.DrainTimedOut(
+                _logger,
+                result.SurvivingExecutionCount,
+                LegacyCommandExecutionCoordinator.DefaultDrainTimeout);
+        }
+
+        return result;
+    }
+
+    private void StopSubscriptionsCore()
+    {
+        if (_initialized)
+        {
+            _discordClient.MessageReceived -= HandleCommandAsync;
+            _initialized = false;
+        }
+
+        _completionUnsubscribeTask ??= UnsubscribeCompletionWhenDrainedAsync();
+    }
+
+    private async Task UnsubscribeCompletionWhenDrainedAsync()
+    {
+        await _executionCoordinator.WhenDrained.ConfigureAwait(false);
+        lock (_lifecycleGate)
+        {
+            if (!_completionSubscribed) return;
+            _commandService.CommandExecuted -= _feedbackResponder.RespondAsync;
+            _commandService.CommandExecuted -= _logHandler.LogCommands;
+            _completionSubscribed = false;
+        }
+    }
 }

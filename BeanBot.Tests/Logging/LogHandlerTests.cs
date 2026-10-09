@@ -1,3 +1,6 @@
+using System.Net;
+using System.Reflection;
+
 using BeanBot.Logging;
 
 using Discord;
@@ -139,6 +142,31 @@ public class LogHandlerTests
         Assert.DoesNotContain("Discord started", alert);
     }
 
+    [Fact]
+    public void GeneratedBeanBotLogs_RespectEnabledChecksAndEmitExactlyOnce()
+    {
+        var methods = typeof(BeanBotLog)
+            .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+            .Where(method => method.GetCustomAttribute<LoggerMessageAttribute>() is not null)
+            .OrderBy(method => method.Name, StringComparer.Ordinal)
+            .ToList();
+        Assert.NotEmpty(methods);
+
+        var enabledLogger = new RecordingLogger<LogHandlerTests>();
+        var disabledLogger = new RecordingLogger<LogHandlerTests>(enabled: false);
+        foreach (var method in methods)
+        {
+            var enabledCount = enabledLogger.Entries.Count;
+            InvokeGeneratedLog(method, enabledLogger);
+            Assert.Equal(enabledCount + 1, enabledLogger.Entries.Count);
+
+            InvokeGeneratedLog(method, disabledLogger);
+            Assert.Empty(disabledLogger.Entries);
+        }
+
+        Assert.Equal(methods.Count, enabledLogger.Entries.Count);
+    }
+
     private static Serilog.Core.Logger CreateProductionLogger(
         CapturingSerilogSink sink,
         CapturingNotifier notifier)
@@ -168,6 +196,70 @@ public class LogHandlerTests
             exception: null,
             static (state, _) => state);
 
+    private static void InvokeGeneratedLog(MethodInfo method, Microsoft.Extensions.Logging.ILogger logger)
+    {
+        var arguments = method
+            .GetParameters()
+            .Select(parameter => CreateGeneratedLogArgument(parameter, logger))
+            .ToArray();
+        method.Invoke(null, arguments);
+    }
+
+    private static object? CreateGeneratedLogArgument(
+        System.Reflection.ParameterInfo parameter,
+        Microsoft.Extensions.Logging.ILogger logger)
+    {
+        var parameterType = parameter.ParameterType;
+        if (typeof(Microsoft.Extensions.Logging.ILogger).IsAssignableFrom(parameterType))
+        {
+            if (!parameterType.IsInstanceOfType(logger))
+            {
+                throw new InvalidOperationException(
+                    $"The recording logger cannot satisfy {parameterType.FullName}.");
+            }
+
+            return logger;
+        }
+
+        if (parameterType == typeof(string))
+        {
+            return parameter.Name ?? "value";
+        }
+
+        if (typeof(Exception).IsAssignableFrom(parameterType))
+        {
+            return new InvalidOperationException("generated log coverage probe");
+        }
+
+        if (parameterType == typeof(Uri))
+        {
+            return new Uri("https://example.invalid/", UriKind.Absolute);
+        }
+
+        if (parameterType == typeof(IPAddress))
+        {
+            return IPAddress.Loopback;
+        }
+
+        if (parameterType == typeof(object))
+        {
+            return "value";
+        }
+
+        if (parameterType == typeof(LogLevel))
+        {
+            return LogLevel.Information;
+        }
+
+        if (parameterType.IsValueType)
+        {
+            return Activator.CreateInstance(parameterType);
+        }
+
+        throw new InvalidOperationException(
+            $"No deterministic generated-log argument exists for {parameterType.FullName}.");
+    }
+
     private sealed record LogEntry(
         LogLevel Level,
         Exception? Exception,
@@ -175,11 +267,18 @@ public class LogHandlerTests
 
     private sealed class RecordingLogger<T> : ILogger<T>
     {
+        private readonly bool _enabled;
+
+        public RecordingLogger(bool enabled = true)
+        {
+            _enabled = enabled;
+        }
+
         public List<LogEntry> Entries { get; } = [];
 
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
-        public bool IsEnabled(LogLevel logLevel) => true;
+        public bool IsEnabled(LogLevel logLevel) => _enabled;
 
         public void Log<TState>(
             LogLevel logLevel,
@@ -190,7 +289,8 @@ public class LogHandlerTests
         {
             var properties = state as IReadOnlyList<KeyValuePair<string, object?>>
                 ?? Array.Empty<KeyValuePair<string, object?>>();
-            Entries.Add(new LogEntry(logLevel, exception, properties));
+            _ = formatter(state, exception);
+            Entries.Add(new LogEntry(logLevel, exception, [.. properties]));
         }
     }
 

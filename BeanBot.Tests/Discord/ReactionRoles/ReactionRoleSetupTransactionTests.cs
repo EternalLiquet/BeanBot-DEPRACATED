@@ -5,6 +5,66 @@ namespace BeanBot.Tests.Discord.ReactionRoles;
 
 public class ReactionRoleSetupTransactionTests
 {
+    [Theory]
+    [InlineData((int)ReactionRoleAssignabilityStatus.RoleMissing)]
+    [InlineData((int)ReactionRoleAssignabilityStatus.EveryoneRole)]
+    [InlineData((int)ReactionRoleAssignabilityStatus.ManagedRole)]
+    [InlineData((int)ReactionRoleAssignabilityStatus.BotMissingManageRoles)]
+    [InlineData((int)ReactionRoleAssignabilityStatus.BotHierarchyTooLow)]
+    [InlineData((int)ReactionRoleAssignabilityStatus.InvokerHierarchyTooLow)]
+    public async Task ExecuteIfAssignableAsync_RejectedTargetNeverPublishesOrPersists(int rejectedStatus)
+    {
+        var published = 0;
+        var persisted = 0;
+        var deleted = 0;
+        var status = await ReactionRoleSetupTransaction.ExecuteIfAssignableAsync(
+            () => (ReactionRoleAssignabilityStatus)rejectedStatus,
+            () =>
+            {
+                published++;
+                return Task.FromResult("panel");
+            },
+            _ =>
+            {
+                persisted++;
+                return Task.CompletedTask;
+            },
+            _ =>
+            {
+                deleted++;
+                return Task.CompletedTask;
+            },
+            _ => throw new InvalidOperationException("No compensation should be needed."));
+
+        Assert.Equal((ReactionRoleAssignabilityStatus)rejectedStatus, status);
+        Assert.Equal(0, published);
+        Assert.Equal(0, persisted);
+        Assert.Equal(0, deleted);
+    }
+
+    [Fact]
+    public async Task ExecuteIfAssignableAsync_AllowedTargetPublishesBeforePersisting()
+    {
+        var operations = new List<string>();
+        var status = await ReactionRoleSetupTransaction.ExecuteIfAssignableAsync(
+            () => ReactionRoleAssignabilityStatus.Allowed,
+            () =>
+            {
+                operations.Add("publish");
+                return Task.FromResult("panel");
+            },
+            _ =>
+            {
+                operations.Add("persist");
+                return Task.CompletedTask;
+            },
+            _ => throw new InvalidOperationException("No rollback should be needed."),
+            _ => throw new InvalidOperationException("No compensation should be needed."));
+
+        Assert.Equal(ReactionRoleAssignabilityStatus.Allowed, status);
+        Assert.Equal(new[] { "publish", "persist" }, operations);
+    }
+
     [Fact]
     public async Task ExecuteAsync_SuccessDoesNotDeleteMessage()
     {
