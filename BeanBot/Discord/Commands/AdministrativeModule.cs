@@ -25,7 +25,6 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
 
     internal readonly record struct RoleResolution(RoleResolutionStatus Status, ulong? RoleId);
 
-    private const int MaximumRolesPerGroup = 25;
     private static readonly TimeSpan InteractionTimeout = TimeSpan.FromSeconds(60);
     private readonly ReactionRoleService _reactionRoleService;
     private readonly DiscordMessageCleanupService _messageCleanupService;
@@ -88,78 +87,30 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
                 return;
             }
 
-            var roleEmotePairs = new List<RoleEmotePair>();
-            messagesInInteraction.Add(await _replySender.SendMessageAsync(
-                Context,
-                $"How many roles do you wish to configure? (1-{MaximumRolesPerGroup}) Reply cancel to stop."));
-            var roleCountResult = await LegacyRoleSetupInput.ReadCountAsync(
-                WaitForReplyAsync, message => message.Content, SendInputFeedbackAsync);
-            if (roleCountResult.Status != LegacyRoleSetupInput.AnswerStatus.Accepted)
+            async Task<LegacyRoleSetupInput.RoleChoice?> ResolveSelectedRoleAsync(SocketMessage message)
+            {
+                var role = await GetRoleAsync(messagesInInteraction, message);
+                return role is null ? null : new LegacyRoleSetupInput.RoleChoice(role.Id, role.Name);
+            }
+
+            async Task<ulong?> ResolveSelectedEmoteAsync(SocketMessage message)
+                => (await GetEmoteAsync(messagesInInteraction, message))?.Id;
+
+            var setup = await LegacyRoleSetupInput.RunAsync(
+                WaitForReplyAsync,
+                message => message.Content,
+                ResolveSelectedRoleAsync,
+                ResolveSelectedEmoteAsync,
+                SendInputFeedbackAsync);
+            if (setup is null)
             {
                 return;
             }
 
-            for (var index = 0; index < roleCountResult.Count; index++)
-            {
-                messagesInInteraction.Add(await _replySender.SendMessageAsync(Context, "Which role would you like to set up? Reply cancel to stop."));
-                var roleAnswer = await LegacyRoleSetupInput.ReadNextAsync(
-                    WaitForReplyAsync, message => message.Content, SendInputFeedbackAsync);
-                if (roleAnswer.Status != LegacyRoleSetupInput.AnswerStatus.Accepted)
-                {
-                    return;
-                }
-
-                var role = await GetRoleAsync(messagesInInteraction, roleAnswer.Message);
-                if (role == null)
-                {
-                    return;
-                }
-
-                messagesInInteraction.Add(await _replySender.SendMessageAsync(
-                    Context,
-                    $"Which emote would you like to set up with the role {role.Name}? Reply cancel to stop."));
-                var emoteAnswer = await LegacyRoleSetupInput.ReadNextAsync(
-                    WaitForReplyAsync, message => message.Content, SendInputFeedbackAsync);
-                if (emoteAnswer.Status != LegacyRoleSetupInput.AnswerStatus.Accepted)
-                {
-                    return;
-                }
-
-                var emote = await GetEmoteAsync(messagesInInteraction, emoteAnswer.Message);
-                if (emote == null)
-                {
-                    return;
-                }
-
-                if (roleEmotePairs.Any(pair =>
-                    pair.RoleId == role.Id.ToString(CultureInfo.InvariantCulture)
-                    || pair.EmojiId == emote.Id.ToString(CultureInfo.InvariantCulture)))
-                {
-                    messagesInInteraction.Add(await _replySender.SendMessageAsync(
-                        Context,
-                        "That role or emote is already being configured. Please start again."));
-                    return;
-                }
-
-                roleEmotePairs.Add(new RoleEmotePair(
-                    role.Id.ToString(CultureInfo.InvariantCulture),
-                    emote.Id.ToString(CultureInfo.InvariantCulture)));
-            }
-
-            messagesInInteraction.Add(await _replySender.SendMessageAsync(
-                Context,
-                "Please label this group of roles (i.e. Games, Position, NSFW, etc). Reply cancel to stop."));
-            var labelAnswer = await LegacyRoleSetupInput.ReadNextAsync(
-                WaitForReplyAsync, message => message.Content, SendInputFeedbackAsync);
-            if (labelAnswer.Status != LegacyRoleSetupInput.AnswerStatus.Accepted)
-            {
-                return;
-            }
-
-            var labelMessage = labelAnswer.Message!;
+            var roleEmotePairs = setup.Pairs;
             var setupStatus = await ReactionRoleSetupTransaction.ExecuteIfAssignableAsync(
                 () => ValidateSelectedRoles(roleEmotePairs),
-                () => CreateRoleMessageAsync(roleEmotePairs, labelMessage.Content),
+                () => CreateRoleMessageAsync(roleEmotePairs, setup.Label),
                 async messageToListen =>
                 {
                     await AddRoleReactionsAsync(messageToListen, roleEmotePairs);
