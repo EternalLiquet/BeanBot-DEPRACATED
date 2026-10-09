@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# The harness asserts local defaults. Release-only overrides belong to the
+# parent verification run, not to this child process's fixture invocations.
+unset BEANBOT_VERIFY_DOCKER_TAG BEANBOT_BUILD_VERSION BEANBOT_BUILD_COMMIT_SHA
+
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 verify_script="$repository_root/scripts/verify.sh"
 real_python="$(command -v python3)"
@@ -128,6 +132,22 @@ assert_count 1 "|dotnet|test BeanBot.sln --configuration Release --no-build --se
 assert_count 1 "|python3|scripts/check-coverage.py .artifacts/TestResults .config/coverage-baseline.json .artifacts/coverage" "$full_log"
 assert_count 1 "|dotnet|list BeanBot.sln package --vulnerable --include-transitive --no-restore --format json --output-version 1" "$full_log"
 assert_count 1 "|docker|build --tag beanbot-verification:local --build-arg BEANBOT_VERSION=0.0.0-local --build-arg BEANBOT_COMMIT_SHA=0123456789abcdef0123456789abcdef01234567 ." "$full_log"
+
+release_log="$temporary_directory/release.log"
+(
+  cd /tmp
+  PATH="$stub_directory:$PATH" BEANBOT_VERIFY_TEST_LOG="$release_log" \
+    BEANBOT_VERIFY_REAL_PYTHON="$real_python" \
+    BEANBOT_BRANCH_INTEGRITY_CANDIDATE="fedcba9876543210fedcba9876543210fedcba98" \
+    BEANBOT_VERIFY_SKIP_SELF_TEST=1 \
+    BEANBOT_VERIFY_DOCKER_TAG="example/beanbot:release" \
+    BEANBOT_BUILD_VERSION="2.18.0" \
+    BEANBOT_BUILD_COMMIT_SHA="abcdef0123456789abcdef0123456789abcdef01" \
+    "$verify_script" full
+)
+assert_contains "$repository_root|docker|build --tag example/beanbot:release --build-arg BEANBOT_VERSION=2.18.0 --build-arg BEANBOT_COMMIT_SHA=abcdef0123456789abcdef0123456789abcdef01 ." "$release_log"
+assert_contains "$repository_root|docker|image inspect --format {{.Config.User}} example/beanbot:release" "$release_log"
+assert_not_contains "|docker|build --tag beanbot-verification:local" "$release_log"
 
 invalid_log="$temporary_directory/invalid.log"
 if PATH="$stub_directory:$PATH" BEANBOT_VERIFY_TEST_LOG="$invalid_log" \
