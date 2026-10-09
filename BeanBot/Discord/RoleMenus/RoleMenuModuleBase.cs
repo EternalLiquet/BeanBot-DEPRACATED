@@ -22,7 +22,7 @@ public abstract class RoleMenuModuleBase : InteractionModuleBase<SocketInteracti
             || !IsEphemeral(component))
         {
             await RespondToInvalidComponentAsync(
-                "That private role-menu control is invalid or expired.",
+                "These controls have expired. Run the command again.",
                 cancellationToken);
             return false;
         }
