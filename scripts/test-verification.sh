@@ -103,7 +103,7 @@ fast_log="$temporary_directory/fast.log"
 assert_contains "$repository_root|dotnet|restore BeanBot.sln --locked-mode" "$fast_log"
 assert_contains "$repository_root|dotnet|format BeanBot.sln --verify-no-changes --no-restore --severity warn" "$fast_log"
 assert_contains "$repository_root|dotnet|format BeanBot.sln --verify-no-changes --no-restore --diagnostics IDE0005" "$fast_log"
-assert_contains "$repository_root|dotnet|test BeanBot.sln --configuration Release --no-build" "$fast_log"
+assert_contains "$repository_root|dotnet|test BeanBot.sln --configuration Release --no-build --filter Category!=MongoIntegration" "$fast_log"
 assert_not_contains "|dotnet|list " "$fast_log"
 assert_not_contains "|docker|" "$fast_log"
 
@@ -128,8 +128,9 @@ assert_count 1 "|dotnet|restore BeanBot.sln --locked-mode" "$full_log"
 assert_count 1 "|dotnet|format BeanBot.sln --verify-no-changes --no-restore --severity warn" "$full_log"
 assert_count 1 "|dotnet|format BeanBot.sln --verify-no-changes --no-restore --diagnostics IDE0005" "$full_log"
 assert_count 1 "|dotnet|build BeanBot.sln --configuration Release --no-restore" "$full_log"
-assert_count 1 "|dotnet|test BeanBot.sln --configuration Release --no-build --settings coverage.runsettings --collect Code Coverage --results-directory .artifacts/TestResults" "$full_log"
-assert_count 1 "|python3|scripts/check-coverage.py .artifacts/TestResults .config/coverage-baseline.json .artifacts/coverage" "$full_log"
+assert_count 1 "|dotnet|test BeanBot.sln --configuration Release --no-build --filter Category!=MongoIntegration --settings coverage.runsettings --collect Code Coverage --results-directory .artifacts/TestResults" "$full_log"
+assert_count 1 "|python3|scripts/check-coverage.py .artifacts/TestResults .config/coverage-baseline-unit.json .artifacts/coverage" "$full_log"
+assert_not_contains "Category=MongoIntegration" "$full_log"
 assert_count 1 "|dotnet|list BeanBot.sln package --vulnerable --include-transitive --no-restore --format json --output-version 1" "$full_log"
 assert_count 1 "|docker|build --tag beanbot-verification:local --build-arg BEANBOT_VERSION=0.0.0-local --build-arg BEANBOT_COMMIT_SHA=0123456789abcdef0123456789abcdef01234567 ." "$full_log"
 
@@ -148,6 +149,33 @@ release_log="$temporary_directory/release.log"
 assert_contains "$repository_root|docker|build --tag example/beanbot:release --build-arg BEANBOT_VERSION=2.18.0 --build-arg BEANBOT_COMMIT_SHA=abcdef0123456789abcdef0123456789abcdef01 ." "$release_log"
 assert_contains "$repository_root|docker|image inspect --format {{.Config.User}} example/beanbot:release" "$release_log"
 assert_not_contains "|docker|build --tag beanbot-verification:local" "$release_log"
+assert_contains "--filter Category!=MongoIntegration" "$release_log"
+assert_not_contains "Category=MongoIntegration" "$release_log"
+
+mongo_log="$temporary_directory/mongo.log"
+PATH="$stub_directory:$PATH" BEANBOT_VERIFY_TEST_LOG="$mongo_log" \
+  BEANBOT_VERIFY_SKIP_SELF_TEST=1 "$verify_script" mongo-integration
+assert_count 1 "|dotnet|test BeanBot.sln --configuration Release --no-build --filter Category=MongoIntegration --blame-hang-timeout 5m" "$mongo_log"
+assert_not_contains "Category!=MongoIntegration" "$mongo_log"
+assert_not_contains "|docker|" "$mongo_log"
+
+all_tests_log="$temporary_directory/all-tests.log"
+PATH="$stub_directory:$PATH" BEANBOT_VERIFY_TEST_LOG="$all_tests_log" \
+  BEANBOT_VERIFY_REAL_PYTHON="$real_python" BEANBOT_VERIFY_SKIP_SELF_TEST=1 \
+  "$verify_script" all-tests
+assert_count 1 "|dotnet|test BeanBot.sln --configuration Release --no-build --settings coverage.runsettings --collect Code Coverage --results-directory .artifacts/TestResults" "$all_tests_log"
+assert_count 1 "|python3|scripts/check-coverage.py .artifacts/TestResults .config/coverage-baseline.json .artifacts/coverage" "$all_tests_log"
+assert_contains "|docker|build --tag beanbot-verification:local" "$all_tests_log"
+
+mongo_failure_log="$temporary_directory/mongo-failure.log"
+if PATH="$stub_directory:$PATH" BEANBOT_VERIFY_TEST_LOG="$mongo_failure_log" \
+  BEANBOT_VERIFY_TEST_FAIL="--filter Category=MongoIntegration" \
+  BEANBOT_VERIFY_SKIP_SELF_TEST=1 "$verify_script" mongo-integration; then
+  echo "Injected MongoDB integration failure unexpectedly succeeded" >&2
+  exit 1
+fi
+assert_contains "--filter Category=MongoIntegration" "$mongo_failure_log"
+assert_not_contains "|docker|" "$mongo_failure_log"
 
 invalid_log="$temporary_directory/invalid.log"
 if PATH="$stub_directory:$PATH" BEANBOT_VERIFY_TEST_LOG="$invalid_log" \

@@ -75,7 +75,7 @@ Copy review checklist for any change that adds or edits user-visible text:
 - Release promotion: `develop` → `master` through an intentional PR after required verification.
 - Emergency hotfix: branch from `master` → `master`, then merge/backport the fix into `develop`.
 - Do not create a GitHub Release merely because routine development was merged. Release creation should be tied to the repository's intentional release trigger/versioning workflow.
-- Release-quality verification must prove current `master` is contained by the candidate, use committed NuGet lock files, preserve the measured coverage baseline, and smoke-test the hardened image. The exact operational gate is documented in `docs/release-readiness.md`.
+- Release-quality verification must prove current `master` is contained by the candidate, use committed NuGet lock files, preserve the measured non-Mongo coverage baseline, and smoke-test the hardened image. Record a separate exact-commit local MongoDB integration result; retain the historical combined coverage baseline for explicit all-tests runs. The exact operational gate is documented in `docs/release-readiness.md`.
 
 ## Code Review Rules
 
