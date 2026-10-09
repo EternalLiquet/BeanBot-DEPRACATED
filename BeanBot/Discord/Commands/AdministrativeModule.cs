@@ -48,7 +48,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
     }
 
     [Command("role setting", RunMode = RunMode.Sync)]
-    [Summary("Will create a message for auto-role based on reactions")]
+    [Summary("Create a reaction-role panel; reply cancel at any setup prompt to stop.")]
     [Alias("rolesetting", "role settings", "rolesettings")]
     [Remarks("role setting")]
     [RequireGuild]
@@ -61,6 +61,23 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
     {
         var messagesInInteraction = new List<IMessage> { Context.Message };
         IDisposable? interactionSession = null;
+
+        async Task<SocketMessage?> WaitForReplyAsync()
+        {
+            var message = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
+            if (message is not null)
+            {
+                messagesInInteraction.Add(message);
+            }
+
+            return message;
+        }
+
+        async Task SendInputFeedbackAsync(string feedback)
+        {
+            messagesInInteraction.Add(await _replySender.SendMessageAsync(Context, feedback));
+        }
+
         try
         {
             var sessionResult = _messageWaiter.AcquireInteractionSession(Context, out interactionSession);
@@ -74,19 +91,25 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
             var roleEmotePairs = new List<RoleEmotePair>();
             messagesInInteraction.Add(await _replySender.SendMessageAsync(
                 Context,
-                $"How many roles do you wish to configure? (1-{MaximumRolesPerGroup})"));
-            var amountMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
-            var roleCountResult = await GetRoleCountAsync(messagesInInteraction, amountMessage);
-            if (!roleCountResult.Success)
+                $"How many roles do you wish to configure? (1-{MaximumRolesPerGroup}) Reply cancel to stop."));
+            var roleCountResult = await LegacyRoleSetupInput.ReadCountAsync(
+                WaitForReplyAsync, message => message.Content, SendInputFeedbackAsync);
+            if (roleCountResult.Status != LegacyRoleSetupInput.AnswerStatus.Accepted)
             {
                 return;
             }
 
-            for (var index = 0; index < roleCountResult.RoleCount; index++)
+            for (var index = 0; index < roleCountResult.Count; index++)
             {
-                messagesInInteraction.Add(await _replySender.SendMessageAsync(Context, "Which role would you like to set up?"));
-                var roleMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
-                var role = await GetRoleAsync(messagesInInteraction, roleMessage);
+                messagesInInteraction.Add(await _replySender.SendMessageAsync(Context, "Which role would you like to set up? Reply cancel to stop."));
+                var roleAnswer = await LegacyRoleSetupInput.ReadNextAsync(
+                    WaitForReplyAsync, message => message.Content, SendInputFeedbackAsync);
+                if (roleAnswer.Status != LegacyRoleSetupInput.AnswerStatus.Accepted)
+                {
+                    return;
+                }
+
+                var role = await GetRoleAsync(messagesInInteraction, roleAnswer.Message);
                 if (role == null)
                 {
                     return;
@@ -94,9 +117,15 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
 
                 messagesInInteraction.Add(await _replySender.SendMessageAsync(
                     Context,
-                    $"Which emote would you like to set up with the role {role.Name}?"));
-                var emoteMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
-                var emote = await GetEmoteAsync(messagesInInteraction, emoteMessage);
+                    $"Which emote would you like to set up with the role {role.Name}? Reply cancel to stop."));
+                var emoteAnswer = await LegacyRoleSetupInput.ReadNextAsync(
+                    WaitForReplyAsync, message => message.Content, SendInputFeedbackAsync);
+                if (emoteAnswer.Status != LegacyRoleSetupInput.AnswerStatus.Accepted)
+                {
+                    return;
+                }
+
+                var emote = await GetEmoteAsync(messagesInInteraction, emoteAnswer.Message);
                 if (emote == null)
                 {
                     return;
@@ -119,15 +148,15 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
 
             messagesInInteraction.Add(await _replySender.SendMessageAsync(
                 Context,
-                "Please label this group of roles (i.e. Games, Position, NSFW, etc)."));
-            var labelMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
-            if (labelMessage == null)
+                "Please label this group of roles (i.e. Games, Position, NSFW, etc). Reply cancel to stop."));
+            var labelAnswer = await LegacyRoleSetupInput.ReadNextAsync(
+                WaitForReplyAsync, message => message.Content, SendInputFeedbackAsync);
+            if (labelAnswer.Status != LegacyRoleSetupInput.AnswerStatus.Accepted)
             {
-                messagesInInteraction.Add(await _replySender.SendMessageAsync(Context, "Time has expired, please try again."));
                 return;
             }
 
-            messagesInInteraction.Add(labelMessage);
+            var labelMessage = labelAnswer.Message!;
             var setupStatus = await ReactionRoleSetupTransaction.ExecuteIfAssignableAsync(
                 () => ValidateSelectedRoles(roleEmotePairs),
                 () => CreateRoleMessageAsync(roleEmotePairs, labelMessage.Content),
@@ -247,26 +276,6 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         }
     }
 
-    private async Task<(bool Success, int RoleCount)> GetRoleCountAsync(List<IMessage> messages, SocketMessage? response)
-    {
-        if (response == null)
-        {
-            messages.Add(await _replySender.SendMessageAsync(Context, "Time has expired, please try again."));
-            return (false, 0);
-        }
-
-        messages.Add(response);
-        if (!int.TryParse(response.Content, out var roleCount) || roleCount < 1 || roleCount > MaximumRolesPerGroup)
-        {
-            messages.Add(await _replySender.SendMessageAsync(
-                Context,
-                $"Please enter a whole number from 1 to {MaximumRolesPerGroup}."));
-            return (false, 0);
-        }
-
-        return (true, roleCount);
-    }
-
     private async Task<SocketRole?> GetRoleAsync(List<IMessage> messages, SocketMessage? response)
     {
         if (response == null)
@@ -275,7 +284,6 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
             return null;
         }
 
-        messages.Add(response);
         var availableRoles = Context.Guild.Roles.ToList();
         var roleResolution = ResolveRole(
             response.Content,
@@ -385,7 +393,6 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
             return null;
         }
 
-        messages.Add(response);
         var emote = Context.Guild.Emotes.FirstOrDefault(candidate =>
             response.Content.Contains(candidate.Name, StringComparison.OrdinalIgnoreCase));
         if (emote == null)
