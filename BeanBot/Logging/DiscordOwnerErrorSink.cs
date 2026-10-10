@@ -71,7 +71,11 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
         {
             lock (_deliverySync)
             {
-                return _activeDelivery is { IsCompleted: false };
+                // A timed-out shutdown may still be stopping the worker between
+                // queued alerts or while waiting to retry. Keep the client owned
+                // until the worker cannot start another delivery.
+                return (Volatile.Read(ref _disposed) != 0 && !_worker.IsCompleted)
+                    || _activeDelivery is { IsCompleted: false };
             }
         }
     }

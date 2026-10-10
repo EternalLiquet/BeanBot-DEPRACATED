@@ -169,7 +169,9 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         => _healthCheckServer.StopAsync(cancellationToken);
 
     public Task FlushOwnerAlertsAsync()
-        => _ownerErrorNotifier.FlushAsync(TimeSpan.FromSeconds(3));
+        // Shut the notifier down before the client-disposal decision. A plain
+        // queue flush can time out while the worker is between DMs or retries.
+        => _ownerErrorNotifier.DisposeAsync().AsTask();
 
     public async Task StopDiscordAsync(CancellationToken cancellationToken)
     {
