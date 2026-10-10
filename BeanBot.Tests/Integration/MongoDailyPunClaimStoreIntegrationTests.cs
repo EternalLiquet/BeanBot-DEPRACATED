@@ -5,6 +5,7 @@ using Xunit;
 
 namespace BeanBot.Tests.Integration;
 
+[Trait("Category", "MongoIntegration")]
 public sealed class MongoDailyPunClaimStoreIntegrationTests
     : IClassFixture<MongoDbIntegrationFixture>
 {

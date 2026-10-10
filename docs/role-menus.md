@@ -21,24 +21,24 @@ Discord does not allow BeanBot to assign `@everyone`, integration-managed roles,
 ## Create and publish a panel
 
 1. Run `/role-menu create`.
-2. In Discord's setup form, enter a title, optionally enter a description, choose 1–25 existing roles, choose single- or multiple-selection mode, and choose a normal text channel.
+2. In Discord's setup form, enter a title, optionally enter a description, choose 1–25 existing roles, choose whether members can pick **One role** or **Any number**, and choose a normal text channel.
 3. Review the private preview.
-4. Select **Publish**. BeanBot rechecks roles and channel permissions, publishes the public panel, and saves its configuration in MongoDB.
+4. Select **Publish menu**. BeanBot rechecks roles and channel permissions, publishes the public panel, and saves its configuration in MongoDB.
 
 The preview expires after 10 minutes. BeanBot holds at most 64 previews at once and replaces an administrator's previous preview in the same server when they create a new one. A failed persistence write rolls back the newly posted panel when Discord permits it. If BeanBot cannot confirm whether Discord posted the panel or MongoDB saved its settings, it closes the preview and disables automatic retry to avoid creating a duplicate. Inspect the target channel, remove any orphaned panel, and confirm the saved state before creating a replacement.
 
-Each public panel contains a stable **Manage Roles** button and its menu ID in the embed footer. Saved settings include the server, channel, message, title, description, allowlisted role IDs, selection mode, and UTC timestamps, so published panels continue to work after BeanBot restarts.
+Each public panel contains a stable **Choose your roles** button and its menu ID in the embed footer. Saved settings include the server, channel, message, title, description, allowlisted role IDs, selection mode, and UTC timestamps, so published panels continue to work after BeanBot restarts.
 
 ## Member behavior
 
-Selecting **Manage Roles** opens a private selector bound to that member and panel. Current roles from that menu are preselected.
+Selecting **Choose your roles** opens a private selector bound to that member and panel. Current roles from that menu are preselected.
 
-- In **multiple** mode, any combination of the configured roles is allowed.
-- In **single** mode, choosing a new configured role replaces the old configured role. BeanBot adds the replacement first and keeps the old role if the add fails.
-- **Clear menu roles** removes every currently assigned role from this menu.
+- In **Any number** mode, any combination of the configured roles is allowed.
+- In **One role** mode, choosing a new configured role replaces the old configured role. BeanBot adds the replacement first and keeps the old role if the add fails.
+- **Remove my roles from this menu** removes every currently assigned role from this menu.
 - Roles that are not configured in the menu are never added or removed.
 
-Submissions for the same member are serialized, including submissions from overlapping menus. Different members may update roles from the same menu concurrently. Publication and deletion take an exclusive menu lifecycle lock so they cannot race member changes or resurrect a deleted configuration. Before changing anything, BeanBot reloads the persisted configuration, confirms the original panel still exists and belongs to BeanBot, fetches current member roles, revalidates role hierarchy, and rejects malformed or non-allowlisted values. After every valid submission, including a no-op or interrupted mutation, BeanBot performs a separate bounded read of Discord's current member roles. It reports confirmed results from that observed state and explicitly asks the member to reopen the menu when the final state cannot be confirmed.
+Submissions for the same member are serialized, including submissions from overlapping menus. Different members may update roles from the same menu concurrently. Publication and deletion take an exclusive menu lifecycle lock so they cannot race member changes or resurrect a deleted configuration. Before changing anything, BeanBot reloads the persisted configuration, confirms the original panel still exists and belongs to BeanBot, fetches current member roles, revalidates role hierarchy, and rejects malformed or non-allowlisted values. After every valid submission, including a no-op or interrupted mutation, BeanBot performs a separate bounded read of Discord's current member roles. It reports only confirmed results from that observed state, in short plain sentences such as "Added Gamer.", and asks the member to reopen the menu when a change failed or the final state cannot be confirmed. Recheck details stay in the logs.
 
 ## Audit published panels
 
@@ -76,6 +76,10 @@ Use a test server with BeanBot's role below one test role and above two other te
 10. Delete a panel through `/role-menu delete`, then confirm its old controls cannot mutate roles.
 11. Temporarily remove BeanBot's hierarchy or permissions and confirm operations fail privately without exposing exception details or changing unrelated roles; audit reports **Broken** for a positively verified permission failure.
 12. Use an existing legacy reaction-role panel and confirm its reactions still add and remove roles exactly as before.
+
+## Wording
+
+Role-menu text follows the customer-facing text standard in `AGENTS.md`. Members see short outcome messages, such as "Removed Test Role.", and administrators see plain next steps when something only partly worked. Deleting a menu removes its message and saved settings; members keep the roles they already have.
 
 ## Code organization
 

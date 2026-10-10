@@ -50,38 +50,45 @@ BEANBOT_HEALTHCHECK_PORT=8080
 BEANBOT_HEALTHCHECK_BIND_ADDRESS=0.0.0.0
 BEANBOT_HEALTHCHECK_BEARER_TOKEN=
 BEANBOT_HEALTHCHECK_RATE_LIMIT_SECONDS=90
+BEANBOT_METRICS_ENABLED=false
 ```
 
 When `BEANBOT_HEALTHCHECK_PORT` is set, the bot exposes a Kestrel-hosted `GET /healthz` and `HEAD /healthz` endpoint on that port:
 
-- `200 OK`: process is up, the Discord gateway session is ready, and MongoDB passed a recent readiness probe.
+- `200 OK`: BeanBot has completed startup, is still admitting normal user-facing work, the Discord gateway session is ready, and MongoDB passed a recent readiness probe.
 - `401 Unauthorized`: the bearer token is missing or invalid.
-- `503 Service Unavailable`: process is up, but Discord is not ready or MongoDB is unavailable/stale.
+- `503 Service Unavailable`: BeanBot is still starting or is draining for shutdown, Discord is not ready, or MongoDB is unavailable/stale.
 - `429 Too Many Requests`: the same client polled again before the configured rate limit expired.
 - no response / connection failure: the bot process is down or unreachable.
 
-Successful and unhealthy JSON responses include the non-secret release version and Git commit SHA, the existing Discord lifecycle fields, and sanitized `mongoReachable` / `mongoLastCheckedAtUtc` fields so an operator can distinguish Gateway and persistence readiness without exposing MongoDB connection details.
+Successful and unhealthy JSON responses include the non-secret release version and Git commit SHA, sanitized `applicationReady` / `lifecycleState` values, the existing Discord lifecycle fields, and sanitized `mongoReachable` / `mongoLastCheckedAtUtc` fields so an operator can distinguish application lifecycle, Gateway, and persistence readiness without exposing internal shutdown stages or MongoDB connection details.
+
+The health listener intentionally starts before the rest of BeanBot so liveness can be observed during startup. Lifecycle readiness remains `starting` until the core command/event/background startup and the interaction hosted service have completed. On graceful shutdown BeanBot changes lifecycle readiness to `draining` before hosted interaction teardown or the core reaction/command/event shutdown stages withdraw normal work. Once draining begins, `/healthz` remains `503` even if Discord and MongoDB are still healthy; a later shutdown failure or cancellation does not restore readiness.
 
 Mongo readiness uses a lightweight single-flight ping. A completed result is reused for at most 10 seconds, and a stale result triggers a fresh probe. Each probe has a 2-second application-owned deadline. If the underlying driver call does not settle by that deadline, `/healthz` reports MongoDB unavailable while BeanBot retains ownership of that single late probe until it completes; later polls do not fan out additional Mongo operations. Recovery is reflected by the next probe after the cached unhealthy result expires, without restarting BeanBot.
 
 If you bind the endpoint to anything other than `127.0.0.1`, set `BEANBOT_HEALTHCHECK_BEARER_TOKEN` and send `Authorization: Bearer <token>` from Home Assistant.
 
-The same listener also exposes dependency-free `GET /livez` and `HEAD /livez` liveness checks. `/livez` returns `200 OK` with only the non-secret build identity while the BeanBot process and Kestrel health surface can answer; it does not query Discord, MongoDB, external services, or persistence. It uses the same bearer-token policy, Kestrel limits, bounded client tracking, and poll interval as `/healthz` without opening another port.
+The same listener also exposes dependency-free `GET /livez` and `HEAD /livez` liveness checks. `/livez` returns `200 OK` with only the non-secret build identity while the BeanBot process and Kestrel health surface can answer; it does not query application lifecycle readiness, Discord, MongoDB, external services, or persistence. It uses the same bearer-token policy, Kestrel limits, bounded client tracking, and poll interval as `/healthz` without opening another port.
 
-Use `/livez` for process/container liveness and restart decisions, and use `/healthz` for application readiness/availability monitoring. A recoverable required-dependency outage may therefore produce `/healthz = 503` while `/livez = 200`; that divergence is expected. A supervisor should not restart BeanBot solely because readiness is temporarily unavailable unless its operational policy deliberately chooses to do so.
+Set `BEANBOT_METRICS_ENABLED=true` to opt in to `GET /metrics` and `HEAD /metrics` on that same listener. Metrics reuse the existing bearer-token policy, connection/request limits, bounded per-client polling, and shutdown lifecycle; they are disabled by default and enabling them does not send telemetry anywhere. Scrapes report only already-observed low-cardinality Discord and Mongo readiness state and never initiate a Discord API call or MongoDB probe. See the [Prometheus metrics guide](docs/prometheus-metrics.md) for the metric set, privacy/cardinality guarantees, authentication guidance, and a minimal scrape configuration.
+
+Use `/livez` for process/container liveness and restart decisions, and use `/healthz` for application readiness/availability monitoring. Startup, graceful draining, or a recoverable required-dependency outage may therefore produce `/healthz = 503` while `/livez = 200`; that divergence is expected. Rollout and routing tooling should stop considering an instance available when `/healthz` becomes non-ready, while a supervisor should not restart BeanBot solely because readiness is temporarily unavailable unless its operational policy deliberately chooses to do so.
 
 ## Local Development
 
-Install a stable .NET 10 SDK and Docker. The repository's `global.json` accepts SDK
+Install a stable .NET 10 SDK. The repository's `global.json` accepts SDK
 10.0.100 or newer .NET 10 patches and feature bands while excluding preview and
-other major SDKs. The integration suite automatically starts an isolated MongoDB
-container; it does not use `BEANBOT_MONGO_CONNECTION_STRING` or require a manually
-managed test database. Then restore, build, and run the test suite from the repo root:
+other major SDKs. The normal test command excludes the seven tests that start a
+MongoDB container. To run those tests locally, install Docker and use
+`./scripts/verify.sh mongo-integration`; the tests start an isolated MongoDB
+container and never use `BEANBOT_MONGO_CONNECTION_STRING`. Restore, build, and
+run the normal suite from the repo root:
 
 ```powershell
 dotnet restore BeanBot.sln
 dotnet build BeanBot.sln --configuration Release --no-restore
-dotnet test BeanBot.sln --configuration Release --no-build
+dotnet test BeanBot.sln --configuration Release --no-build --filter 'Category!=MongoIntegration'
 ```
 
 Repository changes use a Codex-native Planner → Implementer → Verifier → Reviewer loop with one writer and independent verification/review. See [Codex development loop](docs/codex-development-loop.md) for role handoffs and the shared fast/full verification commands.
@@ -92,7 +99,7 @@ BeanBot remains a single application project, organized by responsibility:
 
 - `Configuration` binds and validates runtime settings.
 - `Discord` contains commands, event handlers, gateway lifecycle, messaging helpers, role-menu behavior, and legacy reaction-role behavior.
-- `Health` owns Gateway and MongoDB readiness snapshots and the authenticated `/healthz` endpoint.
+- `Health` owns process lifecycle, Gateway, and MongoDB readiness snapshots plus the authenticated `/healthz` endpoint.
 - `Hosting` composes the Generic Host and coordinates startup and shutdown.
 - `Logging` contains structured log messages and Discord owner-alert delivery.
 - `Persistence` contains runtime directory setup, persisted models, outage state, and MongoDB repositories.
@@ -120,10 +127,12 @@ Repository-wide compiler settings are defined in `Directory.Build.props`, packag
 versions in `Directory.Packages.props`, and formatting and naming conventions in
 `.editorconfig`. Run `./scripts/verify.sh fast` before submitting changes; it checks
 formatting and analyzers in addition to building and testing the solution.
-Full verification additionally enforces locked restores, the measured coverage
-baseline, master/develop ancestry, dependency vulnerability checks, a
+Full verification additionally enforces locked restores, the measured non-Mongo
+coverage baseline, master/develop ancestry, dependency vulnerability checks, a
 digest-pinned Docker build, and a non-root/read-only container smoke test.
-Coverage reports are written under `.artifacts/coverage`.
+Coverage reports are written under `.artifacts/coverage`. The explicit
+`./scripts/verify.sh all-tests` mode runs both test groups and checks the
+separate combined coverage baseline; it requires Docker.
 
 To start the bot:
 
