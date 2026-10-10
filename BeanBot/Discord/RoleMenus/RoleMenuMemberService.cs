@@ -14,7 +14,7 @@ namespace BeanBot.Discord.RoleMenus;
 public sealed class RoleMenuMemberService
 {
     private const string InvalidMenuMessage =
-        "This role menu is invalid, stale, or no longer available. Ask a server administrator to recreate it.";
+        "This role menu isn't working anymore. Ask a server admin to set it up again.";
     private readonly RoleMenuInteractionService _roleMenuService;
     private readonly DiscordRoleMenuClient _discord;
     private readonly ILogger<RoleMenuMemberService> _logger;
@@ -107,7 +107,7 @@ public sealed class RoleMenuMemberService
             requestOptions);
         if (member is null)
         {
-            return new RoleMenuSelectorResult("You are no longer a member of this server.");
+            return new RoleMenuSelectorResult("You're no longer in this server.");
         }
 
         var selector = RoleMenuComponents.BuildMemberSelector(
@@ -116,11 +116,9 @@ public sealed class RoleMenuMemberService
             roleValidation.Roles,
             member.RoleIds,
             memberUserId);
-        var content = selector.HadConflictingSingleSelection
-            ? "This single-choice menu found more than one configured role on your account. " +
-              "Choose the one to keep, or clear all menu roles. Changes apply immediately."
-            : "Choose your roles below. Changes apply immediately; the clear button removes only " +
-              "roles configured in this menu.";
+        var content = FormatSelectorInstructions(
+            settings.SelectionMode,
+            selector.HadConflictingSingleSelection);
         return new RoleMenuSelectorResult(content, selector.Components);
     }
 
@@ -201,7 +199,7 @@ public sealed class RoleMenuMemberService
 
         if (result.Status == RoleMenuMemberWorkflowStatus.MemberUnavailable)
         {
-            return "You are no longer a member of this server.";
+            return "You're no longer in this server.";
         }
 
         if (result.Status == RoleMenuMemberWorkflowStatus.InvalidSelection)
@@ -209,7 +207,8 @@ public sealed class RoleMenuMemberService
             LogInvalidConfiguration(
                 menuId,
                 $"invalid submitted selection: {result.SelectionIssue}");
-            return "That role selection was invalid or had been tampered with. No roles were changed.";
+            return "That selection is no longer valid. Open the menu again and choose your roles. " +
+                "No roles were changed.";
         }
 
         var roleNames = (result.Roles ?? [])
@@ -228,8 +227,24 @@ public sealed class RoleMenuMemberService
                 result.FinalReadException);
         }
 
-        return "Bean Bot couldn't recheck Discord's final role state. Open the role menu again " +
-            "to verify your current roles before retrying; no roles outside this menu were targeted.";
+        return "I couldn't confirm your role changes. Open the menu again to check your roles " +
+            "before trying again.";
+    }
+
+    internal static string FormatSelectorInstructions(
+        RoleMenuSelectionMode selectionMode,
+        bool hadConflictingSingleSelection)
+    {
+        if (hadConflictingSingleSelection)
+        {
+            return "You have more than one role from this menu. Choose one to keep, or remove " +
+                "them all. Your changes apply right away.";
+        }
+
+        return selectionMode == RoleMenuSelectionMode.Exclusive
+            ? "Choose one role. Picking a different one replaces the one you have. Your changes " +
+              "apply right away."
+            : "Choose the roles you want. Your changes apply right away.";
     }
 
     private void LogSynchronizationResult(

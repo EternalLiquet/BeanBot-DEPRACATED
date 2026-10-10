@@ -7,6 +7,7 @@ using BeanBot.Discord.Lifecycle;
 using BeanBot.Discord.Puns;
 using BeanBot.Discord.ReactionRoles;
 using BeanBot.Discord.RoleMenus;
+using BeanBot.Health;
 using BeanBot.Hosting;
 using BeanBot.Logging;
 using BeanBot.Persistence.Outages;
@@ -36,6 +37,7 @@ public class BeanBotServiceRegistrationTests
         AssertSingleton<IBeanBotRuntime>(services);
         AssertSingleton<IBeanBotApplication>(services);
         AssertSingleton<BeanBotHostedService>(services);
+        AssertSingleton<ApplicationReadinessState>(services);
         AssertSingleton<ReactionRoleService>(services);
         AssertSingleton<RoleMenuRepository>(services);
         AssertSingleton<RoleMenuDraftRegistry>(services);
@@ -56,7 +58,7 @@ public class BeanBotServiceRegistrationTests
     }
 
     [Fact]
-    public void AddBeanBotInteractions_RegistersOneHandlerAndRoleMenuFacade()
+    public void AddBeanBotInteractions_RegistersInteractionOwnerThenFinalReadinessMarker()
     {
         var services = new ServiceCollection();
         var configuration = new ConfigurationManager();
@@ -64,16 +66,56 @@ public class BeanBotServiceRegistrationTests
 
         services.AddBeanBotInteractions();
 
-        Assert.Equal(2, services.Count(descriptor => descriptor.ServiceType == typeof(IHostedService)));
+        Assert.Equal(3, services.Count(descriptor => descriptor.ServiceType == typeof(IHostedService)));
+        AssertSingleton<InteractionCommandRegistrationTarget>(services);
         AssertSingleton<InteractionExecutionContext>(services);
         AssertSingleton<RoleMenuInteractionService>(services);
         AssertSingleton<InteractionHandler>(services);
         AssertSingleton<BeanBotInteractionHostedService>(services);
+        AssertSingleton<ApplicationReadinessHostedService>(services);
+
+        var hostedDescriptors = services
+            .Where(descriptor => descriptor.ServiceType == typeof(IHostedService))
+            .ToList();
+        Assert.Equal(3, hostedDescriptors.Count);
 
         var clientDescriptor = Assert.Single(
             services,
             descriptor => descriptor.ServiceType == typeof(DiscordSocketClient));
         ((DiscordSocketClient)clientDescriptor.ImplementationInstance!).Dispose();
+    }
+
+    [Fact]
+    public void AddBeanBotInteractions_ConfiguredGuildResolvesGuildRegistrationTarget()
+    {
+        var configuration = new ConfigurationManager();
+        configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            [BeanBotConfiguration.BotTokenVariable] = "test-token",
+            [BeanBotConfiguration.MongoConnectionVariable] = "mongodb://127.0.0.1:27017",
+            [BeanBotConfiguration.GeneralChannelVariable] = "123",
+            [BeanBotConfiguration.HatoeteUrlVariable] = "https://example.test/hatoete.png",
+            [BeanBotConfiguration.YoshimaruUrlVariable] = "https://example.test/yoshimaru.png",
+            [BeanBotConfiguration.InteractionGuildVariable] = "987654321"
+        });
+        configuration.AddBeanBotConfiguration([]);
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddBeanBot(configuration);
+        services.AddBeanBotInteractions();
+        using var provider = services.BuildServiceProvider();
+        var discordClient = provider.GetRequiredService<DiscordSocketClient>();
+        try
+        {
+            var target = provider.GetRequiredService<InteractionCommandRegistrationTarget>();
+
+            Assert.False(target.IsGlobal);
+            Assert.Equal((ulong)987654321, target.GuildId);
+        }
+        finally
+        {
+            discordClient.Dispose();
+        }
     }
 
     [Fact]
@@ -97,6 +139,8 @@ public class BeanBotServiceRegistrationTests
         {
             Assert.NotNull(host.Services.GetRequiredService<RoleMenuInteractionService>());
             Assert.NotNull(host.Services.GetRequiredService<InteractionHandler>());
+            Assert.True(
+                host.Services.GetRequiredService<InteractionCommandRegistrationTarget>().IsGlobal);
 
             var startupLifecycle = host.Services.GetRequiredService<DiscordStartupLifecycle>();
             Assert.Same(
@@ -118,11 +162,12 @@ public class BeanBotServiceRegistrationTests
                 host.Services.GetRequiredService<IPunProvider>());
 
             var hostedServices = host.Services.GetServices<IHostedService>().ToList();
-            Assert.Equal(2, hostedServices.Count);
-            Assert.Contains(hostedServices, service => service is BeanBotHostedService);
+            Assert.Equal(3, hostedServices.Count);
+            Assert.IsType<BeanBotHostedService>(hostedServices[0]);
+            Assert.IsType<BeanBotInteractionHostedService>(hostedServices[1]);
             Assert.Same(
-                host.Services.GetRequiredService<BeanBotInteractionHostedService>(),
-                Assert.Single(hostedServices.OfType<BeanBotInteractionHostedService>()));
+                host.Services.GetRequiredService<ApplicationReadinessHostedService>(),
+                Assert.IsType<ApplicationReadinessHostedService>(hostedServices[2]));
         }
         finally
         {

@@ -16,8 +16,14 @@ internal static class BeanBotOptionsFactory
             new Uri(settings.HatoeteUrl!, UriKind.Absolute),
             new Uri(settings.YoshimaruUrl!, UriKind.Absolute),
             DailyPunSchedule.Create(settings.DailyPun),
-            CreateHealthCheckOptions(settings.HealthCheck));
+            CreateHealthCheckOptions(settings.HealthCheck),
+            ParseInteractionGuildId(settings.InteractionGuildId));
     }
+
+    private static ulong? ParseInteractionGuildId(string? guildId)
+        => string.IsNullOrWhiteSpace(guildId)
+            ? null
+            : ulong.Parse(guildId, NumberStyles.None, CultureInfo.InvariantCulture);
 
     private static HealthCheckOptions CreateHealthCheckOptions(BeanBotHealthCheckSettings settings)
     {
@@ -34,12 +40,15 @@ internal static class BeanBotOptionsFactory
             ? 90
             : int.Parse(settings.RateLimitSeconds, NumberStyles.None, CultureInfo.InvariantCulture);
         var minimumPollInterval = TimeSpan.FromSeconds(rateLimitSeconds);
+        var metricsEnabled = !string.IsNullOrWhiteSpace(settings.MetricsEnabled)
+            && bool.Parse(settings.MetricsEnabled);
 
         return new HealthCheckOptions(
             true,
             bindAddress,
             port,
             settings.BearerToken,
-            minimumPollInterval);
+            minimumPollInterval,
+            metricsEnabled);
     }
 }

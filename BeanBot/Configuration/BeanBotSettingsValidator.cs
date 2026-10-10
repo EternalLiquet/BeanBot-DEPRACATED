@@ -44,6 +44,7 @@ internal sealed class BeanBotSettingsValidator : IValidateOptions<BeanBotSetting
             "yoshimaruUrl",
             failures);
 
+        ValidateInteractionGuild(settings.InteractionGuildId, failures);
         ValidateDailyPun(settings.DailyPun, failures);
         ValidateHealthCheck(settings.HealthCheck, failures);
         ValidateNewMemberWelcome(settings.NewMemberWelcome, failures);
@@ -51,6 +52,26 @@ internal sealed class BeanBotSettingsValidator : IValidateOptions<BeanBotSetting
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);
+    }
+
+    private static void ValidateInteractionGuild(string? guildId, List<string> failures)
+    {
+        if (string.IsNullOrWhiteSpace(guildId))
+        {
+            return;
+        }
+
+        if (!ulong.TryParse(
+                guildId,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var parsedGuildId) ||
+            parsedGuildId == 0)
+        {
+            failures.Add(
+                $"Invalid value for {BeanBotConfiguration.InteractionGuildVariable}. " +
+                "Expected a non-zero Discord snowflake ID.");
+        }
     }
 
     private static void ValidateDailyPun(
@@ -76,8 +97,24 @@ internal sealed class BeanBotSettingsValidator : IValidateOptions<BeanBotSetting
         BeanBotHealthCheckSettings settings,
         List<string> failures)
     {
+        var metricsEnabled = false;
+        if (settings.MetricsEnabled is not null &&
+            !bool.TryParse(settings.MetricsEnabled, out metricsEnabled))
+        {
+            failures.Add(
+                $"Invalid value for {BeanBotConfiguration.MetricsEnabledVariable}. " +
+                "Expected true or false.");
+        }
+
         if (string.IsNullOrWhiteSpace(settings.Port))
         {
+            if (metricsEnabled)
+            {
+                failures.Add(
+                    $"{BeanBotConfiguration.MetricsEnabledVariable}=true requires " +
+                    $"{BeanBotConfiguration.HealthCheckPortVariable} so /metrics can reuse the existing listener.");
+            }
+
             return;
         }
 
