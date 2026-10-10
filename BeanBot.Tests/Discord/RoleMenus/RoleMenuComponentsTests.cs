@@ -328,6 +328,26 @@ public class RoleMenuComponentsTests
         Assert.Equal("#roles • Created 2 hours ago", Assert.Single(later.Options).Description);
     }
 
+    [Fact]
+    public void BuildDeleteSelector_DistinguishesSameTitleChannelAndDay()
+    {
+        var morning = CreateSettings(RoleMenuSelectionMode.Multiple, "Games");
+        var evening = CreateSettings(RoleMenuSelectionMode.Multiple, "Games");
+        morning.CreatedAtUtc = new DateTime(2026, 10, 1, 9, 0, 0, DateTimeKind.Utc);
+        evening.CreatedAtUtc = new DateTime(2026, 10, 1, 18, 0, 0, DateTimeKind.Utc);
+
+        var select = GetSelect(RoleMenuComponents.BuildDeleteSelector(
+            123UL,
+            new RoleMenuDeletionPage([morning, evening], null, null),
+            _ => "roles",
+            new DateTime(2026, 10, 10, 18, 30, 0, DateTimeKind.Utc)));
+
+        Assert.All(select.Options, option => Assert.Equal("Games", option.Label));
+        Assert.NotEqual(select.Options[0].Description, select.Options[1].Description);
+        Assert.All(select.Options, option => Assert.StartsWith(
+            "#roles • Created 9 days", option.Description, StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData("​")]
     [InlineData("ㅤㅤ")]
