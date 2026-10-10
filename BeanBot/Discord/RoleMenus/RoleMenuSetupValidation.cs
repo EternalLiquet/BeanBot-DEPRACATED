@@ -30,24 +30,17 @@ internal static class RoleMenuSetupValidation
         targetChannelId = 0;
         selectionMode = default;
         roleValidation = null;
-        if (string.IsNullOrWhiteSpace(title)
-            || title.Length > RoleMenuConstants.MaximumTitleLength)
+        if (!TryValidateEditableFields(
+                request.SelectionMode,
+                request.RoleIds,
+                administrator,
+                bot,
+                title,
+                description,
+                out selectionMode,
+                out roleValidation,
+                out validationMessage))
         {
-            validationMessage =
-                $"The panel title must be 1–{RoleMenuConstants.MaximumTitleLength} characters.";
-            return false;
-        }
-
-        if (description.Length > RoleMenuConstants.MaximumDescriptionLength)
-        {
-            validationMessage =
-                $"The description cannot exceed {RoleMenuConstants.MaximumDescriptionLength} characters.";
-            return false;
-        }
-
-        if (!TryParseSelectionMode(request.SelectionMode, out selectionMode))
-        {
-            validationMessage = "Choose either single-selection or multiple-selection mode.";
             return false;
         }
 
@@ -55,22 +48,90 @@ internal static class RoleMenuSetupValidation
             || request.TargetChannelGuildId != guildId
             || request.TargetChannelType != ChannelType.Text)
         {
-            validationMessage = "Choose a normal text channel from this server.";
+            validationMessage = "Choose a text channel in this server.";
             return false;
         }
 
         targetChannelId = request.TargetChannelId.Value;
-        if (request.RoleIds is not { Count: >= 1 and <= RoleMenuConstants.MaximumRoles })
+        return true;
+    }
+
+    internal static bool TryParseAndValidateEdit(
+        RoleMenuEditRequest request,
+        IGuildUser administrator,
+        IGuildUser bot,
+        string title,
+        string description,
+        out RoleMenuSelectionMode selectionMode,
+        [NotNullWhen(true)] out RoleMenuRoleValidationResult? roleValidation,
+        out string validationMessage)
+    {
+        var valid = TryValidateEditableFields(
+            request.SelectionMode,
+            request.RoleIds,
+            administrator,
+            bot,
+            title,
+            description,
+            out selectionMode,
+            out roleValidation,
+            out validationMessage);
+        if (!valid)
+        {
+            validationMessage = validationMessage
+                .Replace("`/role-menu create`", "`/role-menu edit`", StringComparison.Ordinal)
+                .Replace("publish this menu", "edit this menu", StringComparison.Ordinal);
+        }
+        return valid;
+    }
+
+    private static bool TryValidateEditableFields(
+        string? rawSelectionMode,
+        IReadOnlyCollection<ulong>? roleIds,
+        IGuildUser administrator,
+        IGuildUser bot,
+        string title,
+        string description,
+        out RoleMenuSelectionMode selectionMode,
+        [NotNullWhen(true)] out RoleMenuRoleValidationResult? roleValidation,
+        out string validationMessage)
+    {
+        selectionMode = default;
+        roleValidation = null;
+        if (!RoleMenuText.HasVisibleText(title))
+        {
+            validationMessage = "Give the menu a title.";
+            return false;
+        }
+
+        if (title.Length > RoleMenuConstants.MaximumTitleLength)
+        {
+            validationMessage =
+                $"The title can't be longer than {RoleMenuConstants.MaximumTitleLength} characters.";
+            return false;
+        }
+
+        if (description.Length > RoleMenuConstants.MaximumDescriptionLength)
+        {
+            validationMessage =
+                $"The description can't be longer than {RoleMenuConstants.MaximumDescriptionLength} characters.";
+            return false;
+        }
+
+        if (!TryParseSelectionMode(rawSelectionMode, out selectionMode))
+        {
+            validationMessage = "Choose how many roles members can pick.";
+            return false;
+        }
+
+        if (roleIds is not { Count: >= 1 and <= RoleMenuConstants.MaximumRoles })
         {
             validationMessage =
                 $"Choose between 1 and {RoleMenuConstants.MaximumRoles} roles.";
             return false;
         }
 
-        roleValidation = ValidateRoles(
-            request.RoleIds,
-            administrator,
-            bot);
+        roleValidation = ValidateRoles(roleIds, administrator, bot);
         if (!roleValidation.IsValid)
         {
             validationMessage = FormatRoleValidationFailure(roleValidation);
@@ -82,7 +143,7 @@ internal static class RoleMenuSetupValidation
     }
 
     internal static bool TryParseSelectionMode(
-        string value,
+        string? value,
         out RoleMenuSelectionMode selectionMode)
     {
         if (string.Equals(value, "multiple", StringComparison.Ordinal))
@@ -133,7 +194,7 @@ internal static class RoleMenuSetupValidation
     {
         if (!bot.GuildPermissions.ManageRoles)
         {
-            return "Bean Bot needs the **Manage Roles** permission before this menu can be published.";
+            return "I need the **Manage Roles** permission to publish this menu.";
         }
 
         var permissions = bot.GetPermissions(targetChannel);
@@ -160,8 +221,8 @@ internal static class RoleMenuSetupValidation
 
         return missing.Count == 0
             ? null
-            : "Bean Bot is missing these permissions in the target channel: **" +
-              string.Join(", ", missing) + "**.";
+            : "I'm missing these permissions in that channel: **" +
+              string.Join(", ", missing) + "**. Add them, then try again.";
     }
 
     internal static RoleMenuRoleValidationResult ValidateRoles(

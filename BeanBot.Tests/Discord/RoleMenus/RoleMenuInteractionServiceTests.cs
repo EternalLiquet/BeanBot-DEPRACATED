@@ -1,15 +1,98 @@
 using BeanBot.Discord.Interactions;
+using BeanBot.Discord.ReactionRoles;
 using BeanBot.Discord.RoleMenus;
 using BeanBot.Persistence.Models;
 using BeanBot.Persistence.Repositories;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
+using MongoDB.Driver;
 using Xunit;
 
 namespace BeanBot.Tests.Discord.RoleMenus;
 
 public class RoleMenuInteractionServiceTests
 {
+    [Fact]
+    public async Task DiscordDeletion_CleansOnlyTheExactSavedMessage_AndDuplicatesAreHarmless()
+    {
+        var fixture = CreateFixture();
+        var settings = CreateSettings();
+        await fixture.Repository.UpsertAsync(settings);
+
+        Assert.Equal(0, await fixture.Service.DeleteSavedPanelsForMessageAsync(1, 2, 4, CancellationToken.None));
+        Assert.Equal(0, await fixture.Service.DeleteSavedPanelsForMessageAsync(1, 9, 3, CancellationToken.None));
+        Assert.NotNull(await fixture.Repository.GetAsync(settings.Id, "1"));
+
+        Assert.Equal(1, await fixture.Service.DeleteSavedPanelsForMessageAsync(1, 2, 3, CancellationToken.None));
+        Assert.Equal(0, await fixture.Service.DeleteSavedPanelsForMessageAsync(1, 2, 3, CancellationToken.None));
+        Assert.Null(await fixture.Repository.GetAsync(settings.Id, "1"));
+    }
+
+    [Fact]
+    public async Task DiscordDeletion_WaitingForRepair_CannotDeleteReplacementBinding()
+    {
+        var fixture = CreateFixture();
+        var original = CreateSettings();
+        await fixture.Repository.UpsertAsync(original);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var repair = fixture.Service.RunMenuMutationAsync(original.Id, async token =>
+        {
+            entered.SetResult();
+            await release.Task.WaitAsync(token);
+            await fixture.Repository.UpsertAsync(new RoleMenuSettings(
+                original.Id, "1", "2", "4", "Games", "", ["5"], RoleMenuSelectionMode.Multiple), token);
+            return true;
+        }, CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        var deletion = fixture.Service.DeleteSavedPanelsForMessageAsync(1, 2, 3, CancellationToken.None);
+        release.SetResult();
+        await repair;
+
+        Assert.Equal(0, await deletion);
+        Assert.Equal("4", (await fixture.Repository.GetAsync(original.Id, "1"))?.MessageId);
+    }
+
+    [Fact]
+    public async Task DiscordDeletion_AfterEditSavesNewRevision_RemovesDeletedBinding()
+    {
+        var fixture = CreateFixture();
+        var original = CreateSettings();
+        await fixture.Repository.UpsertAsync(original);
+        var editEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowEdit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deletionReadOldRevision = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Store.OnGetByMessage = () => deletionReadOldRevision.TrySetResult();
+        var edit = fixture.Service.RunMenuMutationAsync(original.Id, async token =>
+        {
+            editEntered.SetResult();
+            await allowEdit.Task.WaitAsync(token);
+            var replacement = new RoleMenuSettings(
+                original.Id, "1", "2", "3", "Edited", "", ["5"], RoleMenuSelectionMode.Exclusive)
+            {
+                CreatedAtUtc = original.CreatedAtUtc
+            };
+            return await RoleMenuEditWorkflow.ExecuteAsync(
+                replacement,
+                new RoleMenuEditCommitOperations(
+                    (settings, writeToken) => fixture.Repository.UpsertAsync(settings, writeToken),
+                    (_, _) => Task.FromResult(RoleMenuPanelUpdateStatus.Missing),
+                    () => false),
+                token);
+        }, CancellationToken.None);
+        await editEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var cleanup = fixture.Service.DeleteSavedPanelsForMessageAsync(
+            1, 2, 3, CancellationToken.None);
+        await deletionReadOldRevision.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        allowEdit.SetResult();
+
+        Assert.Equal(RoleMenuEditCommitStatus.PanelMissing,
+            (await edit.WaitAsync(TimeSpan.FromSeconds(2))).Status);
+        Assert.Equal(1, await cleanup.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.Null(await fixture.Repository.GetAsync(original.Id, "1"));
+    }
+
     [Fact]
     public void ModuleConstructors_RequireFacadesAndLogger()
     {
@@ -29,32 +112,47 @@ public class RoleMenuInteractionServiceTests
             new LegacyReactionRoleMigrationClient(
                 (_, _) => Task.FromResult<global::Discord.IChannel?>(null)),
             administration);
+        var audit = new RoleMenuAuditService(fixture.Service, discord);
         var members = new RoleMenuMemberService(
             fixture.Service, discord, NullLogger<RoleMenuMemberService>.Instance);
+        using var legacy = new ReactionRoleService(
+            new ReactionRoleRepository(
+                new MongoClient("mongodb://127.0.0.1:1").GetDatabase("constructor_test"),
+                NullLogger<ReactionRoleRepository>.Instance),
+            client: null, TimeSpan.FromSeconds(1),
+            NullLogger<ReactionRoleService>.Instance, 8, CancellationToken.None);
 
         Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
             null!,
             discord,
             administration,
             migration,
+            audit,
+            legacy,
             NullLogger<RoleMenuAdminModule>.Instance));
         Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
             fixture.Service,
             discord,
             administration,
             null!,
+            audit,
+            legacy,
             NullLogger<RoleMenuAdminModule>.Instance));
         Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
             fixture.Service,
             discord,
             administration,
             migration,
+            audit,
+            legacy,
             null!));
         _ = new RoleMenuAdminModule(
             fixture.Service,
             discord,
             administration,
             migration,
+            audit,
+            legacy,
             NullLogger<RoleMenuAdminModule>.Instance);
 
         Assert.Throws<ArgumentNullException>(() => new RoleMenuMemberModule(
@@ -69,6 +167,23 @@ public class RoleMenuInteractionServiceTests
             fixture.Service,
             members,
             NullLogger<RoleMenuMemberModule>.Instance);
+    }
+
+    [Fact]
+    public void TryBeginDeletion_IgnoresRepeatedClicksFromTheSameAdministrator()
+    {
+        var fixture = CreateFixture();
+        var menuId = ObjectId.GenerateNewId();
+        var otherMenuId = ObjectId.GenerateNewId();
+
+        Assert.True(fixture.Service.TryBeginDeletion(menuId, 3UL));
+        Assert.False(fixture.Service.TryBeginDeletion(menuId, 3UL));
+        Assert.True(fixture.Service.TryBeginDeletion(otherMenuId, 3UL));
+        Assert.True(fixture.Service.TryBeginDeletion(menuId, 4UL));
+
+        fixture.Service.EndDeletion(menuId, 3UL);
+
+        Assert.True(fixture.Service.TryBeginDeletion(menuId, 3UL));
     }
 
     [Fact]
@@ -281,7 +396,8 @@ public class RoleMenuInteractionServiceTests
             repository,
             drafts,
             coordinator,
-            executionContext);
+            executionContext,
+            store);
     }
 
     private static RoleMenuSettings CreateSettings()
@@ -300,11 +416,13 @@ public class RoleMenuInteractionServiceTests
         RoleMenuRepository Repository,
         RoleMenuDraftRegistry Drafts,
         RoleMenuMutationCoordinator Coordinator,
-        InteractionExecutionContext ExecutionContext);
+        InteractionExecutionContext ExecutionContext,
+        InMemoryStore Store);
 
     private sealed class InMemoryStore : IRoleMenuStore
     {
         private RoleMenuSettings? _settings;
+        internal Action? OnGetByMessage { get; set; }
 
         public Task UpsertAsync(
             RoleMenuSettings settings,
@@ -344,6 +462,31 @@ public class RoleMenuInteractionServiceTests
             return Task.FromResult(settings.Take(maximumResults).ToList());
         }
 
+        public Task<List<RoleMenuSettings>> GetByMessageAsync(
+            string guildId,
+            string channelId,
+            string messageId,
+            int maximumResults,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            OnGetByMessage?.Invoke();
+            List<RoleMenuSettings> settings = _settings is not null
+                && _settings.GuildId == guildId
+                && _settings.ChannelId == channelId
+                && _settings.MessageId == messageId
+                ? [_settings]
+                : [];
+            return Task.FromResult(settings);
+        }
+
+        public Task<List<RoleMenuSettings>> GetPageAsync(
+            string guildId,
+            RoleMenuPageCursor? cursor,
+            int maximumResults,
+            CancellationToken cancellationToken)
+            => GetByGuildAsync(guildId, maximumResults, cancellationToken);
+
         public Task<bool> DeleteAsync(
             ObjectId id,
             string guildId,
@@ -361,6 +504,20 @@ public class RoleMenuInteractionServiceTests
             }
 
             return Task.FromResult(deleted);
+        }
+
+        public Task<bool> DeleteBindingAsync(RoleMenuSettings settings, CancellationToken cancellationToken)
+        {
+            var current = _settings;
+            if (current is null || current.Id != settings.Id || current.GuildId != settings.GuildId
+                || current.ChannelId != settings.ChannelId || current.MessageId != settings.MessageId
+                || current.UpdatedAtUtc != settings.UpdatedAtUtc)
+            {
+                return Task.FromResult(false);
+            }
+
+            _settings = null;
+            return Task.FromResult(true);
         }
     }
 
@@ -389,6 +546,29 @@ public class RoleMenuInteractionServiceTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult<ReactionRoleSettings?>(null);
+        }
+
+        public Task<List<ReactionRoleSettings>> GetGuildPageAsync(
+            string guildId, ObjectId? cursor, bool newer, int limit,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new List<ReactionRoleSettings>());
+        }
+
+        public Task<ReactionRoleSettings?> GetByBindingAsync(
+            string guildId, string channelId, string messageId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<ReactionRoleSettings?>(null);
+        }
+
+        public Task<bool> DeleteBindingAsync(
+            ReactionRoleSettings settings, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new InvalidOperationException("Migration must never delete the legacy source.");
         }
     }
 }

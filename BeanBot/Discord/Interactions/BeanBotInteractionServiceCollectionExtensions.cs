@@ -1,5 +1,6 @@
+using BeanBot.Configuration;
 using BeanBot.Discord.RoleMenus;
-using BeanBot.Persistence.Repositories;
+using BeanBot.Health;
 using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
@@ -21,21 +22,21 @@ internal static class BeanBotInteractionServiceCollectionExtensions
                 LogLevel = LogSeverity.Verbose,
                 UseCompiledLambda = true
             }));
-        services.AddSingleton(_ => new InteractionExecutionContext());
-        services.AddSingleton(provider => new RoleMenuInteractionService(
-            provider.GetRequiredService<RoleMenuRepository>(),
-            provider.GetRequiredService<RoleMenuDraftRegistry>(),
-            provider.GetRequiredService<RoleMenuMutationCoordinator>(),
-            provider.GetRequiredService<InteractionExecutionContext>()));
+        services.AddSingleton(provider => InteractionCommandRegistrationTarget.FromGuildId(
+            provider.GetRequiredService<BeanBotOptions>().InteractionGuildId));
         services.AddSingleton<DiscordRoleMenuClient>();
         services.AddSingleton<LegacyReactionRoleMigrationClient>();
         services.AddSingleton<RoleMenuMemberService>();
         services.AddSingleton<RoleMenuAdministrationService>();
         services.AddSingleton<RoleMenuMigrationService>();
+        services.AddSingleton<RoleMenuAuditService>();
         services.AddSingleton<InteractionHandler>();
         services.AddSingleton<BeanBotInteractionHostedService>();
         services.AddSingleton<IHostedService>(provider =>
             provider.GetRequiredService<BeanBotInteractionHostedService>());
+        services.AddSingleton<ApplicationReadinessHostedService>();
+        services.AddSingleton<IHostedService>(provider =>
+            provider.GetRequiredService<ApplicationReadinessHostedService>());
 
         return services;
     }

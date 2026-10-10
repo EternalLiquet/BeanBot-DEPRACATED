@@ -1,5 +1,6 @@
 using System.Reflection;
 using BeanBot.Discord.Interactions;
+using BeanBot.Discord.RoleMenus;
 using BeanBot.Hosting;
 using Discord.Interactions;
 using Discord.WebSocket;
@@ -7,12 +8,116 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Bson;
 using Xunit;
 
 namespace BeanBot.Tests.Discord.Interactions;
 
 public class InteractionShutdownTests
 {
+    [Fact]
+    public async Task TimedOutRepairFeedback_KeepsHandlerAndRuntimeOwnedUntilLateMutationSettles()
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["BeanBot:BotToken"] = "test-token",
+            ["BeanBot:MongoConnectionString"] = "mongodb://127.0.0.1:27017",
+            ["BeanBot:GeneralChannelId"] = "1",
+            ["BeanBot:HatoeteUrl"] = "https://example.com/a.png",
+            ["BeanBot:YoshimaruUrl"] = "https://example.com/b.png"
+        });
+        builder.Services.AddBeanBot(builder.Configuration);
+        builder.Services.AddBeanBotInteractions();
+        builder.Services.AddSingleton(provider => new InteractionHandler(
+            provider.GetRequiredService<DiscordSocketClient>(),
+            provider.GetRequiredService<InteractionService>(),
+            provider,
+            provider.GetRequiredService<InteractionExecutionContext>(),
+            provider.GetRequiredService<InteractionCommandRegistrationTarget>(),
+            provider.GetRequiredService<IHostApplicationLifetime>(),
+            NullLogger<InteractionHandler>.Instance,
+            TimeSpan.FromMilliseconds(25)));
+        using var host = builder.Build();
+        using var client = host.Services.GetRequiredService<DiscordSocketClient>();
+        var handler = host.Services.GetRequiredService<InteractionHandler>();
+        var runtime = host.Services.GetRequiredService<IBeanBotRuntime>();
+        var roleMenus = host.Services.GetRequiredService<RoleMenuInteractionService>();
+        var sendStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishSend = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var feedbackSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var callerCancellation = new CancellationTokenSource();
+
+        Assert.Equal(InteractionOperationAdmission.Started, handler.StartOperation(async _ =>
+        {
+            var mutation = roleMenus.RunMenuMutationAsync(
+                ObjectId.GenerateNewId(),
+                async _ =>
+                {
+                    sendStarted.SetResult();
+                    await finishSend.Task;
+                    writeStarted.SetResult();
+                    await finishWrite.Task;
+                    return "repaired";
+                },
+                callerCancellation.Token);
+            await sendStarted.Task;
+            callerCancellation.CancelAfter(TimeSpan.FromMilliseconds(25));
+            await RoleMenuRepairWorkflow.WaitForOwnedMutationAsync(
+                mutation,
+                () =>
+                {
+                    feedbackSent.SetResult();
+                    return Task.CompletedTask;
+                },
+                callerCancellation.Token);
+        }));
+
+        try
+        {
+            await feedbackSent.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.True(handler.HasPendingOperations);
+            Assert.True(runtime.HasActiveDiscordLifecycleOperation);
+            await handler.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.True(handler.HasPendingOperations);
+            Assert.True(runtime.HasActiveDiscordLifecycleOperation);
+            var calls = new List<string>();
+            var runtimeProxy = DispatchProxy.Create<IBeanBotRuntime, RuntimeProxy>();
+            ((RuntimeProxy)runtimeProxy).Handler = method =>
+            {
+                calls.Add(method.Name);
+                if (method.Name == "get_HasActiveDiscordLifecycleOperation")
+                    return runtime.HasActiveDiscordLifecycleOperation;
+                if (method.Name == "get_CanDisposeDiscordClient") return true;
+                if (method.ReturnType == typeof(Task<bool>)) return Task.FromResult(true);
+                if (method.ReturnType == typeof(Task)) return Task.CompletedTask;
+                return null;
+            };
+            var application = new BeanBotApplication(
+                runtimeProxy, NullLogger<BeanBotApplication>.Instance);
+            await application.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.DoesNotContain(nameof(IBeanBotRuntime.ReleaseInstanceLeaseAsync), calls);
+            Assert.DoesNotContain(nameof(IBeanBotRuntime.DisposeDiscordClient), calls);
+
+            finishSend.SetResult();
+            await writeStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.True(handler.HasPendingOperations);
+            Assert.True(runtime.HasActiveDiscordLifecycleOperation);
+        }
+        finally
+        {
+            finishSend.TrySetResult();
+            finishWrite.TrySetResult();
+        }
+
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (handler.HasPendingOperations && DateTime.UtcNow < deadline) await Task.Delay(5);
+        Assert.False(handler.HasPendingOperations);
+        Assert.False(runtime.HasActiveDiscordLifecycleOperation);
+    }
+
     [Theory]
     [InlineData("command")]
     [InlineData("busy response")]
@@ -42,6 +147,7 @@ public class InteractionShutdownTests
             provider.GetRequiredService<InteractionService>(),
             provider,
             provider.GetRequiredService<InteractionExecutionContext>(),
+            provider.GetRequiredService<InteractionCommandRegistrationTarget>(),
             provider.GetRequiredService<IHostApplicationLifetime>(),
             NullLogger<InteractionHandler>.Instance,
             TimeSpan.FromMilliseconds(25),

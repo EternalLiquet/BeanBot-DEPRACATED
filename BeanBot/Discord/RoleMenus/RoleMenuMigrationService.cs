@@ -307,10 +307,10 @@ public sealed class RoleMenuMigrationService
             cancellationToken);
         var panelError = panel.Status switch
         {
-            LegacyReactionRolePanelLookupStatus.Found => null,
-            LegacyReactionRolePanelLookupStatus.ChannelMissing =>
+            LegacyReactionRoleMigrationPanelLookupStatus.Found => null,
+            LegacyReactionRoleMigrationPanelLookupStatus.ChannelMissing =>
                 "The saved legacy source channel no longer exists. The source record was left unchanged.",
-            LegacyReactionRolePanelLookupStatus.MessageMissing =>
+            LegacyReactionRoleMigrationPanelLookupStatus.MessageMissing =>
                 "The saved legacy source message no longer exists. The source record was left unchanged.",
             _ =>
                 "The saved message does not positively match Bean Bot's legacy `Role Group:` panel shape. " +

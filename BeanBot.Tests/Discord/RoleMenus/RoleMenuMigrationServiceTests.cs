@@ -379,6 +379,32 @@ public class RoleMenuMigrationServiceTests
                     ? Settings
                     : null);
         }
+
+        public Task<ReactionRoleSettings?> GetByBindingAsync(
+            string guildId, string channelId, string messageId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(Settings?.GuildId == guildId
+                && Settings.ChannelId == channelId && Settings.MessageId == messageId
+                ? Settings : null);
+        }
+
+        public Task<List<ReactionRoleSettings>> GetGuildPageAsync(
+            string guildId, ObjectId? cursor, bool newer, int limit,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<List<ReactionRoleSettings>>(Settings?.GuildId == guildId
+                ? [Settings] : []);
+        }
+
+        public Task<bool> DeleteBindingAsync(
+            ReactionRoleSettings settings, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new InvalidOperationException("Migration must never delete its legacy source.");
+        }
     }
 
     private sealed class TrackingRoleMenuStore : IRoleMenuStore
@@ -418,6 +444,32 @@ public class RoleMenuMigrationServiceTests
                 ? [Settings]
                 : [];
             return Task.FromResult(matches.Take(maximumResults).ToList());
+        }
+
+        public Task<List<RoleMenuSettings>> GetByMessageAsync(
+            string guildId, string channelId, string messageId, int maximumResults,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<List<RoleMenuSettings>>(Settings?.GuildId == guildId
+                && Settings.ChannelId == channelId && Settings.MessageId == messageId
+                ? [Settings] : []);
+        }
+
+        public Task<List<RoleMenuSettings>> GetPageAsync(
+            string guildId, RoleMenuPageCursor? cursor, int maximumResults,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<List<RoleMenuSettings>>(Settings?.GuildId == guildId
+                ? [Settings] : []);
+        }
+
+        public Task<bool> DeleteBindingAsync(
+            RoleMenuSettings settings, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new InvalidOperationException("Migration must not delete role menus.");
         }
 
         public Task<bool> DeleteAsync(

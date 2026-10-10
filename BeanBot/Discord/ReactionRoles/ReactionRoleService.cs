@@ -6,6 +6,7 @@ using Discord;
 using Discord.WebSocket;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 
 namespace BeanBot.Discord.ReactionRoles;
 
@@ -16,11 +17,15 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
     private readonly ReactionRoleRepository _reactionRoleRepository;
     private readonly DiscordSocketClient? _client;
     private readonly SemaphoreSlim _cacheLock = new(1, 1);
+    private readonly SemaphoreSlim _persistenceLock = new(1, 1);
     private readonly BoundedReactionRoleSettingsCache _roleSettings;
     private readonly object _operationSync = new();
     private readonly HashSet<Task> _inFlightOperations = [];
+    private readonly Dictionary<string, long> _claimedRetirements = [];
+    private const int MaximumClaimedRetirements = 128;
     private readonly TimeSpan _shutdownDrainTimeout;
     private readonly ReactionRoleMutationCoordinator _mutationCoordinator;
+    private readonly ReactionRoleSettingsLifecycleCoordinator _settingsLifecycle = new();
     private readonly TaskCompletionSource _disposeCompletion = new(
         TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ILogger<ReactionRoleService> _logger;
@@ -69,6 +74,8 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
 
     internal int CachedRoleSettingsCount => _roleSettings.Count;
 
+    internal bool IsShuttingDown => _shutdownToken.IsCancellationRequested;
+
     internal bool HasPendingOperations
     {
         get
@@ -78,6 +85,31 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
                 return _inFlightOperations.Any(operation => !operation.IsCompleted)
                     || _mutationCoordinator.ActiveKeyCount > 0;
             }
+        }
+    }
+
+    internal bool TryClaimLegacyRetirement(
+        string confirmationId, long expiresUnixSeconds, DateTimeOffset? now = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(confirmationId);
+        var current = (now ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds();
+        lock (_operationSync)
+        {
+            foreach (var expired in _claimedRetirements
+                         .Where(entry => entry.Value <= current)
+                         .Select(entry => entry.Key).ToArray())
+            {
+                _claimedRetirements.Remove(expired);
+            }
+            if (_stopping || _shutdownToken.IsCancellationRequested
+                || expiresUnixSeconds <= current
+                || _claimedRetirements.ContainsKey(confirmationId)
+                || _claimedRetirements.Count >= MaximumClaimedRetirements)
+            {
+                return false;
+            }
+            _claimedRetirements[confirmationId] = expiresUnixSeconds;
+            return true;
         }
     }
 
@@ -170,25 +202,33 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
                 return;
             }
 
-            var roleSetting = await GetCachedRoleSettingAsync(message.Id, cancellationToken);
-            var pair = roleSetting?.RoleEmotePairs?
-                .FirstOrDefault(candidate =>
-                    candidate.EmojiId == customEmote.Id.ToString(CultureInfo.InvariantCulture));
-            if (pair == null || !ulong.TryParse(pair.RoleId, out var roleId))
-            {
-                return;
-            }
+            await _settingsLifecycle.RunReadAsync(
+                message.Id,
+                async operationCancellation =>
+                {
+                    var roleSetting = await GetCachedRoleSettingAsync(
+                        message.Id, operationCancellation);
+                    var pair = roleSetting?.RoleEmotePairs?
+                        .FirstOrDefault(candidate =>
+                            candidate.EmojiId == customEmote.Id.ToString(CultureInfo.InvariantCulture));
+                    if (pair == null || !ulong.TryParse(pair.RoleId, out var roleId))
+                    {
+                        return;
+                    }
 
-            var guild = textChannel.Guild;
-            var operation = CoordinateRoleMutation(
-                new ReactionRoleMutationKey(guild.Id, reaction.UserId, roleId),
-                message.Id, addRole,
-                (desiredState, operationCancellation) => ApplyDesiredRoleStateAsync(
-                    guild, reaction.UserId, roleId, message.Id, desiredState, operationCancellation));
-            if (operation is not null)
-            {
-                await operation;
-            }
+                    var guild = textChannel.Guild;
+                    var operation = CoordinateRoleMutation(
+                        new ReactionRoleMutationKey(guild.Id, reaction.UserId, roleId),
+                        message.Id, addRole,
+                        (desiredState, mutationCancellation) => ApplyDesiredRoleStateAsync(
+                            guild, reaction.UserId, roleId, message.Id, desiredState,
+                            mutationCancellation));
+                    if (operation is not null)
+                    {
+                        await operation;
+                    }
+                },
+                cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -266,18 +306,183 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
     {
         await EnsureCacheLoadedAsync(cancellationToken);
         var messageIdText = messageId.ToString(CultureInfo.InvariantCulture);
-        if (_roleSettings.TryGet(messageIdText, out var cached))
+        await _cacheLock.WaitAsync(cancellationToken);
+        try
         {
-            return cached;
-        }
+            if (_roleSettings.TryGet(messageIdText, out var cached))
+            {
+                return cached;
+            }
 
-        var roleSetting = await _reactionRoleRepository.GetRoleSetting(messageId, cancellationToken);
-        if (roleSetting != null && !string.IsNullOrWhiteSpace(roleSetting.MessageId))
+            var roleSetting = await _reactionRoleRepository.GetRoleSetting(messageId, cancellationToken);
+            if (roleSetting != null && !string.IsNullOrWhiteSpace(roleSetting.MessageId))
+            {
+                _roleSettings.Set(roleSetting);
+            }
+
+            return roleSetting;
+        }
+        finally
         {
-            _roleSettings.Set(roleSetting);
+            _cacheLock.Release();
         }
+    }
 
-        return roleSetting;
+    internal async Task<List<ReactionRoleSettings>> GetGuildPageAsync(
+        ulong guildId, ObjectId? cursor, bool newer, int limit,
+        CancellationToken cancellationToken)
+    {
+        List<ReactionRoleSettings> page = [];
+        await TrackRequiredOperationAsync(async shutdownToken =>
+        {
+            using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                shutdownToken, cancellationToken);
+            page = await _reactionRoleRepository.GetGuildPageAsync(
+                guildId, cursor, newer, limit, linkedCancellation.Token);
+        });
+        return page;
+    }
+
+    internal async Task<ReactionRoleSettings?> GetFreshRoleSettingAsync(
+        ulong messageId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(messageId);
+        ReactionRoleSettings? result = null;
+        await TrackRequiredOperationAsync(async shutdownToken =>
+        {
+            using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                shutdownToken, cancellationToken);
+            await _cacheLock.WaitAsync(linkedCancellation.Token);
+            try
+            {
+                result = await _reactionRoleRepository.GetRoleSetting(
+                    messageId, linkedCancellation.Token);
+                if (result is null)
+                {
+                    _roleSettings.Remove(messageId.ToString(CultureInfo.InvariantCulture));
+                }
+                else
+                {
+                    _roleSettings.Set(result);
+                }
+            }
+            finally
+            {
+                _cacheLock.Release();
+            }
+        });
+        return result;
+    }
+
+    internal async Task<T> RunSettingsRetirementAsync<T>(
+        ulong messageId,
+        Func<CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(messageId);
+        ArgumentNullException.ThrowIfNull(operation);
+        T result = default!;
+        await TrackRequiredOperationAsync(async shutdownToken =>
+        {
+            using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                shutdownToken, cancellationToken);
+            result = await _settingsLifecycle.RunWriteAsync(
+                messageId, operation, linkedCancellation.Token);
+        });
+        return result;
+    }
+
+    internal async Task<bool> DeleteRoleSettingAsync(
+        ReactionRoleSettings expected,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        var deleted = false;
+        await TrackRequiredOperationAsync(async shutdownToken =>
+        {
+            using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                shutdownToken, cancellationToken);
+            await _persistenceLock.WaitAsync(linkedCancellation.Token);
+            try
+            {
+                await _cacheLock.WaitAsync(linkedCancellation.Token);
+                try
+                {
+                    deleted = await _reactionRoleRepository.DeleteBindingAsync(
+                        expected, expected.GuildId, expected.ChannelId,
+                        expected.MessageId, linkedCancellation.Token);
+                }
+                finally
+                {
+                    if (ulong.TryParse(expected.GuildId, out var guildId)
+                        && ulong.TryParse(expected.ChannelId, out var channelId)
+                        && ulong.TryParse(expected.MessageId, out var messageId))
+                    {
+                        InvalidateMatchingCachedPanel(guildId, channelId, messageId);
+                    }
+                    _cacheLock.Release();
+                }
+            }
+            finally
+            {
+                _persistenceLock.Release();
+            }
+        });
+        return deleted;
+    }
+
+    internal async Task<bool> DeleteSavedPanelAsync(
+        ulong guildId,
+        ulong channelId,
+        ulong messageId,
+        CancellationToken cancellationToken)
+    {
+        await _persistenceLock.WaitAsync(cancellationToken);
+        try
+        {
+            await _cacheLock.WaitAsync(cancellationToken);
+            try
+            {
+                var settings = await _reactionRoleRepository.GetRoleSettingByBindingAsync(
+                    guildId.ToString(CultureInfo.InvariantCulture),
+                    channelId.ToString(CultureInfo.InvariantCulture),
+                    messageId.ToString(CultureInfo.InvariantCulture),
+                    cancellationToken);
+                if (settings is null)
+                {
+                    return false;
+                }
+
+                var deleted = await _reactionRoleRepository.DeleteBindingAsync(
+                    settings,
+                    guildId.ToString(CultureInfo.InvariantCulture),
+                    channelId.ToString(CultureInfo.InvariantCulture),
+                    messageId.ToString(CultureInfo.InvariantCulture),
+                    cancellationToken);
+                return deleted;
+            }
+            finally
+            {
+                InvalidateMatchingCachedPanel(guildId, channelId, messageId);
+                _cacheLock.Release();
+            }
+        }
+        finally
+        {
+            _persistenceLock.Release();
+        }
+    }
+
+    private void InvalidateMatchingCachedPanel(ulong guildId, ulong channelId, ulong messageId)
+    {
+        var message = messageId.ToString(CultureInfo.InvariantCulture);
+        if (_roleSettings.TryGet(message, out var cached)
+            && cached?.GuildId == guildId.ToString(CultureInfo.InvariantCulture)
+            && cached.ChannelId == channelId.ToString(CultureInfo.InvariantCulture))
+        {
+            _roleSettings.Remove(message);
+        }
     }
 
     private async Task EnsureCacheLoadedAsync(CancellationToken cancellationToken)
@@ -349,8 +554,16 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
         ReactionRoleSettings settings,
         CancellationToken cancellationToken)
     {
-        await _reactionRoleRepository.InsertNewRoleSettings(settings, cancellationToken);
-        _roleSettings.Set(settings);
+        await _persistenceLock.WaitAsync(cancellationToken);
+        try
+        {
+            await _reactionRoleRepository.InsertNewRoleSettings(settings, cancellationToken);
+            _roleSettings.Set(settings);
+        }
+        finally
+        {
+            _persistenceLock.Release();
+        }
     }
 
     public void Dispose()
@@ -399,6 +612,7 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
             }
 
             _cacheLock.Dispose();
+            _persistenceLock.Dispose();
             _shutdownCancellation.Dispose();
             GC.SuppressFinalize(this);
         }

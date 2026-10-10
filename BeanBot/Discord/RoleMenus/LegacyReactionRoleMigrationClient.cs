@@ -5,7 +5,7 @@ using Discord.WebSocket;
 
 namespace BeanBot.Discord.RoleMenus;
 
-internal enum LegacyReactionRolePanelLookupStatus
+internal enum LegacyReactionRoleMigrationPanelLookupStatus
 {
     Found,
     ChannelMissing,
@@ -13,8 +13,8 @@ internal enum LegacyReactionRolePanelLookupStatus
     Unrecognized
 }
 
-internal sealed record LegacyReactionRolePanelLookupResult(
-    LegacyReactionRolePanelLookupStatus Status,
+internal sealed record LegacyReactionRoleMigrationPanelLookupResult(
+    LegacyReactionRoleMigrationPanelLookupStatus Status,
     string? SuggestedTitle = null);
 
 public sealed class LegacyReactionRoleMigrationClient
@@ -33,7 +33,7 @@ public sealed class LegacyReactionRoleMigrationClient
         _getChannel = getChannel ?? throw new ArgumentNullException(nameof(getChannel));
     }
 
-    internal async Task<LegacyReactionRolePanelLookupResult> ReadSourcePanelAsync(
+    internal async Task<LegacyReactionRoleMigrationPanelLookupResult> ReadSourcePanelAsync(
         ulong guildId,
         ulong channelId,
         ulong messageId,
@@ -49,20 +49,20 @@ public sealed class LegacyReactionRoleMigrationClient
         }
         catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
         {
-            return new LegacyReactionRolePanelLookupResult(
-                LegacyReactionRolePanelLookupStatus.ChannelMissing);
+            return new LegacyReactionRoleMigrationPanelLookupResult(
+                LegacyReactionRoleMigrationPanelLookupStatus.ChannelMissing);
         }
 
         if (channel is null)
         {
-            return new LegacyReactionRolePanelLookupResult(
-                LegacyReactionRolePanelLookupStatus.ChannelMissing);
+            return new LegacyReactionRoleMigrationPanelLookupResult(
+                LegacyReactionRoleMigrationPanelLookupStatus.ChannelMissing);
         }
 
         if (channel is not ITextChannel textChannel || textChannel.GuildId != guildId)
         {
-            return new LegacyReactionRolePanelLookupResult(
-                LegacyReactionRolePanelLookupStatus.Unrecognized);
+            return new LegacyReactionRoleMigrationPanelLookupResult(
+                LegacyReactionRoleMigrationPanelLookupStatus.Unrecognized);
         }
 
         IMessage? message;
@@ -75,14 +75,14 @@ public sealed class LegacyReactionRoleMigrationClient
         }
         catch (HttpException exception) when (exception.HttpCode == HttpStatusCode.NotFound)
         {
-            return new LegacyReactionRolePanelLookupResult(
-                LegacyReactionRolePanelLookupStatus.MessageMissing);
+            return new LegacyReactionRoleMigrationPanelLookupResult(
+                LegacyReactionRoleMigrationPanelLookupStatus.MessageMissing);
         }
 
         if (message is null)
         {
-            return new LegacyReactionRolePanelLookupResult(
-                LegacyReactionRolePanelLookupStatus.MessageMissing);
+            return new LegacyReactionRoleMigrationPanelLookupResult(
+                LegacyReactionRoleMigrationPanelLookupStatus.MessageMissing);
         }
 
         return LegacyReactionRolePanelIdentity.TryRecognize(
@@ -91,10 +91,10 @@ public sealed class LegacyReactionRoleMigrationClient
             message.Embeds,
             expectedRoleIds,
             out var suggestedTitle)
-            ? new LegacyReactionRolePanelLookupResult(
-                LegacyReactionRolePanelLookupStatus.Found,
+            ? new LegacyReactionRoleMigrationPanelLookupResult(
+                LegacyReactionRoleMigrationPanelLookupStatus.Found,
                 suggestedTitle)
-            : new LegacyReactionRolePanelLookupResult(
-                LegacyReactionRolePanelLookupStatus.Unrecognized);
+            : new LegacyReactionRoleMigrationPanelLookupResult(
+                LegacyReactionRoleMigrationPanelLookupStatus.Unrecognized);
     }
 }

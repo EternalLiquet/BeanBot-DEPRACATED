@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using BeanBot.Discord.Interactions;
 using BeanBot.Persistence.Models;
@@ -12,6 +13,7 @@ public sealed class RoleMenuInteractionService
     private readonly RoleMenuDraftRegistry _draftRegistry;
     private readonly RoleMenuMutationCoordinator _mutationCoordinator;
     private readonly InteractionExecutionContext _executionContext;
+    private readonly ConcurrentDictionary<(ObjectId MenuId, ulong UserId), byte> _deletionsInProgress = new();
 
     internal RoleMenuInteractionService(
         RoleMenuRepository repository,
@@ -123,6 +125,47 @@ public sealed class RoleMenuInteractionService
     internal void CompletePublish(Guid draftId, ulong guildId, ulong userId)
         => _draftRegistry.CompletePublish(draftId, guildId, userId);
 
+    internal RoleMenuEditDraftCreateStatus CreateEditDraft(
+        ObjectId menuId,
+        ulong guildId,
+        ulong userId,
+        string title,
+        string description,
+        IReadOnlyCollection<ulong> roleIds,
+        RoleMenuSelectionMode selectionMode,
+        out RoleMenuEditDraft? draft,
+        RoleMenuEditSnapshot? snapshot = null)
+        => _draftRegistry.CreateEdit(
+            menuId,
+            guildId,
+            userId,
+            title,
+            description,
+            roleIds,
+            selectionMode,
+            out draft,
+            snapshot);
+
+    internal RoleMenuEditDraftAccessStatus TryGetEditDraft(
+        Guid draftId,
+        ulong guildId,
+        ulong userId,
+        out RoleMenuEditDraft? draft)
+        => _draftRegistry.TryGetEdit(draftId, guildId, userId, out draft);
+
+    internal RoleMenuEditDraftAccessStatus TryBeginEdit(
+        Guid draftId,
+        ulong guildId,
+        ulong userId,
+        out RoleMenuEditDraft? draft)
+        => _draftRegistry.TryBeginEdit(draftId, guildId, userId, out draft);
+
+    internal void ReleaseEdit(Guid draftId, ulong guildId, ulong userId)
+        => _draftRegistry.ReleaseEdit(draftId, guildId, userId);
+
+    internal void CompleteEdit(Guid draftId, ulong guildId, ulong userId)
+        => _draftRegistry.CompleteEdit(draftId, guildId, userId);
+
     internal Task UpsertAsync(
         RoleMenuSettings settings,
         CancellationToken cancellationToken)
@@ -146,6 +189,30 @@ public sealed class RoleMenuInteractionService
             maximumResults,
             cancellationToken);
 
+    internal Task<List<RoleMenuSettings>> GetByMessageAsync(
+        ulong guildId,
+        ulong channelId,
+        ulong messageId,
+        int maximumResults,
+        CancellationToken cancellationToken)
+        => _repository.GetByMessageAsync(
+            guildId.ToString(CultureInfo.InvariantCulture),
+            channelId.ToString(CultureInfo.InvariantCulture),
+            messageId.ToString(CultureInfo.InvariantCulture),
+            maximumResults,
+            cancellationToken);
+
+    internal Task<List<RoleMenuSettings>> GetPageAsync(
+        ulong guildId,
+        RoleMenuPageCursor? cursor,
+        int maximumResults,
+        CancellationToken cancellationToken)
+        => _repository.GetPageAsync(
+            guildId.ToString(CultureInfo.InvariantCulture),
+            cursor,
+            maximumResults,
+            cancellationToken);
+
     internal Task<bool> DeleteAsync(
         ObjectId id,
         ulong guildId,
@@ -154,6 +221,56 @@ public sealed class RoleMenuInteractionService
             id,
             guildId.ToString(CultureInfo.InvariantCulture),
             cancellationToken);
+
+    internal async Task<int> DeleteSavedPanelsForMessageAsync(
+        ulong guildId,
+        ulong channelId,
+        ulong messageId,
+        CancellationToken cancellationToken)
+    {
+        const int maximumMatches = 25;
+        var guild = guildId.ToString(CultureInfo.InvariantCulture);
+        var channel = channelId.ToString(CultureInfo.InvariantCulture);
+        var message = messageId.ToString(CultureInfo.InvariantCulture);
+        var matches = await _repository.GetByMessageAsync(
+            guild, channel, message, maximumMatches + 1, cancellationToken);
+        if (matches.Count > maximumMatches)
+        {
+            throw new InvalidOperationException("Too many saved role menus match a deleted message.");
+        }
+        var deleted = 0;
+        foreach (var settings in matches)
+        {
+            if (await RunMenuMutationAsync(
+                    settings.Id,
+                    async token =>
+                    {
+                        // The initial message lookup is only a bounded candidate list. An edit
+                        // may replace that revision before this lock is acquired.
+                        var current = await _repository.GetAsync(settings.Id, guild, token);
+                        return current is not null
+                            && await _repository.DeleteBindingAsync(
+                                current, guild, channel, message, token);
+                    },
+                    cancellationToken))
+            {
+                deleted++;
+            }
+        }
+
+        return deleted;
+    }
+
+    /// <summary>
+    /// Claims one administrator's confirmed deletion of a menu so a repeated click can't start a
+    /// second one. Each claim belongs to a live interaction and is released when it finishes.
+    /// Different administrators are still serialized by the menu lock.
+    /// </summary>
+    internal bool TryBeginDeletion(ObjectId menuId, ulong userId)
+        => _deletionsInProgress.TryAdd((menuId, userId), 0);
+
+    internal void EndDeletion(ObjectId menuId, ulong userId)
+        => _deletionsInProgress.TryRemove((menuId, userId), out _);
 
     internal Task<T> RunMenuMutationAsync<T>(
         ObjectId menuId,

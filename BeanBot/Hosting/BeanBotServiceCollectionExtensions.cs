@@ -2,6 +2,7 @@ using BeanBot.Configuration;
 using BeanBot.Discord.Commands;
 using BeanBot.Discord.Events;
 using BeanBot.Discord.Fortunes;
+using BeanBot.Discord.Interactions;
 using BeanBot.Discord.Lifecycle;
 using BeanBot.Discord.Media;
 using BeanBot.Discord.Messaging;
@@ -27,18 +28,12 @@ namespace BeanBot.Hosting;
 
 internal static class BeanBotServiceCollectionExtensions
 {
-    internal static IServiceCollection AddBeanBot(
+    internal static IServiceCollection AddBeanBotOptions(
         this IServiceCollection services,
         IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
-
-        // Register the client as an existing singleton so the host container does not
-        // dispose it automatically. BeanBotApplication owns its conditional teardown
-        // because a timed-out Discord.Net startup operation may still be using it.
-        var discordClient = new DiscordSocketClient(DiscordSocketConfiguration.Create());
-        services.AddSingleton(discordClient);
 
         services.AddSingleton<IValidateOptions<BeanBotSettings>, BeanBotSettingsValidator>();
         services.AddOptions<BeanBotSettings>()
@@ -48,6 +43,25 @@ internal static class BeanBotServiceCollectionExtensions
             provider.GetRequiredService<IOptions<BeanBotSettings>>().Value));
         services.AddSingleton(provider => NewMemberWelcomeOptions.Create(
             provider.GetRequiredService<IOptions<BeanBotSettings>>().Value.NewMemberWelcome));
+
+        return services;
+    }
+
+    internal static IServiceCollection AddBeanBot(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        services.AddBeanBotOptions(configuration);
+
+        // Register the client as an existing singleton so the host container does not
+        // dispose it automatically. BeanBotApplication owns its conditional teardown
+        // because a timed-out Discord.Net startup operation may still be using it.
+        var discordClient = new DiscordSocketClient(DiscordSocketConfiguration.Create());
+        services.AddSingleton(discordClient);
+
         services.AddSingleton(_ => new CommandService(new CommandServiceConfig
         {
             LogLevel = LogSeverity.Verbose,
@@ -60,8 +74,10 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<IMongoDatabase>(provider =>
             provider.GetRequiredService<MongoClient>().GetDatabase("BeanBotDB"));
         services.AddSingleton<IDailyPunClaimStore, MongoDailyPunClaimStore>();
+        services.AddSingleton<IInstanceLeaseStore, MongoInstanceLeaseStore>();
         services.AddSingleton<IMongoReadinessProbe, MongoReadinessProbe>();
         services.AddSingleton<MongoReadinessMonitor>();
+        services.AddSingleton<ApplicationReadinessState>();
 
         services.AddSingleton<DiscordConnectionHealth>();
         services.AddSingleton<DiscordLifecycleCoordinator>();
@@ -103,8 +119,9 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<DiscordOwnerAlertDelivery>();
         services.AddSingleton<IOwnerAlertDelivery>(provider =>
             provider.GetRequiredService<DiscordOwnerAlertDelivery>());
-        services.AddSingleton<DiscordOwnerErrorNotifier>(provider =>
-            new DiscordOwnerErrorNotifier(provider.GetRequiredService<IOwnerAlertDelivery>()));
+        services.AddSingleton<DiscordOwnerErrorNotifier>(provider => new DiscordOwnerErrorNotifier(
+            provider.GetRequiredService<IOwnerAlertDelivery>(),
+            startAccepting: false));
         services.AddSingleton<IOwnerErrorNotifier>(provider =>
             provider.GetRequiredService<DiscordOwnerErrorNotifier>());
         services.AddSingleton<DiscordOutageRecoveryNotifier>();
@@ -150,10 +167,23 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<FortuneResponseEditService>();
         services.AddSingleton<ReactionRoleRepository>();
         services.AddSingleton<ReactionRoleService>();
+        services.AddSingleton<LegacyReactionRoleSetupDiscordOperations>();
         services.AddSingleton<RoleMenuRepository>();
         services.AddSingleton<RoleMenuDraftRegistry>();
         services.AddSingleton(_ => new RoleMenuMutationCoordinator());
+        services.AddSingleton(_ => new InteractionExecutionContext());
+        services.AddSingleton(provider => new RoleMenuInteractionService(
+            provider.GetRequiredService<RoleMenuRepository>(),
+            provider.GetRequiredService<RoleMenuDraftRegistry>(),
+            provider.GetRequiredService<RoleMenuMutationCoordinator>(),
+            provider.GetRequiredService<InteractionExecutionContext>()));
         services.AddSingleton<DiscordMessageCleanupService>();
+
+        services.AddSingleton<IInstanceLeaseClock, SystemInstanceLeaseClock>();
+        services.AddSingleton(InstanceLeaseOptions.Default);
+        services.AddSingleton<BeanBotInstanceLease>();
+        services.AddSingleton<IInstanceLeaseHealth>(provider =>
+            provider.GetRequiredService<BeanBotInstanceLease>());
 
         services.AddSingleton<CommandHandler>();
         services.AddSingleton<DailyPunService>();
@@ -165,12 +195,17 @@ internal static class BeanBotServiceCollectionExtensions
             provider.GetRequiredService<DiscordSocketClient>(),
             provider.GetRequiredService<DiscordConnectionHealth>(),
             provider.GetRequiredService<MongoReadinessMonitor>(),
+            provider.GetRequiredService<IInstanceLeaseHealth>(),
+            provider.GetRequiredService<ApplicationReadinessState>(),
             provider.GetRequiredService<ILogger<HealthCheckServer>>()));
 
         services.AddSingleton<BeanBotRuntime>();
         services.AddSingleton<IBeanBotRuntime>(provider =>
             provider.GetRequiredService<BeanBotRuntime>());
-        services.AddSingleton<BeanBotApplication>();
+        services.AddSingleton<BeanBotApplication>(provider => new BeanBotApplication(
+            provider.GetRequiredService<IBeanBotRuntime>(),
+            provider.GetRequiredService<ApplicationReadinessState>(),
+            provider.GetRequiredService<ILogger<BeanBotApplication>>()));
         services.AddSingleton<IBeanBotApplication>(provider =>
             provider.GetRequiredService<BeanBotApplication>());
         services.AddSingleton<BeanBotHostedService>();
