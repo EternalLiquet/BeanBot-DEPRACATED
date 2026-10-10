@@ -60,6 +60,9 @@ def main() -> int:
         baseline_line_rate = load_rate(baseline.get("lineRate"), "baseline lineRate")
         baseline_branch_rate = load_rate(baseline.get("branchRate"), "baseline branchRate")
         tolerance = load_rate(baseline.get("tolerance"), "baseline tolerance")
+        scope = baseline.get("scope")
+        if scope not in ("combined", "non-Mongo"):
+            raise ValueError("baseline scope must be 'combined' or 'non-Mongo'")
     except (ElementTree.ParseError, OSError, ValueError, json.JSONDecodeError) as error:
         print(f"Coverage report validation failed: {error}", file=sys.stderr)
         return 1
@@ -69,7 +72,7 @@ def main() -> int:
     passed = line_rate >= minimum_line_rate and branch_rate >= minimum_branch_rate
     status = "PASS" if passed else "FAIL"
     summary = (
-        "# BeanBot coverage\n\n"
+        f"# BeanBot {scope} coverage\n\n"
         "| Metric | Current | Baseline | Minimum |\n"
         "| --- | ---: | ---: | ---: |\n"
         f"| Lines | {format_percent(line_rate)} | {format_percent(baseline_line_rate)} | "
@@ -85,9 +88,9 @@ def main() -> int:
     escaped_summary = html.escape(summary)
     (output_directory / "index.html").write_text(
         "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\">"
-        "<title>BeanBot coverage</title><style>body{font-family:system-ui;max-width:50rem;"
+        f"<title>BeanBot {html.escape(scope)} coverage</title><style>body{{font-family:system-ui;max-width:50rem;"
         "margin:2rem auto;padding:0 1rem}pre{white-space:pre-wrap}</style>"
-        f"<h1>BeanBot coverage</h1><pre>{escaped_summary}</pre></html>\n",
+        f"<h1>BeanBot {html.escape(scope)} coverage</h1><pre>{escaped_summary}</pre></html>\n",
         encoding="utf-8",
     )
     print(summary, end="")

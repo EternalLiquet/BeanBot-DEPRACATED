@@ -12,15 +12,6 @@
           "Microsoft.TestPlatform.TestHost": "18.10.1"
         }
       },
-      "Testcontainers.MongoDb": {
-        "type": "Direct",
-        "requested": "[4.15.0, )",
-        "resolved": "4.15.0",
-        "contentHash": "580TtnAkbtfbSumIonCk9dTu1CweRGBumXUdHP+OGwAznRcSAZ/a9Xem5kTh8W8rOFihZi/FnqB80CFwOXSIrg==",
-        "dependencies": {
-          "Testcontainers": "4.15.0"
-        }
-      },
       "xunit": {
         "type": "Direct",
         "requested": "[2.9.3, )",
@@ -244,7 +235,8 @@
         }
       },
       "Testcontainers": {
-        "type": "Transitive",
+        "type": "Direct",
+        "requested": "[4.15.0, )",
         "resolved": "4.15.0",
         "contentHash": "8tCZKMm++C/9dHIr8lsE1iDBIBmthbo2XlGFDr4gorT1vgZrJwU36fNkCGuX7h7V39rpQoTK/aG+FhJz3jhY3A==",
         "dependencies": {
