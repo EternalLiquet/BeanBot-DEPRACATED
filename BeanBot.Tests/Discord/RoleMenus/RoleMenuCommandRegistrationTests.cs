@@ -55,6 +55,21 @@ public sealed class RoleMenuCommandRegistrationTests
     }
 
     [Fact]
+    public async Task GlobalRegistration_RepairUsesPickerWithOptionalTargetChannel()
+    {
+        await using var registration = await RegistrationFixture.CreateAsync();
+        var roleMenu = Assert.IsType<SlashCommandProperties>(Assert.Single(
+            registration.GetRegisteredProperties(),
+            candidate => candidate is SlashCommandProperties
+                         && candidate.Name.GetValueOrDefault() == "role-menu"));
+        var repair = Assert.Single(roleMenu.Options.GetValueOrDefault()!,
+            option => option.Name == "repair");
+        var target = Assert.Single(repair.Options!);
+        Assert.Equal("target-channel", target.Name);
+        Assert.False(target.IsRequired);
+    }
+
+    [Fact]
     public void MessageCommandModule_IsDiscoverableByAssemblyScanning()
     {
         var module = typeof(RoleMenuMessageCommandModule);
