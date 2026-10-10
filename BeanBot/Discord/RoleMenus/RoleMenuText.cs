@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 
 namespace BeanBot.Discord.RoleMenus;
 
@@ -9,14 +10,28 @@ internal static class RoleMenuText
         ['\u115F', '\u1160', '\u2800', '\u3164', '\uFFA0'];
 
     internal static bool HasVisibleText(string? value)
-        => value is not null
-           && value.Any(character => !char.IsWhiteSpace(character)
-                                     && !BlankLookingCharacters.Contains(character)
-                                     && char.GetUnicodeCategory(character) is not
-                                         (UnicodeCategory.Format
-                                         or UnicodeCategory.Control
-                                         or UnicodeCategory.NonSpacingMark
-                                         or UnicodeCategory.EnclosingMark));
+    {
+        if (value is null)
+        {
+            return false;
+        }
+
+        foreach (var rune in value.EnumerateRunes())
+        {
+            if (!Rune.IsWhiteSpace(rune)
+                && !(rune.IsBmp && BlankLookingCharacters.Contains((char)rune.Value))
+                && Rune.GetUnicodeCategory(rune) is not
+                    (UnicodeCategory.Format
+                    or UnicodeCategory.Control
+                    or UnicodeCategory.NonSpacingMark
+                    or UnicodeCategory.EnclosingMark))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     internal static string TruncateWithEllipsis(string value, int maximumLength)
     {
