@@ -40,6 +40,7 @@ public sealed class HealthCheckServer : IAsyncDisposable
     private readonly HealthCheckOptions _options;
     private readonly Func<DiscordHealthSnapshot> _createHealthSnapshot;
     private readonly Func<CancellationToken, Task<MongoReadinessSnapshot>> _getMongoReadinessSnapshot;
+    private readonly Func<bool> _isInstanceLeaseHeld;
     private readonly Func<DiscordMetricsSnapshot> _createDiscordMetricsSnapshot;
     private readonly Func<MongoReadinessMetricsSnapshot> _createMongoMetricsSnapshot;
     private readonly Func<ApplicationReadinessSnapshot> _createApplicationReadinessSnapshot;
@@ -97,6 +98,30 @@ public sealed class HealthCheckServer : IAsyncDisposable
 
     internal HealthCheckServer(
         HealthCheckOptions options,
+        DiscordSocketClient discordClient,
+        DiscordConnectionHealth discordConnectionHealth,
+        MongoReadinessMonitor mongoReadinessMonitor,
+        IInstanceLeaseHealth instanceLeaseHealth,
+        ApplicationReadinessState applicationReadinessState,
+        ILogger<HealthCheckServer> logger)
+        : this(
+            options,
+            CreateSnapshotFactory(discordClient, discordConnectionHealth),
+            CreateMongoReadinessFactory(mongoReadinessMonitor),
+            CreateApplicationReadinessFactory(applicationReadinessState),
+            logger,
+            DefaultRequestHeadersTimeout,
+            DefaultMaximumConcurrentClients,
+            DefaultMaximumTrackedRateLimitClients,
+            DefaultShutdownTimeout,
+            CreateDiscordMetricsFactory(discordClient, discordConnectionHealth),
+            mongoReadinessMonitor.CreateMetricsSnapshot,
+            CreateInstanceLeaseFactory(instanceLeaseHealth))
+    {
+    }
+
+    internal HealthCheckServer(
+        HealthCheckOptions options,
         Func<DiscordHealthSnapshot> createHealthSnapshot,
         ILogger<HealthCheckServer> logger,
         TimeSpan? requestHeadersTimeout = null,
@@ -130,7 +155,8 @@ public sealed class HealthCheckServer : IAsyncDisposable
         int maximumTrackedRateLimitClients = DefaultMaximumTrackedRateLimitClients,
         TimeSpan? shutdownTimeout = null,
         Func<DiscordMetricsSnapshot>? createDiscordMetricsSnapshot = null,
-        Func<MongoReadinessMetricsSnapshot>? createMongoMetricsSnapshot = null)
+        Func<MongoReadinessMetricsSnapshot>? createMongoMetricsSnapshot = null,
+        Func<bool>? isInstanceLeaseHeld = null)
         : this(
             options,
             createHealthSnapshot,
@@ -142,7 +168,8 @@ public sealed class HealthCheckServer : IAsyncDisposable
             maximumTrackedRateLimitClients,
             shutdownTimeout,
             createDiscordMetricsSnapshot,
-            createMongoMetricsSnapshot)
+            createMongoMetricsSnapshot,
+            isInstanceLeaseHeld)
     {
     }
 
@@ -157,7 +184,8 @@ public sealed class HealthCheckServer : IAsyncDisposable
         int maximumTrackedRateLimitClients = DefaultMaximumTrackedRateLimitClients,
         TimeSpan? shutdownTimeout = null,
         Func<DiscordMetricsSnapshot>? createDiscordMetricsSnapshot = null,
-        Func<MongoReadinessMetricsSnapshot>? createMongoMetricsSnapshot = null)
+        Func<MongoReadinessMetricsSnapshot>? createMongoMetricsSnapshot = null,
+        Func<bool>? isInstanceLeaseHeld = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(createHealthSnapshot);
@@ -175,6 +203,7 @@ public sealed class HealthCheckServer : IAsyncDisposable
         _options = options;
         _createHealthSnapshot = createHealthSnapshot;
         _getMongoReadinessSnapshot = getMongoReadinessSnapshot;
+        _isInstanceLeaseHeld = isInstanceLeaseHeld ?? (() => true);
         _createDiscordMetricsSnapshot = createDiscordMetricsSnapshot ?? CreateEmptyDiscordMetricsSnapshot;
         _createMongoMetricsSnapshot = createMongoMetricsSnapshot ?? CreateEmptyMongoMetricsSnapshot;
         _createApplicationReadinessSnapshot = createApplicationReadinessSnapshot;
@@ -334,6 +363,12 @@ public sealed class HealthCheckServer : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(mongoReadinessMonitor);
         return mongoReadinessMonitor.GetSnapshotAsync;
+    }
+
+    private static Func<bool> CreateInstanceLeaseFactory(IInstanceLeaseHealth instanceLeaseHealth)
+    {
+        ArgumentNullException.ThrowIfNull(instanceLeaseHealth);
+        return () => instanceLeaseHealth.IsHeld;
     }
 
     private static Func<ApplicationReadinessSnapshot> CreateApplicationReadinessFactory(
@@ -584,10 +619,12 @@ public sealed class HealthCheckServer : IAsyncDisposable
 
         var discordSnapshot = _createHealthSnapshot();
         var mongoSnapshot = await _getMongoReadinessSnapshot(context.RequestAborted);
+        var instanceLeaseHeld = _isInstanceLeaseHeld();
         var applicationSnapshot = _createApplicationReadinessSnapshot();
         var isHealthy = applicationSnapshot.IsReady &&
             discordSnapshot.IsHealthy &&
-            mongoSnapshot.IsReachable;
+            mongoSnapshot.IsReachable &&
+            instanceLeaseHeld;
         await WriteJsonResponseAsync(
             context,
             isHealthy
@@ -603,7 +640,8 @@ public sealed class HealthCheckServer : IAsyncDisposable
                 discordConnected = discordSnapshot.IsHealthy,
                 mongoReachable = mongoSnapshot.IsReachable,
                 mongoLastCheckedAtUtc = mongoSnapshot.LastCheckedAtUtc,
-                message = GetStatusMessage(applicationSnapshot, discordSnapshot, mongoSnapshot),
+                instanceLeaseHeld,
+                message = GetStatusMessage(applicationSnapshot, discordSnapshot, mongoSnapshot, instanceLeaseHeld),
                 loginState = discordSnapshot.LoginState,
                 connectionState = discordSnapshot.ConnectionState,
                 lastReadyAtUtc = discordSnapshot.LastReadyAtUtc,
@@ -716,7 +754,8 @@ public sealed class HealthCheckServer : IAsyncDisposable
     private static string GetStatusMessage(
         ApplicationReadinessSnapshot applicationSnapshot,
         DiscordHealthSnapshot discordSnapshot,
-        MongoReadinessSnapshot mongoSnapshot)
+        MongoReadinessSnapshot mongoSnapshot,
+        bool instanceLeaseHeld)
     {
         if (!applicationSnapshot.IsReady)
         {
@@ -728,9 +767,14 @@ public sealed class HealthCheckServer : IAsyncDisposable
             return discordSnapshot.StatusMessage;
         }
 
-        return mongoSnapshot.IsReachable
+        if (!mongoSnapshot.IsReachable)
+        {
+            return "MongoDB is not reachable.";
+        }
+
+        return instanceLeaseHeld
             ? discordSnapshot.StatusMessage
-            : "MongoDB is not reachable.";
+            : "Active instance ownership is not held.";
     }
 
     private bool IsAuthorized(HttpRequest request)
