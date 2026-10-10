@@ -9,6 +9,41 @@ namespace BeanBot.Tests.Discord.ReactionRoles;
 public class ReactionRoleServiceCacheConcurrencyTests
 {
     [Fact]
+    public async Task DeleteWaitingForSave_RemovesSettingAfterSaveCachesIt()
+    {
+        var setting = CreateRoleSettings("42");
+        ReactionRoleSettings? current = null;
+        var insertStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseInsert = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new CoordinatedReactionRoleSettingsStore
+        {
+            Insert = async (saved, token) =>
+            {
+                current = saved;
+                insertStarted.SetResult();
+                await releaseInsert.Task.WaitAsync(token);
+            },
+            GetByMessageId = (_, _) => Task.FromResult<ReactionRoleSettings?>(current),
+            Delete = (_, _) =>
+            {
+                current = null;
+                return Task.FromResult(true);
+            }
+        };
+        await using var service = CreateService(store, cacheCapacity: 2);
+        var save = service.PersistRoleSettingsAsync(setting, CancellationToken.None);
+        await insertStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        var deletion = service.DeleteSavedPanelAsync(1, 2, 42, CancellationToken.None);
+        Assert.False(deletion.IsCompleted);
+        releaseInsert.SetResult();
+        await save;
+
+        Assert.True(await deletion);
+        Assert.Null(current);
+        Assert.Equal(0, service.CachedRoleSettingsCount);
+    }
+
+    [Fact]
     public async Task DeletedPanel_PreloadCannotRestoreSettingAndDuplicateIsNoOp()
     {
         var setting = CreateRoleSettings("42");
@@ -155,6 +190,8 @@ public class ReactionRoleServiceCacheConcurrencyTests
 
     private sealed class CoordinatedReactionRoleSettingsStore : IReactionRoleSettingsStore
     {
+        public Func<ReactionRoleSettings, CancellationToken, Task> Insert { get; set; }
+            = (_, _) => Task.CompletedTask;
         public Func<DateTime, int, CancellationToken, Task<List<ReactionRoleSettings>>> GetRecent { get; set; }
             = (_, _, _) => Task.FromResult(new List<ReactionRoleSettings>());
 
@@ -165,7 +202,7 @@ public class ReactionRoleServiceCacheConcurrencyTests
             = (_, _) => Task.FromResult(false);
 
         public Task InsertAsync(ReactionRoleSettings roleSettings, CancellationToken cancellationToken)
-            => Task.CompletedTask;
+            => Insert(roleSettings, cancellationToken);
 
         public Task<List<ReactionRoleSettings>> GetRecentAsync(
             DateTime oldestLastAccessedUtc,

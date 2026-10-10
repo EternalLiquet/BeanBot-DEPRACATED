@@ -16,6 +16,7 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
     private readonly ReactionRoleRepository _reactionRoleRepository;
     private readonly DiscordSocketClient? _client;
     private readonly SemaphoreSlim _cacheLock = new(1, 1);
+    private readonly SemaphoreSlim _persistenceLock = new(1, 1);
     private readonly BoundedReactionRoleSettingsCache _roleSettings;
     private readonly object _operationSync = new();
     private readonly HashSet<Task> _inFlightOperations = [];
@@ -294,38 +295,39 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
         ulong messageId,
         CancellationToken cancellationToken)
     {
-        await _cacheLock.WaitAsync(cancellationToken);
+        await _persistenceLock.WaitAsync(cancellationToken);
         try
         {
-            var settings = await _reactionRoleRepository.GetRoleSettingByBindingAsync(
-                guildId.ToString(CultureInfo.InvariantCulture),
-                channelId.ToString(CultureInfo.InvariantCulture),
-                messageId.ToString(CultureInfo.InvariantCulture),
-                cancellationToken);
-            if (settings is null)
+            await _cacheLock.WaitAsync(cancellationToken);
+            try
             {
-                return false;
-            }
+                var settings = await _reactionRoleRepository.GetRoleSettingByBindingAsync(
+                    guildId.ToString(CultureInfo.InvariantCulture),
+                    channelId.ToString(CultureInfo.InvariantCulture),
+                    messageId.ToString(CultureInfo.InvariantCulture),
+                    cancellationToken);
+                if (settings is null)
+                {
+                    return false;
+                }
 
-            if (settings.GuildId != guildId.ToString(CultureInfo.InvariantCulture)
-                || settings.ChannelId != channelId.ToString(CultureInfo.InvariantCulture)
-                || settings.MessageId != messageId.ToString(CultureInfo.InvariantCulture))
+                var deleted = await _reactionRoleRepository.DeleteBindingAsync(
+                    settings,
+                    guildId.ToString(CultureInfo.InvariantCulture),
+                    channelId.ToString(CultureInfo.InvariantCulture),
+                    messageId.ToString(CultureInfo.InvariantCulture),
+                    cancellationToken);
+                return deleted;
+            }
+            finally
             {
-                return false;
+                InvalidateMatchingCachedPanel(guildId, channelId, messageId);
+                _cacheLock.Release();
             }
-
-            var deleted = await _reactionRoleRepository.DeleteBindingAsync(
-                settings,
-                guildId.ToString(CultureInfo.InvariantCulture),
-                channelId.ToString(CultureInfo.InvariantCulture),
-                messageId.ToString(CultureInfo.InvariantCulture),
-                cancellationToken);
-            return deleted;
         }
         finally
         {
-            InvalidateMatchingCachedPanel(guildId, channelId, messageId);
-            _cacheLock.Release();
+            _persistenceLock.Release();
         }
     }
 
@@ -409,8 +411,16 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
         ReactionRoleSettings settings,
         CancellationToken cancellationToken)
     {
-        await _reactionRoleRepository.InsertNewRoleSettings(settings, cancellationToken);
-        _roleSettings.Set(settings);
+        await _persistenceLock.WaitAsync(cancellationToken);
+        try
+        {
+            await _reactionRoleRepository.InsertNewRoleSettings(settings, cancellationToken);
+            _roleSettings.Set(settings);
+        }
+        finally
+        {
+            _persistenceLock.Release();
+        }
     }
 
     public void Dispose()
@@ -459,6 +469,7 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
             }
 
             _cacheLock.Dispose();
+            _persistenceLock.Dispose();
             _shutdownCancellation.Dispose();
             GC.SuppressFinalize(this);
         }
