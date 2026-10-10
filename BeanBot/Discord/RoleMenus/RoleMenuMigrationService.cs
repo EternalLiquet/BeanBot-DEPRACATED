@@ -391,7 +391,7 @@ public sealed class RoleMenuMigrationService
             legacyMessageId.ToString(CultureInfo.InvariantCulture),
             StringComparison.Ordinal);
 
-    private static string FormatMigrationPublicationFailure(RoleMenuPublicationStatus status)
+    internal static string FormatMigrationPublicationFailure(RoleMenuPublicationStatus status)
         => status switch
         {
             RoleMenuPublicationStatus.PanelOutcomeUnknown =>

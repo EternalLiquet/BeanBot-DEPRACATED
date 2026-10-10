@@ -133,5 +133,7 @@ public class LegacyReactionRoleRetirementPickerTests
             StringComparison.Ordinal);
         Assert.Equal(LegacyReactionRoleMigrationPicker.Page(9, false,
             settings[24].Id), next.CustomId);
+        Assert.Equal($"rm:mp:9:n:{settings[24].Id}",
+            LegacyReactionRoleMigrationPicker.Page(9, true, settings[24].Id));
     }
 }

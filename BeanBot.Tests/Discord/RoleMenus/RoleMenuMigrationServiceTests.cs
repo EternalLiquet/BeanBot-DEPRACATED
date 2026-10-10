@@ -1,10 +1,13 @@
 using System.Globalization;
+using System.Net;
 using System.Reflection;
 using BeanBot.Discord.Interactions;
 using BeanBot.Discord.RoleMenus;
 using BeanBot.Persistence.Models;
 using BeanBot.Persistence.Repositories;
 using Discord;
+using Discord.Net;
+using Discord.WebSocket;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using Xunit;
@@ -18,6 +21,29 @@ public class RoleMenuMigrationServiceTests
     private const ulong LegacyMessageId = 20;
     private const ulong AdministratorId = 30;
     private const ulong BotUserId = 40;
+
+    [Fact]
+    public void MigrationClient_RejectsMissingDiscordClient()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new LegacyReactionRoleMigrationClient((DiscordSocketClient)null!));
+    }
+
+    [Fact]
+    public void MigrationClient_RejectsMissingChannelReader()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new LegacyReactionRoleMigrationClient(
+                (Func<ulong, RequestOptions, Task<IChannel?>>)null!));
+    }
+
+    [Fact]
+    public void MigrationClient_AcceptsDiscordClientWithoutConnecting()
+    {
+        using var discordClient = new DiscordSocketClient();
+
+        Assert.NotNull(new LegacyReactionRoleMigrationClient(discordClient));
+    }
 
     [Fact]
     public async Task CreatePreviewAsync_MapsRecognizedLegacyPanelToMultipleRoleMenu()
@@ -203,7 +229,358 @@ public class RoleMenuMigrationServiceTests
         Assert.Equal(0, fixture.RoleMenuStore.UpsertCalls);
     }
 
-    private static MigrationFixture CreateFixture(ReactionRoleSettings? settings)
+    [Fact]
+    public async Task CreatePreviewAsync_RejectsMissingSourceAndUnrecognizedPanel()
+    {
+        var missing = CreateFixture(null);
+        var missingResult = await PreviewAsync(missing);
+        Assert.Null(missingResult.Draft);
+        Assert.Equal(0, missing.RoleMenuStore.UpsertCalls);
+
+        var unrecognized = CreateFixture(CreateLegacySettings(GuildId, ChannelId,
+            LegacyMessageId, 4));
+        var unrecognizedResult = await PreviewAsync(unrecognized);
+        Assert.Null(unrecognizedResult.Draft);
+        Assert.Contains("does not positively match", unrecognizedResult.Content,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, unrecognized.RoleMenuStore.UpsertCalls);
+    }
+
+    [Fact]
+    public async Task CreatePreviewAsync_RejectsInvalidTargetAndOversizedText()
+    {
+        var settings = CreateLegacySettings(GuildId, ChannelId, LegacyMessageId, 4, 5);
+        var wrongGuild = CreateFixture(settings);
+        var wrongGuildResult = await PreviewAsync(wrongGuild,
+            new RoleMenuMigrationRequest(LegacyMessageId, ChannelId, 999,
+                ChannelType.Text, null, null));
+        Assert.Null(wrongGuildResult.Draft);
+        Assert.Contains("normal text channel", wrongGuildResult.Content,
+            StringComparison.OrdinalIgnoreCase);
+
+        var missingChannel = CreateFixture(settings);
+        var missingChannelResult = await PreviewAsync(missingChannel,
+            new RoleMenuMigrationRequest(LegacyMessageId, 999, GuildId,
+                ChannelType.Text, null, null));
+        Assert.Null(missingChannelResult.Draft);
+        Assert.Contains("target channel", missingChannelResult.Content,
+            StringComparison.OrdinalIgnoreCase);
+
+        var longTitle = await PreviewAsync(CreateFixture(settings),
+            new RoleMenuMigrationRequest(LegacyMessageId, null, null, null,
+                new string('A', RoleMenuConstants.MaximumTitleLength + 1), null));
+        Assert.Null(longTitle.Draft);
+        var longDescription = await PreviewAsync(CreateFixture(settings),
+            new RoleMenuMigrationRequest(LegacyMessageId, null, null, null,
+                "Games", new string('A', RoleMenuConstants.MaximumDescriptionLength + 1)));
+        Assert.Null(longDescription.Draft);
+    }
+
+    [Fact]
+    public async Task CreatePreviewAsync_RejectsLostBotPermissionAndMalformedRoles()
+    {
+        var fixture = CreateFixture(CreateLegacySettings(GuildId, ChannelId,
+            LegacyMessageId, 4, 5));
+        fixture.Bot.CanManageRoles = false;
+        var denied = await PreviewAsync(fixture);
+        Assert.Null(denied.Draft);
+        Assert.Equal(0, fixture.RoleMenuStore.UpsertCalls);
+
+        var malformed = CreateFixture(new ReactionRoleSettings(
+            [new RoleEmotePair("invalid", "emoji")], "1", "10", "20"));
+        var invalid = await PreviewAsync(malformed);
+        Assert.Null(invalid.Draft);
+        Assert.Contains("malformed role", invalid.Content,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_ExistingMigrationCompletesWithoutPublishingAgain()
+    {
+        var fixture = CreateFixture(CreateLegacySettings(GuildId, ChannelId,
+            LegacyMessageId, 4, 5));
+        var draft = Assert.IsType<RoleMenuDraft>((await PreviewAsync(fixture)).Draft);
+        fixture.RoleMenuStore.Settings = new RoleMenuSettings(
+            draft.MenuId, "1", "10", "99", "Games", "", ["4", "5"],
+            RoleMenuSelectionMode.Multiple, "20");
+
+        var result = await fixture.Service.ConfirmAsync(draft,
+            AdministratorId, BotUserId, CancellationToken.None);
+
+        Assert.True(result.Completed);
+        Assert.Contains("already migrated", result.Content,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, fixture.RoleMenuStore.UpsertCalls);
+    }
+
+    [Fact]
+    public async Task CreatePreviewAsync_DistinguishesMissingSourceChannelAndMessage()
+    {
+        var missingChannel = CreateFixture(CreateLegacySettings(GuildId, 999,
+            LegacyMessageId, 4, 5));
+        var channelResult = await PreviewAsync(missingChannel);
+        Assert.Null(channelResult.Draft);
+        Assert.Contains("source channel no longer exists", channelResult.Content,
+            StringComparison.OrdinalIgnoreCase);
+
+        var missingMessage = CreateFixture(CreateLegacySettings(GuildId, ChannelId,
+            LegacyMessageId, 4, 5));
+        missingMessage.SourceChannel.Message = CreateLegacyMessage(
+            999, BotUserId, "Games", 4, 5);
+        var messageResult = await PreviewAsync(missingMessage);
+        Assert.Null(messageResult.Draft);
+        Assert.Contains("source message no longer exists", messageResult.Content,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CreatePreviewAsync_RejectsMalformedBindingAndRoleCount()
+    {
+        var badBinding = CreateFixture(new ReactionRoleSettings(
+            [new RoleEmotePair("4", "emoji")], "1", "invalid", "20"));
+        var badBindingResult = await PreviewAsync(badBinding);
+        Assert.Null(badBindingResult.Draft);
+        Assert.Contains("identity is malformed", badBindingResult.Content,
+            StringComparison.OrdinalIgnoreCase);
+
+        var emptyRoles = CreateFixture(CreateLegacySettings(GuildId, ChannelId,
+            LegacyMessageId));
+        var emptyResult = await PreviewAsync(emptyRoles);
+        Assert.Null(emptyResult.Draft);
+        Assert.Contains("1–25 roles", emptyResult.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CreatePreviewAsync_RejectsLostTargetChannelPermission()
+    {
+        var fixture = CreateFixture(CreateLegacySettings(GuildId, ChannelId,
+            LegacyMessageId, 4, 5));
+        fixture.Bot.CanUseChannel = false;
+
+        var result = await PreviewAsync(fixture);
+
+        Assert.Null(result.Draft);
+        Assert.Equal(0, fixture.RoleMenuStore.UpsertCalls);
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_RejectsMissingSourceAndLostTargetPermission()
+    {
+        var fixture = CreateFixture(CreateLegacySettings(GuildId, ChannelId,
+            LegacyMessageId, 4, 5));
+        var draft = Assert.IsType<RoleMenuDraft>((await PreviewAsync(fixture)).Draft);
+
+        fixture.ReactionStore.Settings = null;
+        var missing = await fixture.Service.ConfirmAsync(draft,
+            AdministratorId, BotUserId, CancellationToken.None);
+        Assert.False(missing.Completed);
+        Assert.Equal(0, fixture.RoleMenuStore.UpsertCalls);
+
+        fixture.ReactionStore.Settings = CreateLegacySettings(GuildId, ChannelId,
+            LegacyMessageId, 4, 5);
+        fixture.Bot.CanUseChannel = false;
+        var denied = await fixture.Service.ConfirmAsync(draft,
+            AdministratorId, BotUserId, CancellationToken.None);
+        Assert.False(denied.Completed);
+        Assert.Equal(0, fixture.RoleMenuStore.UpsertCalls);
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_RejectsNonMigrationDraftAndIdentityCollision()
+    {
+        var fixture = CreateFixture(CreateLegacySettings(GuildId, ChannelId,
+            LegacyMessageId, 4, 5));
+        var draft = Assert.IsType<RoleMenuDraft>((await PreviewAsync(fixture)).Draft);
+        var notMigration = await fixture.Service.ConfirmAsync(
+            draft with { LegacyReactionRoleMessageId = null },
+            AdministratorId, BotUserId, CancellationToken.None);
+        Assert.False(notMigration.Completed);
+
+        fixture.RoleMenuStore.Settings = new RoleMenuSettings(
+            draft.MenuId, "1", "10", "99", "Other", "", ["4", "5"],
+            RoleMenuSelectionMode.Multiple);
+        var collision = await fixture.Service.ConfirmAsync(draft,
+            AdministratorId, BotUserId, CancellationToken.None);
+        Assert.False(collision.Completed);
+        Assert.Contains("collision", collision.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, fixture.RoleMenuStore.UpsertCalls);
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_PublishesOneNativeMenuAndLeavesLegacySourceUntouched()
+    {
+        var original = CreateLegacySettings(GuildId, ChannelId, LegacyMessageId, 4, 5);
+        var fixture = CreateFixture(original);
+        var sourceMessage = fixture.SourceChannel.Message;
+        var draft = Assert.IsType<RoleMenuDraft>((await PreviewAsync(fixture)).Draft);
+        fixture.SourceChannel.PublishedMenuId = draft.MenuId;
+
+        var result = await fixture.Service.ConfirmAsync(draft,
+            AdministratorId, BotUserId, CancellationToken.None);
+
+        Assert.True(result.Completed);
+        Assert.Equal(RoleMenuPublicationStatus.Published, result.Publication?.Status);
+        Assert.Equal(1, fixture.SourceChannel.SentCount);
+        Assert.Equal(1, fixture.RoleMenuStore.UpsertCalls);
+        Assert.Equal("20", fixture.RoleMenuStore.Settings?.MigratedFromReactionRoleMessageId);
+        Assert.Equal(["4", "5"], fixture.RoleMenuStore.Settings?.RoleIds);
+        Assert.Equal(RoleMenuSelectionMode.Multiple,
+            fixture.RoleMenuStore.Settings?.SelectionMode);
+        Assert.Same(original, fixture.ReactionStore.Settings);
+        Assert.Same(sourceMessage, fixture.SourceChannel.Message);
+
+        var repeat = await fixture.Service.ConfirmAsync(draft,
+            AdministratorId, BotUserId, CancellationToken.None);
+        Assert.True(repeat.Completed);
+        Assert.Contains("already migrated", repeat.Content,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, fixture.SourceChannel.SentCount);
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_AmbiguousDiscordSendDoesNotRetryOrSaveMigration()
+    {
+        var original = CreateLegacySettings(GuildId, ChannelId, LegacyMessageId, 4, 5);
+        var fixture = CreateFixture(original);
+        var draft = Assert.IsType<RoleMenuDraft>((await PreviewAsync(fixture)).Draft);
+        fixture.SourceChannel.PublishedMenuId = draft.MenuId;
+        fixture.SourceChannel.FailSend = true;
+
+        var result = await fixture.Service.ConfirmAsync(draft,
+            AdministratorId, BotUserId, CancellationToken.None);
+
+        Assert.True(result.Completed);
+        Assert.Equal(RoleMenuPublicationStatus.PanelOutcomeUnknown,
+            result.Publication?.Status);
+        Assert.Equal(1, fixture.SourceChannel.SentCount);
+        Assert.Equal(0, fixture.RoleMenuStore.UpsertCalls);
+        Assert.Same(original, fixture.ReactionStore.Settings);
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_StopsWhenTargetOrActorDisappears()
+    {
+        var fixture = CreateFixture(CreateLegacySettings(GuildId, ChannelId,
+            LegacyMessageId, 4, 5));
+        var draft = Assert.IsType<RoleMenuDraft>((await PreviewAsync(fixture)).Draft);
+
+        fixture.SourceChannel.TargetAvailable = false;
+        var targetGone = await fixture.Service.ConfirmAsync(draft,
+            AdministratorId, BotUserId, CancellationToken.None);
+        Assert.False(targetGone.Completed);
+        Assert.Contains("target channel", targetGone.Content,
+            StringComparison.OrdinalIgnoreCase);
+
+        fixture.SourceChannel.TargetAvailable = true;
+        fixture.SourceChannel.UsersAvailable = false;
+        var actorGone = await fixture.Service.ConfirmAsync(draft,
+            AdministratorId, BotUserId, CancellationToken.None);
+        Assert.False(actorGone.Completed);
+        Assert.Equal(0, fixture.RoleMenuStore.UpsertCalls);
+    }
+
+    [Fact]
+    public async Task CreatePreviewAsync_DoesNotReplaceDraftAlreadyPublishing()
+    {
+        var fixture = CreateFixture(CreateLegacySettings(GuildId, ChannelId,
+            LegacyMessageId, 4, 5));
+        var draft = Assert.IsType<RoleMenuDraft>((await PreviewAsync(fixture)).Draft);
+        Assert.Equal(RoleMenuDraftAccessStatus.Acquired,
+            fixture.RoleMenus.TryBeginPublish(draft.Id, GuildId, AdministratorId, out _));
+
+        var repeated = await PreviewAsync(fixture);
+
+        Assert.Null(repeated.Draft);
+        Assert.Contains("still publishing", repeated.Content,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CreatePreviewAsync_ExistingMigrationWithBrokenLinkGivesAuditStep()
+    {
+        var fixture = CreateFixture(null);
+        fixture.RoleMenuStore.Settings = new RoleMenuSettings(
+            RoleMenuMigrationIdentity.CreateMenuId(GuildId, LegacyMessageId),
+            "1", "invalid", "99", "Games", "", ["4"],
+            RoleMenuSelectionMode.Multiple, "20");
+
+        var result = await PreviewAsync(fixture);
+
+        Assert.Null(result.Draft);
+        Assert.Contains("/role-menu audit", result.Content, StringComparison.Ordinal);
+        Assert.Equal(0, fixture.ReactionStore.GetCalls);
+    }
+
+    [Fact]
+    public async Task CreatePreviewAsync_UsesSharedBoundedDraftCapacity()
+    {
+        var fixture = CreateFixture(CreateLegacySettings(GuildId, ChannelId,
+            LegacyMessageId, 4, 5), draftCapacity: 1);
+        Assert.NotNull((await PreviewAsync(fixture)).Draft);
+
+        var secondOwner = await fixture.Service.CreatePreviewAsync(
+            new RoleMenuMigrationRequest(LegacyMessageId, null, null, null, null, null),
+            GuildId, AdministratorId + 1, BotUserId, CancellationToken.None);
+
+        Assert.Null(secondOwner.Draft);
+        Assert.Contains("maximum number", secondOwner.Content,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, fixture.RoleMenuStore.UpsertCalls);
+    }
+
+    [Fact]
+    public void PublicationFailureCopy_ExplainsEachUncertainResult()
+    {
+        foreach (var status in new[]
+                 {
+                     RoleMenuPublicationStatus.PanelOutcomeUnknown,
+                     RoleMenuPublicationStatus.PersistenceAbsentRollbackFailed,
+                     RoleMenuPublicationStatus.PersistenceOutcomeUnknown
+                 })
+        {
+            var copy = RoleMenuMigrationService.FormatMigrationPublicationFailure(status);
+            Assert.False(string.IsNullOrWhiteSpace(copy));
+            Assert.DoesNotContain("MongoDB", copy, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public async Task LegacyClient_DistinguishesNotFoundAndForeignChannel()
+    {
+        var notFound = new HttpException(HttpStatusCode.NotFound, null);
+        var channelGone = new LegacyReactionRoleMigrationClient(
+            (_, _) => Task.FromException<IChannel?>(notFound));
+        Assert.Equal(LegacyReactionRoleMigrationPanelLookupStatus.ChannelMissing,
+            (await channelGone.ReadSourcePanelAsync(GuildId, ChannelId,
+                LegacyMessageId, BotUserId, [4, 5], CancellationToken.None)).Status);
+
+        var source = CreateTextChannel(GuildId, ChannelId,
+            CreateLegacyMessage(LegacyMessageId, BotUserId, "Games", 4, 5));
+        var client = new LegacyReactionRoleMigrationClient(
+            (_, _) => Task.FromResult<IChannel?>(source.Channel));
+        source.FailMessageRead = true;
+        Assert.Equal(LegacyReactionRoleMigrationPanelLookupStatus.MessageMissing,
+            (await client.ReadSourcePanelAsync(GuildId, ChannelId,
+                LegacyMessageId, BotUserId, [4, 5], CancellationToken.None)).Status);
+        source.FailMessageRead = false;
+        source.GuildId = 999;
+        Assert.Equal(LegacyReactionRoleMigrationPanelLookupStatus.Unrecognized,
+            (await client.ReadSourcePanelAsync(GuildId, ChannelId,
+                LegacyMessageId, BotUserId, [4, 5], CancellationToken.None)).Status);
+
+        Assert.Throws<ArgumentNullException>(() =>
+            new LegacyReactionRoleMigrationClient((DiscordSocketClient)null!));
+    }
+
+    private static Task<RoleMenuMigrationPreviewResult> PreviewAsync(
+        MigrationFixture fixture, RoleMenuMigrationRequest? request = null)
+        => fixture.Service.CreatePreviewAsync(
+            request ?? new RoleMenuMigrationRequest(
+                LegacyMessageId, null, null, null, null, null),
+            GuildId, AdministratorId, BotUserId, CancellationToken.None);
+
+    private static MigrationFixture CreateFixture(
+        ReactionRoleSettings? settings, int draftCapacity = RoleMenuConstants.MaximumDrafts)
     {
         var roles = new List<IRole>
         {
@@ -217,6 +594,7 @@ public class RoleMenuMigrationServiceTests
         var guild = CreateGuild(GuildId, roles, roles[0]);
         var bot = CreateGuildUser(BotUserId, guild, [1000]);
         var administrator = CreateGuildUser(AdministratorId, guild, [1001]);
+        var secondAdministrator = CreateGuildUser(AdministratorId + 1, guild, [1001]);
         var sourceChannel = CreateTextChannel(
             GuildId,
             ChannelId,
@@ -233,7 +611,8 @@ public class RoleMenuMigrationServiceTests
         var executionContext = new InteractionExecutionContext();
         var roleMenus = new RoleMenuInteractionService(
             roleMenuRepository,
-            new RoleMenuDraftRegistry(),
+            new RoleMenuDraftRegistry(
+                TimeProvider.System, draftCapacity, RoleMenuConstants.DraftLifetime),
             new RoleMenuMutationCoordinator(),
             executionContext);
 
@@ -243,12 +622,13 @@ public class RoleMenuMigrationServiceTests
             (guildId, userId, _) =>
             {
                 discordUserReads++;
-                IGuildUser? user = guildId != GuildId
+                IGuildUser? user = guildId != GuildId || !sourceChannel.UsersAvailable
                     ? null
                     : userId switch
                     {
                         BotUserId => bot,
                         AdministratorId => administrator,
+                        AdministratorId + 1 => secondAdministrator,
                         _ => null
                     };
                 return Task.FromResult(user);
@@ -256,7 +636,8 @@ public class RoleMenuMigrationServiceTests
             (channelId, _) =>
             {
                 discordChannelReads++;
-                IChannel? channel = channelId == ChannelId ? sourceChannel.Channel : null;
+                IChannel? channel = sourceChannel.TargetAvailable && channelId == ChannelId
+                    ? sourceChannel.Channel : null;
                 return Task.FromResult(channel);
             });
         var administration = new RoleMenuAdministrationService(
@@ -278,9 +659,11 @@ public class RoleMenuMigrationServiceTests
 
         return new MigrationFixture(
             service,
+            roleMenus,
             reactionStore,
             roleMenuStore,
             sourceChannel,
+            (GuildUserProxy)bot,
             () => discordUserReads,
             () => discordChannelReads);
     }
@@ -378,9 +761,11 @@ public class RoleMenuMigrationServiceTests
 
     private sealed record MigrationFixture(
         RoleMenuMigrationService Service,
+        RoleMenuInteractionService RoleMenus,
         TrackingReactionRoleStore ReactionStore,
         TrackingRoleMenuStore RoleMenuStore,
         TextChannelProxy SourceChannel,
+        GuildUserProxy Bot,
         Func<int> UserReads,
         Func<int> ChannelReads)
     {
@@ -570,6 +955,8 @@ public class RoleMenuMigrationServiceTests
         public ulong Id { get; set; }
         public IGuild Guild { get; set; } = null!;
         public IReadOnlyCollection<ulong> RoleIds { get; set; } = [];
+        public bool CanManageRoles { get; set; } = true;
+        public bool CanUseChannel { get; set; } = true;
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
             => targetMethod?.Name switch
@@ -577,8 +964,10 @@ public class RoleMenuMigrationServiceTests
                 "get_Id" => Id,
                 "get_Guild" => Guild,
                 "get_RoleIds" => RoleIds,
-                "get_GuildPermissions" => new GuildPermissions(ManageRoles),
-                nameof(IGuildUser.GetPermissions) => new ChannelPermissions(RequiredChannelPermissions),
+                "get_GuildPermissions" => new GuildPermissions(
+                    CanManageRoles ? ManageRoles : 0),
+                nameof(IGuildUser.GetPermissions) => new ChannelPermissions(
+                    CanUseChannel ? RequiredChannelPermissions : 0),
                 _ => throw new NotSupportedException(targetMethod?.Name)
             };
     }
@@ -589,6 +978,33 @@ public class RoleMenuMigrationServiceTests
         public ulong GuildId { get; set; }
         public ulong Id { get; set; }
         public IMessage Message { get; set; } = null!;
+        public ObjectId PublishedMenuId { get; set; }
+        public int SentCount { get; private set; }
+        public bool FailSend { get; set; }
+        public bool TargetAvailable { get; set; } = true;
+        public bool UsersAvailable { get; set; } = true;
+        public bool FailMessageRead { get; set; }
+
+        private static async IAsyncEnumerable<IReadOnlyCollection<IMessage>> EmptyMessages()
+        {
+            yield return [];
+            await Task.CompletedTask;
+        }
+
+        private Task<IUserMessage> SendPanel()
+        {
+            SentCount++;
+            if (FailSend)
+            {
+                throw new TimeoutException("Discord send outcome unknown");
+            }
+            var message = DispatchProxy.Create<IUserMessage, PublishedMessageProxy>();
+            var proxy = (PublishedMessageProxy)message;
+            proxy.Id = 900;
+            proxy.Author = CreateUser(BotUserId);
+            proxy.Components = RoleMenuComponents.BuildPublicComponents(PublishedMenuId).Components;
+            return Task.FromResult(message);
+        }
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
@@ -597,8 +1013,12 @@ public class RoleMenuMigrationServiceTests
                 "get_Id" => Id,
                 "get_GuildId" => GuildId,
                 "get_ChannelType" => ChannelType.Text,
-                nameof(IMessageChannel.GetMessageAsync) => Task.FromResult<IMessage?>(
-                    args is [ulong messageId, ..] && messageId == Message.Id ? Message : null),
+                nameof(IMessageChannel.GetMessageAsync) => FailMessageRead
+                    ? Task.FromException<IMessage?>(new HttpException(HttpStatusCode.NotFound, null))
+                    : Task.FromResult<IMessage?>(
+                        args is [ulong messageId, ..] && messageId == Message.Id ? Message : null),
+                nameof(IMessageChannel.GetMessagesAsync) => EmptyMessages(),
+                nameof(IMessageChannel.SendMessageAsync) => SendPanel(),
                 _ => throw new NotSupportedException(targetMethod?.Name)
             };
         }
@@ -616,6 +1036,22 @@ public class RoleMenuMigrationServiceTests
                 "get_Id" => Id,
                 "get_Author" => Author,
                 "get_Embeds" => Embeds,
+                _ => throw new NotSupportedException(targetMethod?.Name)
+            };
+    }
+
+    public class PublishedMessageProxy : DispatchProxy
+    {
+        public ulong Id { get; set; }
+        public IUser Author { get; set; } = null!;
+        public IReadOnlyCollection<IMessageComponent> Components { get; set; } = [];
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+            => targetMethod?.Name switch
+            {
+                "get_Id" => Id,
+                "get_Author" => Author,
+                "get_Components" => Components,
                 _ => throw new NotSupportedException(targetMethod?.Name)
             };
     }

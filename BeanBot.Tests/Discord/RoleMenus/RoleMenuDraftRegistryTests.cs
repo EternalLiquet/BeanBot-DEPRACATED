@@ -74,6 +74,42 @@ public class RoleMenuDraftRegistryTests
     }
 
     [Fact]
+    public void CreateMigration_RejectsEmptyStableIdentityOrSourceBinding()
+    {
+        var registry = CreateRegistry();
+
+        Assert.Throws<ArgumentException>(() => registry.CreateMigration(
+            1, 2, 3, "Games", "", [4], ObjectId.Empty, 5, "binding", out _));
+        Assert.Throws<ArgumentOutOfRangeException>(() => registry.CreateMigration(
+            1, 2, 3, "Games", "", [4], ObjectId.GenerateNewId(), 0,
+            "binding", out _));
+        Assert.Throws<ArgumentException>(() => registry.CreateMigration(
+            1, 2, 3, "Games", "", [4], ObjectId.GenerateNewId(), 5,
+            "", out _));
+    }
+
+    [Fact]
+    public void SharedRegistry_StillOwnsEditDraftLifecycle()
+    {
+        var registry = CreateRegistry();
+        var status = registry.CreateEdit(ObjectId.GenerateNewId(), 1, 2,
+            "Games", "", [4], RoleMenuSelectionMode.Multiple, out var created);
+        var draft = Assert.IsType<RoleMenuEditDraft>(created);
+
+        Assert.Equal(RoleMenuEditDraftCreateStatus.Created, status);
+        Assert.Equal(RoleMenuEditDraftAccessStatus.Acquired,
+            registry.TryGetEdit(draft.Id, 1, 2, out _));
+        Assert.Equal(RoleMenuEditDraftAccessStatus.Acquired,
+            registry.TryBeginEdit(draft.Id, 1, 2, out _));
+        registry.ReleaseEdit(draft.Id, 1, 2);
+        Assert.Equal(RoleMenuEditDraftAccessStatus.Acquired,
+            registry.TryBeginEdit(draft.Id, 1, 2, out _));
+        registry.CompleteEdit(draft.Id, 1, 2);
+        Assert.Equal(RoleMenuEditDraftAccessStatus.NotFound,
+            registry.TryGetEdit(draft.Id, 1, 2, out _));
+    }
+
+    [Fact]
     public void TryBeginPublish_EnforcesGuildOwnerAndSinglePublisher()
     {
         var registry = CreateRegistry();
