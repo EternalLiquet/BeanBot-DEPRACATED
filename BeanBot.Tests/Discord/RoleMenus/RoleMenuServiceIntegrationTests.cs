@@ -1,11 +1,13 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Net;
 using System.Reflection;
 using BeanBot.Discord.Interactions;
 using BeanBot.Discord.RoleMenus;
 using BeanBot.Persistence.Models;
 using BeanBot.Persistence.Repositories;
 using Discord;
+using Discord.Net;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using Xunit;
@@ -65,7 +67,9 @@ public class RoleMenuServiceIntegrationTests
             fixture.Settings.Id, 1UL, 4UL, 5UL, 999UL, 2UL, 3UL, true, CancellationToken.None);
 
         Assert.Null(selector.Components);
-        Assert.Contains("invalid", selector.Content, StringComparison.Ordinal);
+        Assert.Equal(
+            "This role menu isn't working anymore. Ask a server admin to set it up again.",
+            selector.Content);
         Assert.Equal(0, fixture.UserReads);
         Assert.Empty(fixture.Mutations);
     }
@@ -122,6 +126,316 @@ public class RoleMenuServiceIntegrationTests
         Assert.NotNull(fixture.Store.Settings);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(25)]
+    [InlineData(26)]
+    [InlineData(60)]
+    public async Task LoadDeletionPage_ReachesEveryMenuForwardAndBackInBoundedPages(int menuCount)
+    {
+        var fixture = new Fixture();
+        var allMenus = AddMenus(fixture, menuCount);
+
+        var forward = new List<RoleMenuDeletionPage>();
+        var page = await fixture.Administration.LoadDeletionPageAsync(1UL, null, CancellationToken.None);
+        forward.Add(page);
+        while (page.Next is { } next)
+        {
+            page = await fixture.Administration.LoadDeletionPageAsync(1UL, next, CancellationToken.None);
+            forward.Add(page);
+        }
+
+        var backward = new List<RoleMenuDeletionPage> { page };
+        while (page.Previous is { } previous)
+        {
+            page = await fixture.Administration.LoadDeletionPageAsync(1UL, previous, CancellationToken.None);
+            backward.Add(page);
+        }
+
+        var listed = forward.SelectMany(candidate => candidate.Menus).Select(menu => menu.Id).ToList();
+        Assert.Equal(
+            allMenus.OrderByDescending(menu => menu.CreatedAtUtc)
+                .ThenByDescending(menu => menu.Id)
+                .Select(menu => menu.Id),
+            listed);
+        Assert.Equal(Math.Max(1, (menuCount + 24) / 25), forward.Count);
+        Assert.All(forward, candidate => Assert.InRange(candidate.Menus.Count, menuCount == 0 ? 0 : 1, 25));
+        Assert.Equal(
+            forward.Select(candidate => candidate.Menus.Select(menu => menu.Id)),
+            backward.AsEnumerable().Reverse().Select(candidate => candidate.Menus.Select(menu => menu.Id)));
+        Assert.All(fixture.Store.PageReads, read => Assert.Equal(26, read.MaximumResults));
+    }
+
+    [Fact]
+    public async Task LoadDeletionPage_StartsOverWhenMenusPastThePageEdgeWereDeleted()
+    {
+        var fixture = new Fixture();
+        AddMenus(fixture, 3);
+        var staleCursor = new RoleMenuPageCursor(
+            DateTime.MinValue,
+            ObjectId.GenerateNewId(),
+            RoleMenuPageDirection.Older);
+
+        var page = await fixture.Administration.LoadDeletionPageAsync(
+            1UL,
+            staleCursor,
+            CancellationToken.None);
+
+        Assert.Equal(3, page.Menus.Count);
+        Assert.Null(page.Previous);
+        Assert.Null(page.Next);
+        Assert.Equal([staleCursor, null], fixture.Store.PageReads.Select(read => read.Cursor));
+    }
+
+    [Fact]
+    public async Task FindMenuForMessage_UsesMessageIdentityAndThePanelButton()
+    {
+        var fixture = new Fixture();
+        var sameMessageOtherMenu = new RoleMenuSettings(ObjectId.GenerateNewId(), "1", "4", "5",
+            "Roles", "", ["10"], RoleMenuSelectionMode.Multiple);
+        fixture.Store.OtherMenus.Add(sameMessageOtherMenu);
+
+        var found = await fixture.Administration.FindMenuForMessageAsync(
+            1UL, 4UL, 5UL, [fixture.Settings.Id], CancellationToken.None);
+        var otherGuild = await fixture.Administration.FindMenuForMessageAsync(
+            2UL, 4UL, 5UL, [fixture.Settings.Id], CancellationToken.None);
+        var otherChannel = await fixture.Administration.FindMenuForMessageAsync(
+            1UL, 8UL, 5UL, [fixture.Settings.Id], CancellationToken.None);
+        var unknownButton = await fixture.Administration.FindMenuForMessageAsync(
+            1UL, 4UL, 5UL, [ObjectId.GenerateNewId()], CancellationToken.None);
+
+        Assert.Same(fixture.Settings, found);
+        Assert.Null(otherGuild);
+        Assert.Null(otherChannel);
+        Assert.Null(unknownButton);
+    }
+
+    [Fact]
+    public async Task InspectPanel_ReportsCurrentPanel()
+    {
+        var fixture = new Fixture();
+
+        var state = await fixture.Administration.InspectPanelAsync(
+            fixture.Settings, 1UL, 2UL, CancellationToken.None);
+
+        Assert.Equal(RoleMenuPanelState.Current, state);
+    }
+
+    [Fact]
+    public async Task InspectPanel_SeparatesConfirmedMissingFromInaccessibleAndUnavailable()
+    {
+        var fixture = new Fixture();
+
+        fixture.ReadChannel = () => Task.FromResult<IChannel?>(null);
+        Assert.Equal(RoleMenuPanelState.ChannelMissing, await Inspect());
+
+        fixture.ReadChannel = null;
+        fixture.ReadMessage = () => Task.FromResult<IMessage>(null!);
+        Assert.Equal(RoleMenuPanelState.MessageMissing, await Inspect());
+
+        fixture.ReadMessage = () => throw new HttpException(HttpStatusCode.NotFound, null);
+        Assert.Equal(RoleMenuPanelState.MessageMissing, await Inspect());
+
+        fixture.ReadMessage = () => throw new HttpException(HttpStatusCode.Forbidden, null);
+        Assert.Equal(RoleMenuPanelState.Inaccessible, await Inspect());
+
+        fixture.ReadMessage = null;
+        fixture.ReadChannel = () => throw new HttpException(HttpStatusCode.Forbidden, null);
+        Assert.Equal(RoleMenuPanelState.Inaccessible, await Inspect());
+
+        fixture.ReadChannel = () => throw new HttpException(HttpStatusCode.ServiceUnavailable, null);
+        Assert.Equal(RoleMenuPanelState.Unavailable, await Inspect());
+
+        Task<RoleMenuPanelState> Inspect()
+            => fixture.Administration.InspectPanelAsync(fixture.Settings, 1UL, 2UL, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task InspectPanel_DoesNotSwallowCancellation()
+    {
+        var fixture = new Fixture();
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            fixture.Administration.InspectPanelAsync(fixture.Settings, 1UL, 2UL, cancellation.Token));
+    }
+
+    [Fact]
+    public async Task DeleteConfirmed_ChangedMenuIsLeftUntouched()
+    {
+        var fixture = new Fixture();
+        var shownVersion = RoleMenuDeletionTargets.GetVersion(fixture.Settings);
+        fixture.Settings.UpdatedAtUtc = fixture.Settings.UpdatedAtUtc.AddSeconds(5);
+
+        var deletion = await fixture.Administration.DeleteConfirmedAsync(
+            fixture.Settings.Id, shownVersion, 1UL, 2UL, 3UL, CancellationToken.None);
+
+        Assert.Equal(RoleMenuConfirmedDeletionStatus.Changed, deletion.Status);
+        Assert.Null(deletion.Result);
+        Assert.Equal(0, fixture.UserReads);
+        Assert.Equal(0, fixture.ChannelReads);
+        Assert.Equal(0, fixture.PanelDeletes);
+        Assert.Equal(0, fixture.Store.Deletes);
+        Assert.Equal(
+            "That role menu changed. Run `/role-menu delete` to see it again.",
+            RoleMenuPresentation.FormatConfirmedDeletion(deletion));
+    }
+
+    [Fact]
+    public async Task DeleteConfirmed_MenuDeletedMeanwhileNeverFallsBackToAnotherMenu()
+    {
+        var fixture = new Fixture();
+        var sameTitle = new RoleMenuSettings(ObjectId.GenerateNewId(), "1", "4", "6",
+            fixture.Settings.Title, "", ["10"], RoleMenuSelectionMode.Multiple);
+        fixture.Store.OtherMenus.Add(sameTitle);
+        var deletedMenuId = fixture.Settings.Id;
+        var shownVersion = RoleMenuDeletionTargets.GetVersion(fixture.Settings);
+        fixture.Store.Settings = null;
+
+        var deletion = await fixture.Administration.DeleteConfirmedAsync(
+            deletedMenuId, shownVersion, 1UL, 2UL, 3UL, CancellationToken.None);
+
+        Assert.Equal(RoleMenuConfirmedDeletionStatus.AlreadyDeleted, deletion.Status);
+        Assert.Equal(0, fixture.ChannelReads);
+        Assert.Equal(0, fixture.Store.Deletes);
+        Assert.Contains(sameTitle, fixture.Store.OtherMenus);
+        Assert.Equal(
+            "That role menu was already deleted.",
+            RoleMenuPresentation.FormatConfirmedDeletion(deletion));
+    }
+
+    [Fact]
+    public async Task DeleteConfirmed_MatchingVersionReusesTheGuardedDeletionWorkflow()
+    {
+        var fixture = new Fixture();
+
+        var deletion = await fixture.Administration.DeleteConfirmedAsync(
+            fixture.Settings.Id,
+            RoleMenuDeletionTargets.GetVersion(fixture.Settings),
+            1UL, 2UL, 3UL, CancellationToken.None);
+
+        Assert.Equal(RoleMenuConfirmedDeletionStatus.Attempted, deletion.Status);
+        var result = Assert.IsType<RoleMenuDeletionResult>(deletion.Result);
+        Assert.Equal(RoleMenuConfigurationDeletionStatus.Deleted, result.ConfigurationStatus);
+        Assert.Equal(RoleMenuPanelDeletionStatus.DeletedOrMissing, result.PanelStatus);
+        Assert.Equal(1, fixture.PanelDeletes);
+        Assert.Equal(1, fixture.Store.Deletes);
+        Assert.Equal("Role menu deleted.", RoleMenuPresentation.FormatConfirmedDeletion(deletion));
+    }
+
+    [Fact]
+    public async Task DeleteConfirmed_RechecksPermissionBeforeAnyChange()
+    {
+        var fixture = new Fixture { AdministratorCanManageRoles = false };
+
+        var deletion = await fixture.Administration.DeleteConfirmedAsync(
+            fixture.Settings.Id,
+            RoleMenuDeletionTargets.GetVersion(fixture.Settings),
+            1UL, 2UL, 3UL, CancellationToken.None);
+
+        Assert.True(Assert.IsType<RoleMenuDeletionResult>(deletion.Result).AuthorizationDenied);
+        Assert.Equal(0, fixture.ChannelReads);
+        Assert.Equal(0, fixture.PanelDeletes);
+        Assert.Equal(0, fixture.Store.Deletes);
+    }
+
+    [Fact]
+    public async Task DeleteConfirmed_InaccessiblePanelKeepsTheSavedMenu()
+    {
+        var fixture = new Fixture
+        {
+            ReadMessage = () => throw new HttpException(HttpStatusCode.Forbidden, null)
+        };
+
+        var deletion = await fixture.Administration.DeleteConfirmedAsync(
+            fixture.Settings.Id,
+            RoleMenuDeletionTargets.GetVersion(fixture.Settings),
+            1UL, 2UL, 3UL, CancellationToken.None);
+
+        var result = Assert.IsType<RoleMenuDeletionResult>(deletion.Result);
+        Assert.Equal(RoleMenuConfigurationDeletionStatus.Kept, result.ConfigurationStatus);
+        Assert.Equal(0, fixture.PanelDeletes);
+        Assert.Equal(0, fixture.Store.Deletes);
+        Assert.NotNull(fixture.Store.Settings);
+    }
+
+    [Fact]
+    public async Task DeleteConfirmed_ConfirmedMissingPanelStillCleansUpTheSavedMenu()
+    {
+        var fixture = new Fixture
+        {
+            ReadMessage = () => Task.FromResult<IMessage>(null!)
+        };
+
+        var deletion = await fixture.Administration.DeleteConfirmedAsync(
+            fixture.Settings.Id,
+            RoleMenuDeletionTargets.GetVersion(fixture.Settings),
+            1UL, 2UL, 3UL, CancellationToken.None);
+
+        var result = Assert.IsType<RoleMenuDeletionResult>(deletion.Result);
+        Assert.Equal(RoleMenuConfigurationDeletionStatus.Deleted, result.ConfigurationStatus);
+        Assert.Equal(RoleMenuPanelDeletionIssue.MessageMissing, result.PanelIssue);
+        Assert.Equal(1, fixture.Store.Deletes);
+    }
+
+    [Theory]
+    [InlineData(null, "Give the menu a title.")]
+    [InlineData("   ", "Give the menu a title.")]
+    [InlineData("​ㅤ", "Give the menu a title.")]
+    [InlineData("\U000E0100", "Give the menu a title.")]
+    public async Task CreatePreview_RejectsMissingOrVisuallyEmptyTitles(string? title, string expected)
+    {
+        var fixture = new Fixture();
+
+        var preview = await fixture.Administration.CreatePreviewAsync(
+            new RoleMenuCreateRequest(title!, null, "multiple", 4UL, 1UL, ChannelType.Text, [10UL]),
+            1UL, 3UL, 2UL, CancellationToken.None);
+
+        Assert.Null(preview.Draft);
+        Assert.Equal(expected, preview.Content);
+        Assert.Equal(0, fixture.ChannelReads);
+    }
+
+    [Fact]
+    public async Task CreatePreview_EnforcesTitleLengthAfterTrimming()
+    {
+        var fixture = new Fixture();
+        var tooLong = await fixture.Administration.CreatePreviewAsync(
+            new RoleMenuCreateRequest(new string('a', 101), null, "multiple", 4UL, 1UL,
+                ChannelType.Text, [10UL]),
+            1UL, 3UL, 2UL, CancellationToken.None);
+        var paddedButValid = await fixture.Administration.CreatePreviewAsync(
+            new RoleMenuCreateRequest("  " + new string('a', 100) + "  ", null, "multiple", 4UL, 1UL,
+                ChannelType.Text, [10UL]),
+            1UL, 3UL, 2UL, CancellationToken.None);
+
+        Assert.Equal("The title can't be longer than 100 characters.", tooLong.Content);
+        Assert.DoesNotContain("title", paddedButValid.Content, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static List<RoleMenuSettings> AddMenus(Fixture fixture, int menuCount)
+    {
+        fixture.Store.Settings = null;
+        var sharedCreationTime = new DateTime(2026, 10, 10, 12, 0, 0, DateTimeKind.Utc);
+        for (var index = 0; index < menuCount; index++)
+        {
+            var menu = new RoleMenuSettings(ObjectId.GenerateNewId(), "1", "4",
+                (100 + index).ToString(CultureInfo.InvariantCulture), "Same title", "", ["10"],
+                RoleMenuSelectionMode.Multiple)
+            {
+                // Half of the menus share one creation time to exercise the ID tie-breaker.
+                CreatedAtUtc = index % 2 == 0 ? sharedCreationTime : sharedCreationTime.AddMinutes(-index)
+            };
+            fixture.Store.OtherMenus.Add(menu);
+        }
+
+        fixture.Store.OtherMenus.Add(new RoleMenuSettings(ObjectId.GenerateNewId(), "999", "4", "7",
+            "Other guild", "", ["10"], RoleMenuSelectionMode.Multiple));
+        return [.. fixture.Store.OtherMenus.Where(menu => menu.GuildId == "1")];
+    }
+
     private sealed class Fixture
     {
         internal Fixture()
@@ -157,6 +471,7 @@ public class RoleMenuServiceIntegrationTests
                 "get_Id" => 5UL,
                 "get_Author" => bot,
                 "get_Components" => RoleMenuComponents.BuildPublicComponents(Settings.Id).Components,
+                "DeleteAsync" => DeletePanelMessage(),
                 _ => throw new NotSupportedException(method.Name)
             });
             Channel = Proxy<ITextChannel>((method, _) => method.Name switch
@@ -164,7 +479,7 @@ public class RoleMenuServiceIntegrationTests
                 "get_Id" => 4UL,
                 "get_GuildId" => 1UL,
                 "get_ChannelType" => ChannelType.Text,
-                "GetMessageAsync" => Task.FromResult<IMessage>(message),
+                "GetMessageAsync" => ReadMessage?.Invoke() ?? Task.FromResult<IMessage>(message),
                 _ => throw new NotSupportedException(method.Name)
             });
             var client = new DiscordRoleMenuClient(
@@ -178,7 +493,7 @@ public class RoleMenuServiceIntegrationTests
                 {
                     options.CancelToken.ThrowIfCancellationRequested();
                     ChannelReads++;
-                    return Task.FromResult<IChannel?>(Channel);
+                    return ReadChannel?.Invoke() ?? Task.FromResult<IChannel?>(Channel);
                 });
             Members = new RoleMenuMemberService(Session, client, NullLogger<RoleMenuMemberService>.Instance);
             Administration = new RoleMenuAdministrationService(Session, client,
@@ -192,6 +507,9 @@ public class RoleMenuServiceIntegrationTests
         internal RoleMenuAdministrationService Administration { get; }
         internal ITextChannel Channel { get; }
         internal bool AdministratorCanManageRoles { get; set; } = true;
+        internal Func<Task<IChannel?>>? ReadChannel { get; set; }
+        internal Func<Task<IMessage>>? ReadMessage { get; set; }
+        internal int PanelDeletes { get; private set; }
         internal int UserReads { get; private set; }
         internal int ChannelReads { get; private set; }
         internal Dictionary<ulong, HashSet<ulong>> MemberRoles { get; } = new()
@@ -201,6 +519,12 @@ public class RoleMenuServiceIntegrationTests
         };
         internal ConcurrentQueue<(ulong Member, ulong Role)> Mutations { get; } = new();
         internal Func<ulong, Task> BeforeMutation { get; set; } = _ => Task.CompletedTask;
+
+        private Task DeletePanelMessage()
+        {
+            PanelDeletes++;
+            return Task.CompletedTask;
+        }
 
         private async Task AddAsync(ulong member, ulong role)
         {
@@ -238,12 +562,63 @@ public class RoleMenuServiceIntegrationTests
             CancellationToken cancellationToken)
             => Task.FromResult<List<RoleMenuSettings>>(Settings?.GuildId == guildId ? [Settings] : []);
 
+        public Task<List<RoleMenuSettings>> GetByMessageAsync(string guildId, string channelId,
+            string messageId, int maximumResults, CancellationToken cancellationToken)
+            => Task.FromResult(AllMenus()
+                .Where(menu => menu.GuildId == guildId && menu.ChannelId == channelId
+                               && menu.MessageId == messageId)
+                .Take(maximumResults)
+                .ToList());
+
+        public Task<List<RoleMenuSettings>> GetPageAsync(string guildId, RoleMenuPageCursor? cursor,
+            int maximumResults, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            PageReads.Add((cursor, maximumResults));
+            var newestFirst = AllMenus()
+                .Where(menu => menu.GuildId == guildId)
+                .OrderByDescending(menu => menu.CreatedAtUtc)
+                .ThenByDescending(menu => menu.Id)
+                .ToList();
+            if (cursor is not { } boundary)
+            {
+                return Task.FromResult(newestFirst.Take(maximumResults).ToList());
+            }
+
+            var boundaryKey = (boundary.CreatedAtUtc, boundary.MenuId);
+            int Compare(RoleMenuSettings menu)
+                => (menu.CreatedAtUtc, menu.Id).CompareTo(boundaryKey);
+            return Task.FromResult<List<RoleMenuSettings>>(boundary.Direction == RoleMenuPageDirection.Older
+                ? [.. newestFirst.Where(menu => Compare(menu) < 0).Take(maximumResults)]
+                : [.. newestFirst.Where(menu => Compare(menu) > 0).TakeLast(maximumResults)]);
+        }
+
         public Task<bool> DeleteAsync(ObjectId id, string guildId, CancellationToken cancellationToken)
         {
             Deletes++;
             Settings = null;
             return Task.FromResult(true);
         }
+
+        public Task<bool> DeleteBindingAsync(RoleMenuSettings settings, CancellationToken cancellationToken)
+        {
+            if (Settings?.Id != settings.Id || Settings.GuildId != settings.GuildId
+                || Settings.ChannelId != settings.ChannelId || Settings.MessageId != settings.MessageId
+                || Settings.UpdatedAtUtc != settings.UpdatedAtUtc)
+            {
+                return Task.FromResult(false);
+            }
+
+            Deletes++;
+            Settings = null;
+            return Task.FromResult(true);
+        }
+
+        internal List<RoleMenuSettings> OtherMenus { get; } = [];
+        internal List<(RoleMenuPageCursor? Cursor, int MaximumResults)> PageReads { get; } = [];
+
+        private IEnumerable<RoleMenuSettings> AllMenus()
+            => Settings is null ? OtherMenus : OtherMenus.Prepend(Settings);
     }
 
     private static T Proxy<T>(Func<MethodInfo, object?[], object?> handler) where T : class

@@ -25,9 +25,9 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
 
     internal readonly record struct RoleResolution(RoleResolutionStatus Status, ulong? RoleId);
 
-    private const int MaximumRolesPerGroup = 25;
     private static readonly TimeSpan InteractionTimeout = TimeSpan.FromSeconds(60);
     private readonly ReactionRoleService _reactionRoleService;
+    private readonly LegacyReactionRoleSetupDiscordOperations _reactionRoleSetupDiscordOperations;
     private readonly DiscordMessageCleanupService _messageCleanupService;
     private readonly DiscordMessageWaiter _messageWaiter;
     private readonly LegacyCommandReplySender _replySender;
@@ -35,12 +35,15 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
 
     public AdministrativeModule(
         ReactionRoleService reactionRoleService,
+        LegacyReactionRoleSetupDiscordOperations reactionRoleSetupDiscordOperations,
         DiscordMessageCleanupService messageCleanupService,
         DiscordMessageWaiter messageWaiter,
         LegacyCommandReplySender replySender,
         ILogger<AdministrativeModule> logger)
     {
         _reactionRoleService = reactionRoleService ?? throw new ArgumentNullException(nameof(reactionRoleService));
+        _reactionRoleSetupDiscordOperations = reactionRoleSetupDiscordOperations
+            ?? throw new ArgumentNullException(nameof(reactionRoleSetupDiscordOperations));
         _messageCleanupService = messageCleanupService ?? throw new ArgumentNullException(nameof(messageCleanupService));
         _messageWaiter = messageWaiter ?? throw new ArgumentNullException(nameof(messageWaiter));
         _replySender = replySender ?? throw new ArgumentNullException(nameof(replySender));
@@ -48,7 +51,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
     }
 
     [Command("role setting", RunMode = RunMode.Sync)]
-    [Summary("Will create a message for auto-role based on reactions")]
+    [Summary("Create a reaction-role panel; reply cancel at any setup prompt to stop.")]
     [Alias("rolesetting", "role settings", "rolesettings")]
     [Remarks("role setting")]
     [RequireGuild]
@@ -61,6 +64,23 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
     {
         var messagesInInteraction = new List<IMessage> { Context.Message };
         IDisposable? interactionSession = null;
+
+        async Task<SocketMessage?> WaitForReplyAsync()
+        {
+            var message = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
+            if (message is not null)
+            {
+                messagesInInteraction.Add(message);
+            }
+
+            return message;
+        }
+
+        async Task SendInputFeedbackAsync(string feedback)
+        {
+            messagesInInteraction.Add(await _replySender.SendMessageAsync(Context, feedback));
+        }
+
         try
         {
             var sessionResult = _messageWaiter.AcquireInteractionSession(Context, out interactionSession);
@@ -71,72 +91,36 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
                 return;
             }
 
-            var roleEmotePairs = new List<RoleEmotePair>();
-            messagesInInteraction.Add(await _replySender.SendMessageAsync(
-                Context,
-                $"How many roles do you wish to configure? (1-{MaximumRolesPerGroup})"));
-            var amountMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
-            var roleCountResult = await GetRoleCountAsync(messagesInInteraction, amountMessage);
-            if (!roleCountResult.Success)
+            async Task<LegacyRoleSetupInput.RoleChoice?> ResolveSelectedRoleAsync(SocketMessage message)
+            {
+                var role = await GetRoleAsync(messagesInInteraction, message);
+                return role is null ? null : new LegacyRoleSetupInput.RoleChoice(role.Id, role.Name);
+            }
+
+            async Task<ulong?> ResolveSelectedEmoteAsync(SocketMessage message)
+                => (await GetEmoteAsync(messagesInInteraction, message))?.Id;
+
+            var setup = await LegacyRoleSetupInput.RunAsync(
+                WaitForReplyAsync,
+                message => message.Content,
+                ResolveSelectedRoleAsync,
+                ResolveSelectedEmoteAsync,
+                SendInputFeedbackAsync);
+            if (setup is null)
             {
                 return;
             }
 
-            for (var index = 0; index < roleCountResult.RoleCount; index++)
-            {
-                messagesInInteraction.Add(await _replySender.SendMessageAsync(Context, "Which role would you like to set up?"));
-                var roleMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
-                var role = await GetRoleAsync(messagesInInteraction, roleMessage);
-                if (role == null)
-                {
-                    return;
-                }
-
-                messagesInInteraction.Add(await _replySender.SendMessageAsync(
-                    Context,
-                    $"Which emote would you like to set up with the role {role.Name}?"));
-                var emoteMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
-                var emote = await GetEmoteAsync(messagesInInteraction, emoteMessage);
-                if (emote == null)
-                {
-                    return;
-                }
-
-                if (roleEmotePairs.Any(pair =>
-                    pair.RoleId == role.Id.ToString(CultureInfo.InvariantCulture)
-                    || pair.EmojiId == emote.Id.ToString(CultureInfo.InvariantCulture)))
-                {
-                    messagesInInteraction.Add(await _replySender.SendMessageAsync(
-                        Context,
-                        "That role or emote is already being configured. Please start again."));
-                    return;
-                }
-
-                roleEmotePairs.Add(new RoleEmotePair(
-                    role.Id.ToString(CultureInfo.InvariantCulture),
-                    emote.Id.ToString(CultureInfo.InvariantCulture)));
-            }
-
-            messagesInInteraction.Add(await _replySender.SendMessageAsync(
-                Context,
-                "Please label this group of roles (i.e. Games, Position, NSFW, etc)."));
-            var labelMessage = await _messageWaiter.WaitForNextMessageAsync(Context, InteractionTimeout);
-            if (labelMessage == null)
-            {
-                messagesInInteraction.Add(await _replySender.SendMessageAsync(Context, "Time has expired, please try again."));
-                return;
-            }
-
-            messagesInInteraction.Add(labelMessage);
+            var roleEmotePairs = setup.Pairs;
             var setupStatus = await ReactionRoleSetupTransaction.ExecuteIfAssignableAsync(
                 () => ValidateSelectedRoles(roleEmotePairs),
-                () => CreateRoleMessageAsync(roleEmotePairs, labelMessage.Content),
+                () => CreateRoleMessageAsync(roleEmotePairs, setup.Label),
                 async messageToListen =>
                 {
                     await AddRoleReactionsAsync(messageToListen, roleEmotePairs);
                     await _reactionRoleService.SaveRoleSettings(roleEmotePairs, messageToListen);
                 },
-                messageToListen => messageToListen.DeleteAsync(),
+                messageToListen => _reactionRoleSetupDiscordOperations.DeleteMessageAsync(messageToListen),
                 exception => BeanBotLog.IncompleteReactionRoleCleanupFailed(_logger, exception));
             var setupFailure = GetRoleValidationMessage(setupStatus);
             if (setupFailure is not null)
@@ -235,36 +219,14 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         return await _replySender.SendMessageAsync(Context, embed: roleEmbed.Build());
     }
 
-    private async Task AddRoleReactionsAsync(IUserMessage messageToListen, IEnumerable<RoleEmotePair> roleEmotePairs)
+    private Task AddRoleReactionsAsync(IUserMessage messageToListen, IEnumerable<RoleEmotePair> roleEmotePairs)
     {
-        var pairs = roleEmotePairs.ToList();
-        foreach (var pair in pairs)
-        {
-            var emote = Context.Guild.Emotes.First(candidate =>
-                candidate.Id.ToString(CultureInfo.InvariantCulture) == pair.EmojiId);
-            await messageToListen.AddReactionAsync(emote);
-            await Task.Delay(TimeSpan.FromMilliseconds(250));
-        }
-    }
-
-    private async Task<(bool Success, int RoleCount)> GetRoleCountAsync(List<IMessage> messages, SocketMessage? response)
-    {
-        if (response == null)
-        {
-            messages.Add(await _replySender.SendMessageAsync(Context, "Time has expired, please try again."));
-            return (false, 0);
-        }
-
-        messages.Add(response);
-        if (!int.TryParse(response.Content, out var roleCount) || roleCount < 1 || roleCount > MaximumRolesPerGroup)
-        {
-            messages.Add(await _replySender.SendMessageAsync(
-                Context,
-                $"Please enter a whole number from 1 to {MaximumRolesPerGroup}."));
-            return (false, 0);
-        }
-
-        return (true, roleCount);
+        var emotes = roleEmotePairs
+            .Select(pair => Context.Guild.Emotes.First(candidate =>
+                candidate.Id.ToString(CultureInfo.InvariantCulture) == pair.EmojiId))
+            .Cast<IEmote>()
+            .ToList();
+        return _reactionRoleSetupDiscordOperations.AddReactionsAsync(messageToListen, emotes);
     }
 
     private async Task<SocketRole?> GetRoleAsync(List<IMessage> messages, SocketMessage? response)
@@ -275,7 +237,6 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
             return null;
         }
 
-        messages.Add(response);
         var availableRoles = Context.Guild.Roles.ToList();
         var roleResolution = ResolveRole(
             response.Content,
@@ -385,7 +346,6 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
             return null;
         }
 
-        messages.Add(response);
         var emote = Context.Guild.Emotes.FirstOrDefault(candidate =>
             response.Content.Contains(candidate.Name, StringComparison.OrdinalIgnoreCase));
         if (emote == null)

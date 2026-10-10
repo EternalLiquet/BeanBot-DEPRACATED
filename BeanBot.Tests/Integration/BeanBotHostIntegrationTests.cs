@@ -81,8 +81,8 @@ public class BeanBotHostIntegrationTests
                 "stop-recovery",
                 "unsubscribe-events",
                 "stop-pun",
-                "stop-health",
                 "flush-alerts",
+                "stop-health",
                 "stop-discord",
                 "dispose-discord",
                 "flush-alerts"

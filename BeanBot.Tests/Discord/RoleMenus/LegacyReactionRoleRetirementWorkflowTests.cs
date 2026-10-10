@@ -11,6 +11,56 @@ public class LegacyReactionRoleRetirementWorkflowTests
     private const ulong MessageId = 3;
 
     [Fact]
+    public async Task ExecuteAsync_ChangedSavedBindingRejectsStaleConfirmationBeforeDeletion()
+    {
+        var previous = CreateSettings();
+        var replacement = new ReactionRoleSettings(
+            [new RoleEmotePair("6", "7")], "1", "2", "3");
+        var panelDeletes = 0;
+        var settingsDeletes = 0;
+        var operations = CreateOperations(
+            readSettings: (_, _) => Task.FromResult<ReactionRoleSettings?>(replacement),
+            deletePanel: (_, _, _) =>
+            {
+                panelDeletes++;
+                return Task.FromResult(true);
+            },
+            deleteSettings: (_, _) =>
+            {
+                settingsDeletes++;
+                return Task.FromResult(true);
+            });
+
+        var result = await LegacyReactionRoleRetirementWorkflow.ExecuteAsync(
+            MessageId, GuildId, operations, CancellationToken.None,
+            LegacyReactionRoleRetirementBinding.Fingerprint(previous));
+
+        Assert.Equal(LegacyReactionRoleRetirementStatus.StaleConfirmation, result.Status);
+        Assert.Equal(0, panelDeletes);
+        Assert.Equal(0, settingsDeletes);
+    }
+
+    [Fact]
+    public void ConfirmationId_ExpiresAndRemainsBoundToTheUserAndSavedRecord()
+    {
+        var now = DateTimeOffset.FromUnixTimeSeconds(1_800_000_000);
+        var expiry = now.AddMinutes(10).ToUnixTimeSeconds();
+        var first = LegacyReactionRoleRetirementBinding.Fingerprint(CreateSettings());
+        var second = LegacyReactionRoleRetirementBinding.Fingerprint(
+            new ReactionRoleSettings([new RoleEmotePair("6", "7")], "1", "2", "3"));
+
+        Assert.True(LegacyReactionRoleRetirementCustomIds.IsCurrent(expiry, now));
+        Assert.False(LegacyReactionRoleRetirementCustomIds.IsCurrent(expiry,
+            now.AddMinutes(10)));
+        Assert.NotEqual(
+            LegacyReactionRoleRetirementCustomIds.Confirm(9, 3, expiry, first),
+            LegacyReactionRoleRetirementCustomIds.Confirm(10, 3, expiry, first));
+        Assert.NotEqual(
+            LegacyReactionRoleRetirementCustomIds.Confirm(9, 3, expiry, first),
+            LegacyReactionRoleRetirementCustomIds.Confirm(9, 3, expiry, second));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_DeletesPanelBeforeExactSettings()
     {
         var order = new List<string>();
@@ -27,7 +77,7 @@ public class LegacyReactionRoleRetirementWorkflowTests
                 order.Add("delete-panel");
                 return Task.FromResult(true);
             },
-            deleteSettings: (_, _, _) =>
+            deleteSettings: (_, _) =>
             {
                 order.Add("delete-settings");
                 return Task.FromResult(true);
@@ -59,7 +109,7 @@ public class LegacyReactionRoleRetirementWorkflowTests
                 deletePanelCalls++;
                 return Task.FromResult(true);
             },
-            deleteSettings: (_, _, _) =>
+            deleteSettings: (_, _) =>
             {
                 deleteSettingsCalls++;
                 return Task.FromResult(true);
@@ -180,7 +230,7 @@ public class LegacyReactionRoleRetirementWorkflowTests
                 panelDeletes++;
                 throw new OperationCanceledException("Discord request timed out after dispatch.");
             },
-            deleteSettings: (_, _, _) =>
+            deleteSettings: (_, _) =>
             {
                 settingsDeletes++;
                 return Task.FromResult(true);
@@ -219,7 +269,7 @@ public class LegacyReactionRoleRetirementWorkflowTests
                 panelDeletes++;
                 throw new TimeoutException("Discord outcome unknown.");
             },
-            deleteSettings: (_, _, _) =>
+            deleteSettings: (_, _) =>
             {
                 settingsDeletes++;
                 return Task.FromResult(true);
@@ -255,7 +305,7 @@ public class LegacyReactionRoleRetirementWorkflowTests
                 deletePanelCalls++;
                 return Task.FromResult(true);
             },
-            deleteSettings: (_, _, _) =>
+            deleteSettings: (_, _) =>
                 throw new InvalidOperationException("Mongo unavailable"));
 
         var result = await LegacyReactionRoleRetirementWorkflow.ExecuteAsync(
@@ -280,7 +330,7 @@ public class LegacyReactionRoleRetirementWorkflowTests
                 settingsReads++;
                 return Task.FromResult<ReactionRoleSettings?>(CreateSettings());
             },
-            deleteSettings: (_, _, _) => Task.FromResult(false));
+            deleteSettings: (_, _) => Task.FromResult(false));
 
         var result = await LegacyReactionRoleRetirementWorkflow.ExecuteAsync(
             MessageId,
@@ -303,7 +353,7 @@ public class LegacyReactionRoleRetirementWorkflowTests
                 return Task.FromResult<ReactionRoleSettings?>(
                     settingsReads == 1 ? CreateSettings() : null);
             },
-            deleteSettings: (_, _, _) => Task.FromResult(false));
+            deleteSettings: (_, _) => Task.FromResult(false));
 
         var result = await LegacyReactionRoleRetirementWorkflow.ExecuteAsync(
             MessageId,
@@ -326,7 +376,7 @@ public class LegacyReactionRoleRetirementWorkflowTests
                 return Task.FromResult<ReactionRoleSettings?>(
                     settingsReads == 1 ? CreateSettings() : null);
             },
-            deleteSettings: (_, _, _) =>
+            deleteSettings: (_, _) =>
                 throw new TimeoutException("Mongo delete acknowledgement timed out"));
 
         var result = await LegacyReactionRoleRetirementWorkflow.ExecuteAsync(
@@ -376,7 +426,7 @@ public class LegacyReactionRoleRetirementWorkflowTests
                 deletePanelCalls++;
                 return Task.FromResult(true);
             },
-            deleteSettings: (_, _, _) =>
+            deleteSettings: (_, _) =>
             {
                 deleteSettingsCalls++;
                 return Task.FromResult(true);
@@ -398,13 +448,13 @@ public class LegacyReactionRoleRetirementWorkflowTests
         Func<CancellationToken, Task<bool?>>? canManageRoles = null,
         Func<LegacyReactionRoleSource, CancellationToken, Task<LegacyReactionRolePanelLookupResult>>? readPanel = null,
         Func<LegacyReactionRolePanelSnapshot, IReadOnlyCollection<ulong>, CancellationToken, Task<bool>>? deletePanel = null,
-        Func<ulong, ulong, CancellationToken, Task<bool>>? deleteSettings = null)
+        Func<ReactionRoleSettings, CancellationToken, Task<bool>>? deleteSettings = null)
         => new(
             readSettings ?? ((_, _) => Task.FromResult<ReactionRoleSettings?>(CreateSettings())),
             canManageRoles ?? (_ => Task.FromResult<bool?>(true)),
             readPanel ?? ((source, _) => Task.FromResult(Found(source))),
             deletePanel ?? ((_, _, _) => Task.FromResult(true)),
-            deleteSettings ?? ((_, _, _) => Task.FromResult(true)),
+            deleteSettings ?? ((_, _) => Task.FromResult(true)),
             () => false);
 
     private static LegacyReactionRolePanelLookupResult Found(

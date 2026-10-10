@@ -2,6 +2,7 @@ using System.Globalization;
 using BeanBot.Logging;
 using BeanBot.Persistence.Models;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace BeanBot.Persistence.Repositories;
@@ -14,13 +15,13 @@ internal interface IReactionRoleSettingsStore
         int limit,
         CancellationToken cancellationToken);
     Task<ReactionRoleSettings?> GetByMessageIdAsync(string messageId, CancellationToken cancellationToken);
-
-    Task<bool> DeleteByMessageIdAndGuildIdAsync(
-        string messageId,
-        string guildId,
-        CancellationToken cancellationToken)
-        => Task.FromException<bool>(
-            new NotSupportedException("This reaction-role settings store does not support deletion."));
+    Task<ReactionRoleSettings?> GetByBindingAsync(
+        string guildId, string channelId, string messageId, CancellationToken cancellationToken);
+    Task<bool> DeleteBindingAsync(ReactionRoleSettings settings, CancellationToken cancellationToken);
+    Task<List<ReactionRoleSettings>> GetGuildPageAsync(
+        string guildId, ObjectId? cursor, bool newer, int limit, CancellationToken cancellationToken)
+        => Task.FromException<List<ReactionRoleSettings>>(
+            new NotSupportedException("This settings store does not support paging."));
 }
 
 internal sealed class MongoReactionRoleSettingsStore : IReactionRoleSettingsStore
@@ -59,16 +60,51 @@ internal sealed class MongoReactionRoleSettingsStore : IReactionRoleSettingsStor
         return await _roleSettings.Find(filter).FirstOrDefaultAsync(cancellationToken);
     }
 
-    public async Task<bool> DeleteByMessageIdAndGuildIdAsync(
-        string messageId,
-        string guildId,
-        CancellationToken cancellationToken)
+    public async Task<ReactionRoleSettings?> GetByBindingAsync(
+        string guildId, string channelId, string messageId, CancellationToken cancellationToken)
     {
-        var filter = Builders<ReactionRoleSettings>.Filter.And(
-            Builders<ReactionRoleSettings>.Filter.Eq(document => document.MessageId, messageId),
-            Builders<ReactionRoleSettings>.Filter.Eq(document => document.GuildId, guildId));
-        var result = await _roleSettings.DeleteOneAsync(filter, cancellationToken);
-        return result.DeletedCount > 0;
+        var filters = Builders<ReactionRoleSettings>.Filter;
+        var filter = filters.And(
+            filters.Eq(document => document.GuildId, guildId),
+            filters.Eq(document => document.ChannelId, channelId),
+            filters.Eq(document => document.MessageId, messageId));
+        return await _roleSettings.Find(filter).FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<List<ReactionRoleSettings>> GetGuildPageAsync(
+        string guildId, ObjectId? cursor, bool newer, int limit, CancellationToken cancellationToken)
+    {
+        var filters = Builders<ReactionRoleSettings>.Filter;
+        var filter = filters.Eq(setting => setting.GuildId, guildId);
+        if (cursor is { } boundary)
+        {
+            filter &= newer
+                ? filters.Gt(setting => setting.Id, boundary)
+                : filters.Lt(setting => setting.Id, boundary);
+        }
+
+        var sort = newer
+            ? Builders<ReactionRoleSettings>.Sort.Ascending(setting => setting.Id)
+            : Builders<ReactionRoleSettings>.Sort.Descending(setting => setting.Id);
+        var page = await _roleSettings.Find(filter).Sort(sort).Limit(limit)
+            .ToListAsync(cancellationToken);
+        if (newer)
+        {
+            page.Reverse();
+        }
+        return page;
+    }
+
+    public async Task<bool> DeleteBindingAsync(ReactionRoleSettings settings, CancellationToken cancellationToken)
+    {
+        var filters = Builders<ReactionRoleSettings>.Filter;
+        var filter = filters.And(
+            filters.Eq(document => document.Id, settings.Id),
+            filters.Eq(document => document.GuildId, settings.GuildId),
+            filters.Eq(document => document.ChannelId, settings.ChannelId),
+            filters.Eq(document => document.MessageId, settings.MessageId),
+            filters.Eq(document => document.RoleEmotePairs, settings.RoleEmotePairs));
+        return (await _roleSettings.DeleteOneAsync(filter, cancellationToken)).DeletedCount == 1;
     }
 }
 
@@ -124,17 +160,44 @@ public sealed class ReactionRoleRepository
             cancellationToken);
     }
 
-    public Task<bool> DeleteRoleSetting(
-        ulong messageId,
-        ulong guildId,
+    public Task<List<ReactionRoleSettings>> GetGuildPageAsync(
+        ulong guildId, ObjectId? cursor, bool newer, int limit,
         CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfZero(messageId);
         ArgumentOutOfRangeException.ThrowIfZero(guildId);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(limit, 0);
         cancellationToken.ThrowIfCancellationRequested();
-        return _reactionRoleSettingsStore.DeleteByMessageIdAndGuildIdAsync(
-            messageId.ToString(CultureInfo.InvariantCulture),
-            guildId.ToString(CultureInfo.InvariantCulture),
+        return _reactionRoleSettingsStore.GetGuildPageAsync(
+            guildId.ToString(CultureInfo.InvariantCulture), cursor, newer, limit,
             cancellationToken);
+    }
+
+    public Task<ReactionRoleSettings?> GetRoleSettingByBindingAsync(
+        string guildId,
+        string channelId,
+        string messageId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return _reactionRoleSettingsStore.GetByBindingAsync(
+            guildId, channelId, messageId, cancellationToken);
+    }
+
+    public async Task<bool> DeleteBindingAsync(
+        ReactionRoleSettings settings,
+        string guildId,
+        string channelId,
+        string messageId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (settings.GuildId != guildId || settings.ChannelId != channelId
+            || settings.MessageId != messageId)
+        {
+            return false;
+        }
+
+        return await _reactionRoleSettingsStore.DeleteBindingAsync(settings, cancellationToken);
     }
 }

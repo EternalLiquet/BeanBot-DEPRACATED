@@ -251,7 +251,8 @@ internal enum LegacyReactionRoleRetirementStatus
     PanelDeletionFailed,
     PanelOutcomeUnknown,
     PersistenceKept,
-    PersistenceOutcomeUnknown
+    PersistenceOutcomeUnknown,
+    StaleConfirmation
 }
 
 internal sealed record LegacyReactionRoleRetirementResult(
@@ -265,7 +266,7 @@ internal sealed record LegacyReactionRoleRetirementOperations(
     Func<CancellationToken, Task<bool?>> ReadAdministratorCanManageRoles,
     Func<LegacyReactionRoleSource, CancellationToken, Task<LegacyReactionRolePanelLookupResult>> ReadPanel,
     Func<LegacyReactionRolePanelSnapshot, IReadOnlyCollection<ulong>, CancellationToken, Task<bool>> DeletePanel,
-    Func<ulong, ulong, CancellationToken, Task<bool>> DeleteSettings,
+    Func<ReactionRoleSettings, CancellationToken, Task<bool>> DeleteSettings,
     Func<bool> IsShuttingDown);
 
 internal static class LegacyReactionRoleRetirementWorkflow
@@ -274,7 +275,8 @@ internal static class LegacyReactionRoleRetirementWorkflow
         ulong messageId,
         ulong guildId,
         LegacyReactionRoleRetirementOperations operations,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? expectedFingerprint = null)
     {
         ArgumentOutOfRangeException.ThrowIfZero(messageId);
         ArgumentOutOfRangeException.ThrowIfZero(guildId);
@@ -293,6 +295,13 @@ internal static class LegacyReactionRoleRetirementWorkflow
         {
             return new LegacyReactionRoleRetirementResult(
                 LegacyReactionRoleRetirementStatus.AlreadyRetired);
+        }
+
+        if (expectedFingerprint is not null
+            && !LegacyReactionRoleRetirementBinding.Matches(settings, expectedFingerprint))
+        {
+            return new LegacyReactionRoleRetirementResult(
+                LegacyReactionRoleRetirementStatus.StaleConfirmation);
         }
 
         if (!LegacyReactionRoleSourceParser.TryParse(settings, out var source)
@@ -358,8 +367,7 @@ internal static class LegacyReactionRoleRetirementWorkflow
         }
 
         return await DeleteSettingsAsync(
-            messageId,
-            guildId,
+            settings,
             sourceWasMissing,
             operations,
             cancellationToken);
@@ -404,15 +412,14 @@ internal static class LegacyReactionRoleRetirementWorkflow
     }
 
     private static async Task<LegacyReactionRoleRetirementResult> DeleteSettingsAsync(
-        ulong messageId,
-        ulong guildId,
+        ReactionRoleSettings settings,
         bool sourceWasMissing,
         LegacyReactionRoleRetirementOperations operations,
         CancellationToken cancellationToken)
     {
         try
         {
-            var deleted = await operations.DeleteSettings(messageId, guildId, cancellationToken);
+            var deleted = await operations.DeleteSettings(settings, cancellationToken);
             if (deleted)
             {
                 return new LegacyReactionRoleRetirementResult(
@@ -421,7 +428,7 @@ internal static class LegacyReactionRoleRetirementWorkflow
             }
 
             return await ReconcileSettingsDeletionAsync(
-                messageId,
+                settings,
                 sourceWasMissing,
                 operations,
                 deletionFailure: null);
@@ -433,7 +440,7 @@ internal static class LegacyReactionRoleRetirementWorkflow
         catch (Exception exception)
         {
             return await ReconcileSettingsDeletionAsync(
-                messageId,
+                settings,
                 sourceWasMissing,
                 operations,
                 exception);
@@ -441,7 +448,7 @@ internal static class LegacyReactionRoleRetirementWorkflow
     }
 
     private static async Task<LegacyReactionRoleRetirementResult> ReconcileSettingsDeletionAsync(
-        ulong messageId,
+        ReactionRoleSettings settings,
         bool sourceWasMissing,
         LegacyReactionRoleRetirementOperations operations,
         Exception? deletionFailure)
@@ -451,7 +458,7 @@ internal static class LegacyReactionRoleRetirementWorkflow
         try
         {
             var remaining = await operations.ReadSettings(
-                messageId,
+                ulong.Parse(settings.MessageId, CultureInfo.InvariantCulture),
                 reconciliationCancellation.Token);
             return remaining is null
                 ? new LegacyReactionRoleRetirementResult(

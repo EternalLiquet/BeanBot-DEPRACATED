@@ -1,9 +1,11 @@
+using System.Globalization;
 using BeanBot.Discord.ReactionRoles;
 using BeanBot.Logging;
 using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 
 namespace BeanBot.Discord.RoleMenus;
 
@@ -15,9 +17,10 @@ public sealed partial class RoleMenuAdminModule
         RoleMenuInteractionService roleMenuService,
         DiscordRoleMenuClient discord,
         RoleMenuAdministrationService administration,
+        RoleMenuAuditService audit,
         ReactionRoleService legacyReactionRoles,
         ILogger<RoleMenuAdminModule> logger)
-        : this(roleMenuService, discord, administration, logger)
+        : this(roleMenuService, discord, administration, audit, logger)
     {
         _legacyReactionRoles = legacyReactionRoles
             ?? throw new ArgumentNullException(nameof(legacyReactionRoles));
@@ -25,64 +28,99 @@ public sealed partial class RoleMenuAdminModule
 
     [SlashCommand(
         "retire-legacy",
-        "Safely retire one saved legacy reaction-role panel.",
+        "Retire a legacy reaction-role panel. Members keep their roles.",
         runMode: RunMode.Sync)]
-    public async Task RetireLegacyAsync(
-        [Summary("legacy-message-id", "Message ID of the saved legacy reaction-role panel")]
-        string legacyMessageId)
+    public async Task RetireLegacyAsync()
     {
         using var cancellation = RoleMenus.CreateOperationCancellation();
         await RoleMenus.ExecuteInitialResponseAsync(
             supportsOriginalResponse: true,
-            operationToken => DeferAsync(
-                ephemeral: true,
+            operationToken => DeferAsync(ephemeral: true,
                 DiscordRoleMenuClient.CreateRequestOptions(operationToken)),
-            operationToken => ReplaceResponseAsync(
-                "Inspecting the legacy reaction-role panel…",
-                operationToken),
+            operationToken => ReplaceResponseAsync("Loading legacy panels…", operationToken),
             cancellation.Token);
-
         if (Context.Guild is null)
         {
-            await ReplaceResponseAsync(
-                "Legacy reaction-role panels can only be retired inside a server.",
+            await ReplaceResponseAsync("You can only retire legacy panels in a server.",
                 cancellation.Token);
             return;
         }
+        await ShowLegacyPageAsync(null, newer: false, cancellation.Token);
+    }
 
-        if (!RoleMenuCustomIds.TryParseSnowflake(legacyMessageId?.Trim() ?? string.Empty, out var messageId))
+    [ComponentInteraction(LegacyReactionRoleRetirementPicker.PagePattern,
+        ignoreGroupNames: true, runMode: RunMode.Sync)]
+    public async Task ChangeLegacyPageAsync(
+        string userIdValue, string directionValue, string cursorValue)
+    {
+        using var cancellation = RoleMenus.CreateOperationCancellation();
+        if (!RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var userId)
+            || userId != Context.User.Id
+            || !LegacyReactionRoleRetirementPicker.TryParseCursor(
+                directionValue, cursorValue, out var newer, out var cursor)
+            || Context.Guild is null
+            || Context.Interaction is not SocketMessageComponent component
+            || !IsValidManagementComponent(component, Context.Guild,
+                ComponentType.Button,
+                LegacyReactionRoleRetirementPicker.Page(userId, newer, cursor)))
         {
-            await ReplaceResponseAsync(
-                "That legacy message ID is invalid. Copy the numeric Discord message ID and try again.",
+            await RespondToInvalidComponentAsync(
+                "This list has expired or belongs to someone else. Run `/role-menu retire-legacy` again.",
                 cancellation.Token);
             return;
         }
+        if (!await AcknowledgeEphemeralComponentAsync("Loading legacy panels…",
+                cancellation.Token))
+        {
+            return;
+        }
+        await ShowLegacyPageAsync(cursor, newer, cancellation.Token);
+    }
 
+    [ComponentInteraction(LegacyReactionRoleRetirementPicker.SelectPattern,
+        ignoreGroupNames: true, runMode: RunMode.Sync)]
+    public async Task SelectLegacyPanelAsync(string userIdValue, string[] selectedMessageIds)
+    {
+        using var cancellation = RoleMenus.CreateOperationCancellation();
+        if (!RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var userId)
+            || userId != Context.User.Id
+            || selectedMessageIds is not { Length: 1 }
+            || !RoleMenuCustomIds.TryParseSnowflake(selectedMessageIds[0], out var messageId)
+            || !TryGetGuildActors(out var guild, out _, out var bot)
+            || Context.Interaction is not SocketMessageComponent component
+            || !IsValidManagementComponent(component, guild,
+                ComponentType.SelectMenu,
+                LegacyReactionRoleRetirementPicker.Select(userId), selectedMessageIds[0]))
+        {
+            await RespondToInvalidComponentAsync(
+                "This list has expired or belongs to someone else. Run `/role-menu retire-legacy` again.",
+                cancellation.Token);
+            return;
+        }
+        if (!await AcknowledgeEphemeralComponentAsync("Checking that panel…",
+                cancellation.Token))
+        {
+            return;
+        }
         try
         {
-            var preview = await CreateLegacyRetirementPreviewAsync(
-                messageId,
-                Context.Guild.Id,
-                Context.Guild.CurrentUser.Id,
-                cancellation.Token);
+            var preview = await CreateLegacyRetirementPreviewAsync(messageId, guild.Id,
+                bot.Id, cancellation.Token);
             if (preview is null)
             {
                 return;
             }
-
-            await ReplaceResponseAsync(
-                "Review this destructive action before confirming.",
-                cancellation.Token,
+            var expiry = DateTimeOffset.UtcNow.Add(
+                LegacyReactionRoleRetirementCustomIds.Lifetime).ToUnixTimeSeconds();
+            await ReplaceResponseAsync("Delete this legacy role panel?", cancellation.Token,
                 LegacyReactionRoleRetirementComponents.BuildConfirmationEmbed(preview),
                 LegacyReactionRoleRetirementComponents.BuildConfirmationComponents(
-                    Context.User.Id,
-                    messageId));
+                    Context.User.Id, messageId, expiry, preview.Fingerprint));
         }
-        catch (OperationCanceledException)
-            when (cancellation.IsCancellationRequested && !RoleMenus.IsShuttingDown)
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested &&
+                                                 !RoleMenus.IsShuttingDown)
         {
-            await SendFreshFeedbackAsync(
-                "Bean Bot ran out of time while inspecting that legacy panel. Nothing was changed; try again.");
+            await SendFreshFeedbackAsync("I ran out of time checking that panel. Run `/role-menu retire-legacy` again.");
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -90,35 +128,52 @@ public sealed partial class RoleMenuAdminModule
         }
         catch (Exception exception)
         {
-            BeanBotLog.RoleMenuDeletionFailed(
-                _logger,
-                messageId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                exception);
-            await SendFreshFeedbackAsync(
-                "Bean Bot could not safely inspect that legacy panel. Nothing was changed; try again after checking its channel access.");
+            BeanBotLog.RoleMenuDeletionFailed(_logger, messageId.ToString(CultureInfo.InvariantCulture), exception);
+            await SendFreshFeedbackAsync("I couldn't inspect that panel. Check its channel access and run `/role-menu retire-legacy` again.");
         }
+    }
+
+    private async Task ShowLegacyPageAsync(ObjectId? cursor, bool newer,
+        CancellationToken cancellationToken)
+    {
+        var guild = Context.Guild!;
+        var settings = await LegacyReactionRoles.GetGuildPageAsync(
+            guild.Id, cursor, newer, LegacyReactionRoleRetirementPicker.PageSize + 1,
+            cancellationToken);
+        await ReplaceResponseAsync(
+            settings.Count == 0 ? "I couldn't find any saved legacy panels on this page."
+                : "Which legacy role panel do you want to retire?",
+            cancellationToken,
+            components: LegacyReactionRoleRetirementPicker.Build(
+                Context.User.Id, settings, cursor, newer,
+                channelId => guild.GetChannel(channelId)?.Name,
+                roleId => guild.GetRole(roleId)?.Name));
     }
 
     [ComponentInteraction(
         LegacyReactionRoleRetirementCustomIds.ConfirmPattern,
         ignoreGroupNames: true,
         runMode: RunMode.Sync)]
-    public async Task ConfirmLegacyRetirementAsync(string userIdValue, string messageIdValue)
+    public async Task ConfirmLegacyRetirementAsync(
+        string userIdValue, string messageIdValue, string expiryValue, string fingerprint)
     {
         using var cancellation = RoleMenus.CreateOperationCancellation();
         if (!RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var boundUserId)
             || boundUserId != Context.User.Id
             || !RoleMenuCustomIds.TryParseSnowflake(messageIdValue, out var messageId)
+            || !long.TryParse(expiryValue, out var expiresUnixSeconds)
+            || !LegacyReactionRoleRetirementCustomIds.IsCurrent(
+                expiresUnixSeconds, DateTimeOffset.UtcNow)
+            || fingerprint.Length != 16
             || !TryGetGuildActors(out var guild, out _, out var bot)
             || Context.Interaction is not SocketMessageComponent component
-            || !IsValidPrivateComponent(
-                component,
-                guild,
-                ComponentType.Button,
-                LegacyReactionRoleRetirementCustomIds.Confirm(boundUserId, messageId)))
+            || !IsValidManagementComponent(
+                component, guild, ComponentType.Button,
+                LegacyReactionRoleRetirementCustomIds.Confirm(
+                    boundUserId, messageId, expiresUnixSeconds, fingerprint)))
         {
             await RespondToInvalidComponentAsync(
-                "That legacy-retirement confirmation is invalid or belongs to another administrator.",
+                "This confirmation has expired or belongs to someone else. Run `/role-menu retire-legacy` again.",
                 cancellation.Token);
             return;
         }
@@ -146,7 +201,8 @@ public sealed partial class RoleMenuAdminModule
                             client,
                             Context.User.Id,
                             bot.Id),
-                        operationToken);
+                        operationToken,
+                        fingerprint);
                 },
                 cancellation.Token);
             LogLegacyRetirementFailures(messageId, result);
@@ -180,19 +236,23 @@ public sealed partial class RoleMenuAdminModule
         LegacyReactionRoleRetirementCustomIds.CancelPattern,
         ignoreGroupNames: true,
         runMode: RunMode.Sync)]
-    public async Task CancelLegacyRetirementAsync(string userIdValue, string messageIdValue)
+    public async Task CancelLegacyRetirementAsync(
+        string userIdValue, string messageIdValue, string expiryValue, string fingerprint)
     {
         using var cancellation = RoleMenus.CreateOperationCancellation();
         var isOwner = RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var boundUserId)
             && boundUserId == Context.User.Id
             && RoleMenuCustomIds.TryParseSnowflake(messageIdValue, out var messageId)
+            && long.TryParse(expiryValue, out var expiresUnixSeconds)
+            && LegacyReactionRoleRetirementCustomIds.IsCurrent(
+                expiresUnixSeconds, DateTimeOffset.UtcNow)
+            && fingerprint.Length == 16
             && Context.Guild is not null
             && Context.Interaction is SocketMessageComponent component
-            && IsValidPrivateComponent(
-                component,
-                Context.Guild,
-                ComponentType.Button,
-                LegacyReactionRoleRetirementCustomIds.Cancel(boundUserId, messageId));
+            && IsValidManagementComponent(
+                component, Context.Guild, ComponentType.Button,
+                LegacyReactionRoleRetirementCustomIds.Cancel(
+                    boundUserId, messageId, expiresUnixSeconds, fingerprint));
         if (!isOwner)
         {
             await RespondToInvalidComponentAsync(
@@ -241,7 +301,7 @@ public sealed partial class RoleMenuAdminModule
         if (settings is null)
         {
             await ReplaceResponseAsync(
-                "No saved legacy reaction-role configuration exists for that message ID in this server.",
+                "I couldn't find that saved legacy panel. Run `/role-menu retire-legacy` again to choose another.",
                 cancellationToken);
             return null;
         }
@@ -252,7 +312,7 @@ public sealed partial class RoleMenuAdminModule
             || source.MessageId != messageId)
         {
             await ReplaceResponseAsync(
-                "The saved legacy configuration does not match this server and message. Nothing can be retired safely.",
+                "That saved panel no longer matches this server. Run `/role-menu retire-legacy` again.",
                 cancellationToken);
             return null;
         }
@@ -263,7 +323,7 @@ public sealed partial class RoleMenuAdminModule
             or LegacyReactionRolePanelLookupStatus.Unrecognized)
         {
             await ReplaceResponseAsync(
-                "The saved message could not be positively identified as the expected Bean Bot legacy role panel. Nothing was changed.",
+                "I couldn't verify that this is my legacy role panel. Check the message and run `/role-menu retire-legacy` again.",
                 cancellationToken);
             return null;
         }
@@ -272,15 +332,19 @@ public sealed partial class RoleMenuAdminModule
             .Zip(
                 settings.RoleEmotePairs,
                 (roleId, pair) => new LegacyReactionRoleRetirementMapping(
-                    roleId,
-                    pair.EmojiId))
+                    roleId, pair.EmojiId,
+                    ulong.TryParse(pair.EmojiId, out var emojiId)
+                        ? Context.Guild?.Emotes.FirstOrDefault(emoji => emoji.Id == emojiId)?.Name
+                        : null,
+                    Context.Guild?.GetRole(roleId)?.Name))
             .ToArray();
         return new LegacyReactionRoleRetirementPreview(
             source,
             lookup.SuggestedTitle,
             lookup.Status is LegacyReactionRolePanelLookupStatus.ChannelMissing
                 or LegacyReactionRolePanelLookupStatus.MessageMissing,
-            mappings);
+            mappings,
+            LegacyReactionRoleRetirementBinding.Fingerprint(settings));
     }
 
     private LegacyReactionRoleRetirementOperations CreateLegacyRetirementOperations(

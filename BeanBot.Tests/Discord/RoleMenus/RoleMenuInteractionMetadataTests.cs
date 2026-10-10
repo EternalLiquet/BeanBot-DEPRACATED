@@ -29,6 +29,31 @@ public class RoleMenuInteractionMetadataTests
     }
 
     [Fact]
+    public void MessageCommandModule_IsGuildOnlyAndRequiresManageRoles()
+    {
+        var module = typeof(RoleMenuMessageCommandModule);
+
+        Assert.Equal(
+            ContextType.Guild,
+            module.GetCustomAttribute<RequireContextAttribute>()?.Contexts);
+        Assert.Equal(
+            GuildPermission.ManageRoles,
+            module.GetCustomAttribute<RequireUserPermissionAttribute>()?.GuildPermission);
+        Assert.Equal(
+            GuildPermission.ManageRoles,
+            module.GetCustomAttribute<DefaultMemberPermissionsAttribute>()?.Permissions);
+        Assert.Equal(
+            [InteractionContextType.Guild],
+            module.GetCustomAttribute<CommandContextTypeAttribute>()?.ContextTypes);
+        var command = typeof(RoleMenuMessageCommandModule)
+            .GetMethod(nameof(RoleMenuMessageCommandModule.DeleteRoleMenuAsync))
+            ?.GetCustomAttribute<MessageCommandAttribute>();
+        Assert.NotNull(command);
+        Assert.Equal("Delete Role Menu", command.Name);
+        Assert.Equal(RunMode.Sync, command.RunMode);
+    }
+
+    [Fact]
     public void CreateModal_UsesNativeBoundedRoleAndTextChannelSelectors()
     {
         var roles = Assert.IsAssignableFrom<PropertyInfo>(
@@ -82,13 +107,36 @@ public class RoleMenuInteractionMetadataTests
     }
 
     [Fact]
+    public void RepairCommand_UsesIdFreePickerAndOptionalTextChannelTarget()
+    {
+        var method = Assert.IsAssignableFrom<MethodInfo>(
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.RepairAsync)));
+        var command = method.GetCustomAttribute<SlashCommandAttribute>();
+        var parameters = method.GetParameters();
+
+        Assert.NotNull(command);
+        Assert.Equal("repair", command.Name);
+        Assert.Equal(RunMode.Sync, command.RunMode);
+        var parameter = Assert.Single(parameters);
+        Assert.Equal(typeof(ITextChannel), parameter.ParameterType);
+        Assert.True(parameter.HasDefaultValue);
+        Assert.Null(parameter.DefaultValue);
+    }
+
+    [Fact]
     public void MutatingHandlers_UseSynchronousInteractionRunMode()
     {
         var methods = new[]
         {
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.HandleCreateModalAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.PublishAsync)),
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ConfirmRepairAsync)),
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ChangeRepairPageAsync)),
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.SelectRepairAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ConfirmDeleteAsync)),
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ChangeDeletePageAsync)),
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.SelectDeleteAsync)),
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.CancelDeleteAsync)),
             typeof(RoleMenuMemberModule).GetMethod(nameof(RoleMenuMemberModule.SaveAsync)),
             typeof(RoleMenuMemberModule).GetMethod(nameof(RoleMenuMemberModule.ClearAsync))
         };

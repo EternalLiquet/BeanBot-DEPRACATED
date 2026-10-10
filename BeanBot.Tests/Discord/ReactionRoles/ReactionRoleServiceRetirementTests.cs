@@ -2,6 +2,7 @@ using BeanBot.Discord.ReactionRoles;
 using BeanBot.Persistence.Models;
 using BeanBot.Persistence.Repositories;
 using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Bson;
 using Xunit;
 
 namespace BeanBot.Tests.Discord.ReactionRoles;
@@ -19,7 +20,7 @@ public class ReactionRoleServiceRetirementTests
 
         var deleted = await service.RunSettingsRetirementAsync(
             3UL,
-            cancellationToken => service.DeleteRoleSettingAsync(3UL, 1UL, cancellationToken),
+            cancellationToken => service.DeleteRoleSettingAsync(CreateSettings(), cancellationToken),
             CancellationToken.None);
 
         Assert.True(deleted);
@@ -36,8 +37,7 @@ public class ReactionRoleServiceRetirementTests
         var expected = await service.GetFreshRoleSettingAsync(3UL, CancellationToken.None);
 
         var deleted = await service.DeleteRoleSettingAsync(
-            3UL,
-            99UL,
+            new ReactionRoleSettings([new RoleEmotePair("4", "5")], "99", "2", "3"),
             CancellationToken.None);
         var cached = await service.GetCachedRoleSettingAsync(3UL, CancellationToken.None);
 
@@ -59,7 +59,7 @@ public class ReactionRoleServiceRetirementTests
         var expected = await service.GetFreshRoleSettingAsync(3UL, CancellationToken.None);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.DeleteRoleSettingAsync(3UL, 1UL, CancellationToken.None));
+            service.DeleteRoleSettingAsync(CreateSettings(), CancellationToken.None));
         var cached = await service.GetCachedRoleSettingAsync(3UL, CancellationToken.None);
 
         Assert.Same(expected, cached);
@@ -89,7 +89,7 @@ public class ReactionRoleServiceRetirementTests
         await lookupStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
         var retirement = service.RunSettingsRetirementAsync(
             3UL,
-            cancellationToken => service.DeleteRoleSettingAsync(3UL, 1UL, cancellationToken),
+            cancellationToken => service.DeleteRoleSettingAsync(CreateSettings(), cancellationToken),
             CancellationToken.None);
 
         Assert.False(retirement.IsCompleted);
@@ -98,6 +98,61 @@ public class ReactionRoleServiceRetirementTests
         Assert.True(await retirement);
 
         Assert.Equal(0, service.CachedRoleSettingsCount);
+    }
+
+    [Fact]
+    public async Task RepeatedRetirement_DoesNotDeleteReplacementOrRunDuplicateMutation()
+    {
+        var original = new ReactionRoleSettings(
+            [new RoleEmotePair("4", "5")], "1", "2", "3")
+        { Id = ObjectId.GenerateNewId() };
+        var replacement = new ReactionRoleSettings(
+            [new RoleEmotePair("6", "7")], "1", "2", "3")
+        { Id = ObjectId.GenerateNewId() };
+        var store = new RetirementStore { Settings = original };
+        await using var service = CreateService(store);
+
+        var first = await service.RunSettingsRetirementAsync(3,
+            token => service.DeleteRoleSettingAsync(original, token), CancellationToken.None);
+        store.Settings = replacement;
+        var second = await service.RunSettingsRetirementAsync(3,
+            token => service.DeleteRoleSettingAsync(original, token), CancellationToken.None);
+
+        Assert.True(first);
+        Assert.False(second);
+        Assert.Same(replacement, store.Settings);
+    }
+
+    [Fact]
+    public async Task RetirementIgnoringCancellation_RemainsOwnedAfterDrainTimeout()
+    {
+        var started = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new ReactionRoleService(
+            new ReactionRoleRepository(new RetirementStore(),
+                NullLogger<ReactionRoleRepository>.Instance),
+            client: null,
+            TimeSpan.FromMilliseconds(50),
+            NullLogger<ReactionRoleService>.Instance,
+            cacheCapacity: 8,
+            CancellationToken.None);
+        var operation = service.RunSettingsRetirementAsync(3,
+            async _ =>
+            {
+                started.TrySetResult();
+                await release.Task;
+                return true;
+            }, CancellationToken.None);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        await service.DisposeAsync();
+        Assert.True(service.HasPendingOperations);
+        Assert.False(operation.IsCompleted);
+        release.TrySetResult();
+        Assert.True(await operation);
+        Assert.False(service.HasPendingOperations);
     }
 
     private static ReactionRoleService CreateService(IReactionRoleSettingsStore store)
@@ -146,22 +201,27 @@ public class ReactionRoleServiceRetirementTests
                 : GetByMessageId(messageId, cancellationToken);
         }
 
-        public Task<bool> DeleteByMessageIdAndGuildIdAsync(
-            string messageId,
-            string guildId,
+        public Task<ReactionRoleSettings?> GetByBindingAsync(
+            string guildId, string channelId, string messageId,
             CancellationToken cancellationToken)
+            => Task.FromResult(Settings?.GuildId == guildId
+                && Settings.ChannelId == channelId
+                && Settings.MessageId == messageId ? Settings : null);
+
+        public Task<bool> DeleteBindingAsync(
+            ReactionRoleSettings expected, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (DeleteException is not null)
             {
                 return Task.FromException<bool>(DeleteException);
             }
-
-            if (Settings?.MessageId != messageId || Settings.GuildId != guildId)
+            if (Settings?.Id != expected.Id || Settings.GuildId != expected.GuildId
+                || Settings.ChannelId != expected.ChannelId
+                || Settings.MessageId != expected.MessageId)
             {
                 return Task.FromResult(false);
             }
-
             Settings = null;
             return Task.FromResult(true);
         }

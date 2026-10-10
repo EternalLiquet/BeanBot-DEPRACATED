@@ -38,6 +38,9 @@ internal static partial class BeanBotLog
     [LoggerMessage(Level = LogLevel.Warning, Message = "Role menu deletion could not delete its published panel. MenuId={MenuId}")]
     internal static partial void RoleMenuPanelDeletionFailed(ILogger logger, string menuId, Exception exception);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Role menu deletion could not check its published panel. MenuId={MenuId}")]
+    internal static partial void RoleMenuPanelInspectionFailed(ILogger logger, string menuId, Exception exception);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Role menu deletion failed before its final state could be determined. MenuId={MenuId}")]
     internal static partial void RoleMenuDeletionFailed(ILogger logger, string menuId, Exception exception);
 

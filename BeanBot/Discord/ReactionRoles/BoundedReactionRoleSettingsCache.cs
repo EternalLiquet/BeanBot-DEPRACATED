@@ -96,18 +96,14 @@ internal sealed class BoundedReactionRoleSettingsCache
         }
     }
 
-    public bool Remove(string messageId)
+    public void Remove(string messageId)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(messageId);
         lock (_sync)
         {
-            if (!_entries.Remove(messageId, out var entry))
+            if (_entries.Remove(messageId, out var entry))
             {
-                return false;
+                _recency.Remove(entry.Node);
             }
-
-            _recency.Remove(entry.Node);
-            return true;
         }
     }
 
