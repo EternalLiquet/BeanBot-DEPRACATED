@@ -105,7 +105,7 @@ public sealed class ReactionRoleHandler : IDisposable
                 }
                 catch (Exception exception)
                 {
-                    _logger.LogError(exception, "Saved role panel cleanup failed after a Discord deletion event.");
+                    BeanBotLog.RolePanelDeletionCleanupFailed(_logger, exception);
                 }
             }
         }
@@ -115,7 +115,7 @@ public sealed class ReactionRoleHandler : IDisposable
         }
         catch (OperationCanceledException)
         {
-            _logger.LogWarning("Saved role panel cleanup timed out after a Discord deletion event.");
+            BeanBotLog.RolePanelDeletionCleanupTimedOut(_logger);
         }
     }
 }

@@ -110,6 +110,35 @@ public sealed class MongoReactionRoleRepositoryIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task DeleteBinding_RequiresCurrentGuildChannelMessageAndDocumentId()
+    {
+        var databaseName = CreateDatabaseName();
+        var client = new MongoClient(_fixture.ConnectionString);
+        var repository = CreateRepository(client.GetDatabase(databaseName));
+        try
+        {
+            using var cancellation = new CancellationTokenSource(OperationTimeout);
+            await repository.InsertNewRoleSettings(new ReactionRoleSettings([], "1", "2", "42"), cancellation.Token);
+            var saved = Assert.IsType<ReactionRoleSettings>(await repository.GetRoleSetting(42, cancellation.Token));
+            Assert.False(await repository.DeleteBindingAsync(saved, "9", "2", "42", cancellation.Token));
+            Assert.False(await repository.DeleteBindingAsync(saved, "1", "9", "42", cancellation.Token));
+
+            var collection = client.GetDatabase(databaseName).GetCollection<ReactionRoleSettings>("roleSettings");
+            await collection.ReplaceOneAsync(
+                candidate => candidate.Id == saved.Id,
+                new ReactionRoleSettings([], "1", "2", "99") { Id = saved.Id },
+                cancellationToken: cancellation.Token);
+            Assert.False(await repository.DeleteBindingAsync(saved, "1", "2", "42", cancellation.Token));
+            Assert.Equal("99", (await collection.Find(candidate => candidate.Id == saved.Id)
+                .FirstOrDefaultAsync(cancellation.Token))?.MessageId);
+        }
+        finally
+        {
+            await DropDatabaseAsync(client, databaseName);
+        }
+    }
+
     private static ReactionRoleRepository CreateRepository(IMongoDatabase database)
         => new(database, NullLogger<ReactionRoleRepository>.Instance);
 

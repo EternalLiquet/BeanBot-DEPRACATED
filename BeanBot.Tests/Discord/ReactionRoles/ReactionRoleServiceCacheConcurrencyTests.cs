@@ -9,6 +9,68 @@ namespace BeanBot.Tests.Discord.ReactionRoles;
 public class ReactionRoleServiceCacheConcurrencyTests
 {
     [Fact]
+    public async Task DeletedPanel_PreloadCannotRestoreSettingAndDuplicateIsNoOp()
+    {
+        var setting = CreateRoleSettings("42");
+        ReactionRoleSettings? current = setting;
+        var preloadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePreload = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new CoordinatedReactionRoleSettingsStore
+        {
+            GetRecent = async (_, _, token) =>
+            {
+                preloadStarted.SetResult();
+                await releasePreload.Task.WaitAsync(token);
+                return [setting];
+            },
+            GetByMessageId = (_, _) => Task.FromResult(current),
+            Delete = (_, _) =>
+            {
+                current = null;
+                return Task.FromResult(true);
+            }
+        };
+        await using var service = CreateService(store, cacheCapacity: 2);
+        var lookup = service.GetCachedRoleSettingAsync(42, CancellationToken.None);
+        await preloadStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        var deletion = service.DeleteSavedPanelAsync(1, 2, 42, CancellationToken.None);
+        releasePreload.SetResult();
+        await lookup;
+
+        Assert.True(await deletion);
+        Assert.False(await service.DeleteSavedPanelAsync(1, 2, 42, CancellationToken.None));
+        Assert.Null(await service.GetCachedRoleSettingAsync(42, CancellationToken.None));
+        Assert.Equal(0, service.CachedRoleSettingsCount);
+    }
+
+    [Fact]
+    public async Task DeletedPanel_WrongGuildCannotDeleteAndDatabaseFailureIsVisible()
+    {
+        var setting = CreateRoleSettings("42");
+        var deletes = 0;
+        var failure = new InvalidOperationException("database unavailable");
+        var store = new CoordinatedReactionRoleSettingsStore
+        {
+            GetRecent = (_, _, _) => Task.FromResult(new List<ReactionRoleSettings> { setting }),
+            GetByMessageId = (_, _) => Task.FromResult<ReactionRoleSettings?>(setting),
+            Delete = (_, _) =>
+            {
+                deletes++;
+                return Task.FromException<bool>(failure);
+            }
+        };
+        await using var service = CreateService(store, cacheCapacity: 2);
+        Assert.Same(setting, await service.GetCachedRoleSettingAsync(42, CancellationToken.None));
+        Assert.False(await service.DeleteSavedPanelAsync(9, 2, 42, CancellationToken.None));
+        Assert.Equal(0, deletes);
+
+        Assert.Same(failure, await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.DeleteSavedPanelAsync(1, 2, 42, CancellationToken.None)));
+        Assert.Equal(1, deletes);
+        Assert.Equal(0, service.CachedRoleSettingsCount);
+    }
+
+    [Fact]
     public async Task DeletedPanel_StopsInFlightFallbackFromRestoringStaleCache()
     {
         var setting = CreateRoleSettings("42");
@@ -36,10 +98,12 @@ public class ReactionRoleServiceCacheConcurrencyTests
         await using var service = CreateService(store, cacheCapacity: 2);
         var staleRead = service.GetCachedRoleSettingAsync(42, CancellationToken.None);
         await fallbackStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
-        Assert.True(await service.DeleteSavedPanelAsync(1, 2, 42, CancellationToken.None));
+        var deletion = service.DeleteSavedPanelAsync(1, 2, 42, CancellationToken.None);
+        Assert.False(deletion.IsCompleted);
         releaseFallback.SetResult();
 
-        Assert.Null(await staleRead);
+        Assert.Same(setting, await staleRead);
+        Assert.True(await deletion);
         Assert.Null(await service.GetCachedRoleSettingAsync(42, CancellationToken.None));
         Assert.Equal(0, service.CachedRoleSettingsCount);
     }

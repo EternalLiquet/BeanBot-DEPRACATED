@@ -27,7 +27,6 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
     private readonly CancellationTokenSource _shutdownCancellation;
     private readonly CancellationToken _shutdownToken;
     private volatile bool _cacheLoaded;
-    private long _cacheGeneration;
     private bool _stopping;
     private int _disposeStarted;
 
@@ -267,32 +266,26 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
     {
         await EnsureCacheLoadedAsync(cancellationToken);
         var messageIdText = messageId.ToString(CultureInfo.InvariantCulture);
-        if (_roleSettings.TryGet(messageIdText, out var cached))
-        {
-            return cached;
-        }
-
-        var generation = Volatile.Read(ref _cacheGeneration);
-        var roleSetting = await _reactionRoleRepository.GetRoleSetting(messageId, cancellationToken);
         await _cacheLock.WaitAsync(cancellationToken);
         try
         {
-            if (generation != _cacheGeneration)
+            if (_roleSettings.TryGet(messageIdText, out var cached))
             {
-                return null;
+                return cached;
             }
 
+            var roleSetting = await _reactionRoleRepository.GetRoleSetting(messageId, cancellationToken);
             if (roleSetting != null && !string.IsNullOrWhiteSpace(roleSetting.MessageId))
             {
                 _roleSettings.Set(roleSetting);
             }
+
+            return roleSetting;
         }
         finally
         {
             _cacheLock.Release();
         }
-
-        return roleSetting;
     }
 
     internal async Task<bool> DeleteSavedPanelAsync(
@@ -310,23 +303,36 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
                 return false;
             }
 
+            if (settings.GuildId != guildId.ToString(CultureInfo.InvariantCulture)
+                || settings.ChannelId != channelId.ToString(CultureInfo.InvariantCulture)
+                || settings.MessageId != messageId.ToString(CultureInfo.InvariantCulture))
+            {
+                return false;
+            }
+
             var deleted = await _reactionRoleRepository.DeleteBindingAsync(
                 settings,
                 guildId.ToString(CultureInfo.InvariantCulture),
                 channelId.ToString(CultureInfo.InvariantCulture),
                 messageId.ToString(CultureInfo.InvariantCulture),
                 cancellationToken);
-            if (deleted)
-            {
-                _cacheGeneration++;
-                _roleSettings.Remove(settings.MessageId);
-            }
-
             return deleted;
         }
         finally
         {
+            InvalidateMatchingCachedPanel(guildId, channelId, messageId);
             _cacheLock.Release();
+        }
+    }
+
+    private void InvalidateMatchingCachedPanel(ulong guildId, ulong channelId, ulong messageId)
+    {
+        var message = messageId.ToString(CultureInfo.InvariantCulture);
+        if (_roleSettings.TryGet(message, out var cached)
+            && cached?.GuildId == guildId.ToString(CultureInfo.InvariantCulture)
+            && cached.ChannelId == channelId.ToString(CultureInfo.InvariantCulture))
+        {
+            _roleSettings.Remove(message);
         }
     }
 
