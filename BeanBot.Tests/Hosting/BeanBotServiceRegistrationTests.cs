@@ -40,6 +40,8 @@ public class BeanBotServiceRegistrationTests
         AssertSingleton<RoleMenuRepository>(services);
         AssertSingleton<RoleMenuDraftRegistry>(services);
         AssertSingleton<RoleMenuMutationCoordinator>(services);
+        AssertSingleton<InteractionExecutionContext>(services);
+        AssertSingleton<RoleMenuInteractionService>(services);
         AssertSingleton<PunProvider>(services);
         AssertSingleton<IPunProvider>(services);
         AssertSingleton<FortuneResponseEditService>(services);
@@ -53,6 +55,32 @@ public class BeanBotServiceRegistrationTests
         Assert.NotNull(clientDescriptor.ImplementationInstance);
 
         ((DiscordSocketClient)clientDescriptor.ImplementationInstance!).Dispose();
+    }
+
+    [Fact]
+    public void AddBeanBot_ResolvesDeletionHandlerWithoutSlashCommands()
+    {
+        var builder = Host.CreateApplicationBuilder();
+        builder.Configuration[BeanBotConfiguration.BotTokenVariable] = "test-token";
+        builder.Configuration[BeanBotConfiguration.MongoConnectionVariable] =
+            "mongodb://127.0.0.1:27017";
+        builder.Configuration[BeanBotConfiguration.GeneralChannelVariable] = "123";
+        builder.Configuration[BeanBotConfiguration.HatoeteUrlVariable] =
+            "https://example.test/hatoete.png";
+        builder.Configuration[BeanBotConfiguration.YoshimaruUrlVariable] =
+            "https://example.test/yoshimaru.png";
+        builder.Configuration.AddBeanBotConfiguration([]);
+        builder.Services.AddBeanBot(builder.Configuration);
+        using var host = builder.Build();
+        var client = host.Services.GetRequiredService<DiscordSocketClient>();
+        try
+        {
+            Assert.NotNull(host.Services.GetRequiredService<ReactionRoleHandler>());
+        }
+        finally
+        {
+            client.Dispose();
+        }
     }
 
     [Fact]

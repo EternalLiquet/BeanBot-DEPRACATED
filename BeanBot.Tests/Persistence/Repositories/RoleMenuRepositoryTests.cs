@@ -253,5 +253,8 @@ public class RoleMenuRepositoryTests
             string guildId,
             CancellationToken cancellationToken)
             => Delete(id, guildId, cancellationToken);
+
+        public Task<bool> DeleteBindingAsync(RoleMenuSettings settings, CancellationToken cancellationToken)
+            => Task.FromResult(false);
     }
 }

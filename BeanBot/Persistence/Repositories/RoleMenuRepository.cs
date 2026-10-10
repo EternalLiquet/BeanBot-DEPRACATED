@@ -32,6 +32,7 @@ internal interface IRoleMenuStore
         ObjectId id,
         string guildId,
         CancellationToken cancellationToken);
+    Task<bool> DeleteBindingAsync(RoleMenuSettings settings, CancellationToken cancellationToken);
 }
 
 internal enum RoleMenuPageDirection
@@ -165,6 +166,18 @@ internal sealed class MongoRoleMenuStore : IRoleMenuStore
         var result = await _roleMenus.DeleteOneAsync(filter, cancellationToken);
         return result.DeletedCount == 1;
     }
+
+    public async Task<bool> DeleteBindingAsync(RoleMenuSettings settings, CancellationToken cancellationToken)
+    {
+        var filters = Builders<RoleMenuSettings>.Filter;
+        var filter = filters.And(
+            filters.Eq(candidate => candidate.Id, settings.Id),
+            filters.Eq(candidate => candidate.GuildId, settings.GuildId),
+            filters.Eq(candidate => candidate.ChannelId, settings.ChannelId),
+            filters.Eq(candidate => candidate.MessageId, settings.MessageId),
+            filters.Eq(candidate => candidate.UpdatedAtUtc, settings.UpdatedAtUtc));
+        return (await _roleMenus.DeleteOneAsync(filter, cancellationToken)).DeletedCount == 1;
+    }
 }
 
 internal sealed class RoleMenuRepository
@@ -290,6 +303,30 @@ internal sealed class RoleMenuRepository
         if (deleted)
         {
             BeanBotLog.RoleMenuSettingsDeleted(_logger, id);
+        }
+
+        return deleted;
+    }
+
+    public async Task<bool> DeleteBindingAsync(
+        RoleMenuSettings settings,
+        string guildId,
+        string channelId,
+        string messageId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (settings.GuildId != guildId || settings.ChannelId != channelId
+            || settings.MessageId != messageId)
+        {
+            return false;
+        }
+
+        var deleted = await _store.DeleteBindingAsync(settings, cancellationToken);
+        if (deleted)
+        {
+            BeanBotLog.RoleMenuSettingsDeleted(_logger, settings.Id);
         }
 
         return deleted;

@@ -600,6 +600,20 @@ public class RoleMenuServiceIntegrationTests
             return Task.FromResult(true);
         }
 
+        public Task<bool> DeleteBindingAsync(RoleMenuSettings settings, CancellationToken cancellationToken)
+        {
+            if (Settings?.Id != settings.Id || Settings.GuildId != settings.GuildId
+                || Settings.ChannelId != settings.ChannelId || Settings.MessageId != settings.MessageId
+                || Settings.UpdatedAtUtc != settings.UpdatedAtUtc)
+            {
+                return Task.FromResult(false);
+            }
+
+            Deletes++;
+            Settings = null;
+            return Task.FromResult(true);
+        }
+
         internal List<RoleMenuSettings> OtherMenus { get; } = [];
         internal List<(RoleMenuPageCursor? Cursor, int MaximumResults)> PageReads { get; } = [];
 
