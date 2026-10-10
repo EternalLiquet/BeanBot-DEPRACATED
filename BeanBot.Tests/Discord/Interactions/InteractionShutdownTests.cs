@@ -42,6 +42,7 @@ public class InteractionShutdownTests
             provider.GetRequiredService<InteractionService>(),
             provider,
             provider.GetRequiredService<InteractionExecutionContext>(),
+            provider.GetRequiredService<InteractionCommandRegistrationTarget>(),
             provider.GetRequiredService<IHostApplicationLifetime>(),
             NullLogger<InteractionHandler>.Instance,
             TimeSpan.FromMilliseconds(25),

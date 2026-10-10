@@ -16,7 +16,7 @@ using static BeanBot.Discord.RoleMenus.RoleMenuSetupValidation;
 
 namespace BeanBot.Discord.RoleMenus;
 
-[Group("role-menu", "Create, repair, and remove self-assignable role menus.")]
+[Group("role-menu", "Create, repair, and delete role menus.")]
 [CommandContextType(InteractionContextType.Guild)]
 [RequireContext(ContextType.Guild)]
 [RequireUserPermission(GuildPermission.ManageRoles)]
@@ -25,23 +25,26 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
 {
     private readonly DiscordRoleMenuClient _discord;
     private readonly RoleMenuAdministrationService _administration;
+    private readonly RoleMenuAuditService _audit;
     private readonly ILogger<RoleMenuAdminModule> _logger;
 
     public RoleMenuAdminModule(
         RoleMenuInteractionService roleMenuService,
         DiscordRoleMenuClient discord,
         RoleMenuAdministrationService administration,
+        RoleMenuAuditService audit,
         ILogger<RoleMenuAdminModule> logger)
         : base(roleMenuService)
     {
         _discord = discord ?? throw new ArgumentNullException(nameof(discord));
         _administration = administration ?? throw new ArgumentNullException(nameof(administration));
+        _audit = audit ?? throw new ArgumentNullException(nameof(audit));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     [SlashCommand(
         "create",
-        "Create a native dropdown panel for self-assignable roles.",
+        "Create a menu where members can choose their roles.",
         runMode: RunMode.Sync)]
     public async Task CreateAsync()
     {
@@ -69,14 +72,14 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
                 ephemeral: true,
                 CreateRequestOptions(operationToken)),
             operationToken => ReplaceResponseAsync(
-                "Loading the role-menu preview…",
+                "Building your preview…",
                 operationToken),
             cancellation.Token);
 
         if (!TryGetGuildActors(out var guild, out var administrator, out var bot))
         {
             await ReplaceResponseAsync(
-                "Role menus can only be created inside a server.",
+                "You can only create role menus in a server.",
                 cancellation.Token);
             return;
         }
@@ -112,7 +115,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
                 RoleMenuCustomIds.Publish(draftId)))
         {
             await RespondToInvalidComponentAsync(
-                "That role-menu preview is invalid or no longer available.",
+                "This preview isn't available anymore. Run `/role-menu create` again.",
                 cancellation.Token);
             return;
         }
@@ -127,10 +130,10 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
             var message = accessStatus switch
             {
                 RoleMenuDraftAccessStatus.AlreadyPublishing =>
-                    "That preview is already being published.",
+                    "I'm already publishing this menu.",
                 RoleMenuDraftAccessStatus.WrongOwner =>
-                    "Only the administrator who created this preview can publish it.",
-                _ => "That role-menu preview expired or no longer exists. Run `/role-menu create` again."
+                    "Only the person who made this preview can publish it.",
+                _ => "This preview has expired. Run `/role-menu create` again."
             };
             await RespondToInvalidComponentAsync(
                 message,
@@ -143,7 +146,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         try
         {
             if (!await AcknowledgeEphemeralComponentAsync(
-                    "Publishing the role menu…",
+                    "Publishing your menu…",
                     cancellation.Token))
             {
                 return;
@@ -159,7 +162,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
                 await RestorePreviewAsync(
                     draft,
                     [],
-                    "Bean Bot couldn't refresh the current server role hierarchy. Try again.",
+                    "I couldn't check the server's roles just now. Try again.",
                     cancellation.Token);
                 return;
             }
@@ -188,7 +191,8 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
                 await RestorePreviewAsync(
                     draft,
                     validation.Roles,
-                    "The selected target channel was deleted. Run `/role-menu create` again.",
+                    "The channel you picked was deleted. Run `/role-menu create` again and pick " +
+                    "another channel.",
                     cancellation.Token);
                 return;
             }
@@ -234,10 +238,9 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
                 draft,
                 previewRoles,
                 publicationStarted
-                    ? "Bean Bot ran out of time and could not confirm the publication result. Check " +
-                      "the target channel; retrying this preview safely reuses the same menu ID."
-                    : "Bean Bot was busy and did not begin publishing this role menu. Try this " +
-                      "preview again.");
+                    ? "That took too long, and I couldn't confirm whether your menu was posted. " +
+                      "Check the channel. Publishing again from this preview won't create a duplicate."
+                    : "I was busy and didn't start publishing your menu. Try again.");
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -249,7 +252,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
             await RestorePreviewFreshAsync(
                 draft,
                 previewRoles,
-                "Bean Bot couldn't publish this role menu. The preview was kept so you can retry.");
+                "I couldn't publish your menu. Your preview is still here, so you can try again.");
         }
         finally
         {
@@ -275,7 +278,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
             || !RoleMenus.CancelDraft(draftId, Context.Guild.Id, Context.User.Id))
         {
             await RespondToInvalidComponentAsync(
-                "That preview expired, belongs to another administrator, or is already publishing.",
+                "This preview has expired, is already being published, or belongs to someone else.",
                 cancellation.Token);
             return;
         }
@@ -287,28 +290,78 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
                 operationToken => validComponent.UpdateAsync(
                     properties => SetMessage(
                         properties,
-                        "Role-menu creation cancelled.",
+                        "Setup cancelled.",
                         null,
                         MessageComponent.Empty),
                     CreateRequestOptions(operationToken)),
                 operationToken => ReplaceResponseAsync(
-                    "Role-menu creation cancelled.",
+                    "Setup cancelled.",
                     operationToken),
                 cancellation.Token);
             return;
         }
 
         await RespondToInvalidComponentAsync(
-            "Role-menu creation cancelled.",
+            "Setup cancelled.",
+            cancellation.Token);
+    }
+
+    [SlashCommand(
+        "audit",
+        "Audit saved role menus for stale panels, roles, or permissions.",
+        runMode: RunMode.Sync)]
+    public async Task AuditAsync(
+        [Summary("menu-id", "Optional ID shown in the role panel footer")]
+        string? menuId = null)
+    {
+        using var cancellation = RoleMenus.CreateOperationCancellation();
+        await RoleMenus.ExecuteInitialResponseAsync(
+            supportsOriginalResponse: true,
+            operationToken => DeferAsync(
+                ephemeral: true,
+                CreateRequestOptions(operationToken)),
+            operationToken => ReplaceResponseAsync(
+                "Auditing role menus…",
+                operationToken),
+            cancellation.Token);
+        if (Context.Guild is null)
+        {
+            await ReplaceResponseAsync(
+                "Role menus can only be audited inside a server.",
+                cancellation.Token);
+            return;
+        }
+
+        ObjectId? requestedMenuId = null;
+        if (!string.IsNullOrWhiteSpace(menuId))
+        {
+            if (!RoleMenuCustomIds.TryParseMenuId(menuId.Trim(), out var parsedMenuId))
+            {
+                await ReplaceResponseAsync(
+                    "That menu ID is invalid. Copy the ID from the role panel footer.",
+                    cancellation.Token);
+                return;
+            }
+
+            requestedMenuId = parsedMenuId;
+        }
+
+        var result = await _audit.AuditAsync(
+            Context.Guild.Id,
+            Context.Guild.CurrentUser.Id,
+            requestedMenuId,
+            cancellation.Token);
+        await ReplaceResponseAsync(
+            RoleMenuAuditPresentation.Format(result, requestedMenuId),
             cancellation.Token);
     }
 
     [SlashCommand(
         "delete",
-        "Delete a published role menu and its saved configuration.",
+        "Delete a role menu. Members keep the roles they already have.",
         runMode: RunMode.Sync)]
     public async Task DeleteAsync(
-        [Summary("menu-id", "Optional ID shown in the role panel footer")]
+        [Summary("menu-id", "The ID at the bottom of the menu. Only needed for older menus.")]
         string? menuId = null)
     {
         using var cancellation = RoleMenus.CreateOperationCancellation();
@@ -324,7 +377,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         if (Context.Guild is null)
         {
             await ReplaceResponseAsync(
-                "Role menus can only be deleted inside a server.",
+                "You can only delete role menus in a server.",
                 cancellation.Token);
             return;
         }
@@ -334,7 +387,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
             if (!RoleMenuCustomIds.TryParseMenuId(menuId.Trim(), out var parsedMenuId))
             {
                 await ReplaceResponseAsync(
-                    "That menu ID is invalid. Copy the ID from the role panel footer.",
+                    "That doesn't look like a menu ID. Copy it from the bottom of the menu.",
                     cancellation.Token);
                 return;
             }
@@ -346,7 +399,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
             if (settings is null)
             {
                 await ReplaceResponseAsync(
-                    "No saved role menu with that ID exists in this server.",
+                    "I couldn't find a role menu with that ID in this server.",
                     cancellation.Token);
                 return;
             }
@@ -362,7 +415,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         if (menus.Count == 0)
         {
             await ReplaceResponseAsync(
-                "This server has no saved dropdown role menus.",
+                "There are no role menus in this server yet.",
                 cancellation.Token);
             return;
         }
@@ -371,9 +424,9 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         var listedMenus = menus.Take(RoleMenuConstants.MaximumListedMenus).ToList();
         await ReplaceResponseAsync(
             hasMore
-                ? "Choose one of the 25 newest menus. For an older panel, rerun `/role-menu delete` " +
-                  "with the ID shown in its footer."
-                : "Choose the role menu you want to delete.",
+                ? "Here are the 25 newest menus. To delete an older one, run `/role-menu delete` " +
+                  "with the ID from the bottom of that menu."
+                : "Which role menu do you want to delete?",
             cancellation.Token,
             components: RoleMenuComponents.BuildDeleteSelector(Context.User.Id, listedMenus));
     }
@@ -399,13 +452,13 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
                 selectedMenuIds[0]))
         {
             await RespondToInvalidComponentAsync(
-                "That deletion selection is invalid or belongs to another administrator.",
+                "This list has expired or belongs to someone else. Run `/role-menu delete` again.",
                 cancellation.Token);
             return;
         }
 
         if (!await AcknowledgeEphemeralComponentAsync(
-                "Loading the selected role menu…",
+                "Loading that menu…",
                 cancellation.Token))
         {
             return;
@@ -418,7 +471,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         if (settings is null)
         {
             await ReplaceResponseAsync(
-                "That role menu was already deleted or no longer exists.",
+                "That role menu was already deleted.",
                 cancellation.Token);
             return;
         }
@@ -445,13 +498,13 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
                 RoleMenuCustomIds.DeleteConfirm(boundUserId, menuId)))
         {
             await RespondToInvalidComponentAsync(
-                "That deletion confirmation is invalid or belongs to another administrator.",
+                "This confirmation has expired or belongs to someone else. Run `/role-menu delete` again.",
                 cancellation.Token);
             return;
         }
 
         if (!await AcknowledgeEphemeralComponentAsync(
-                "Deleting the role menu…",
+                "Deleting the menu…",
                 cancellation.Token))
         {
             return;
@@ -480,9 +533,9 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         {
             await SendFreshFeedbackAsync(
                 mutationStarted
-                    ? "Bean Bot ran out of time while deleting this menu and couldn't confirm the " +
-                      "final result. Run `/role-menu delete` again to inspect and finish cleanup."
-                    : "Bean Bot was busy and did not begin deleting this role menu. Try again.");
+                    ? "That took too long, and I couldn't confirm whether the menu was deleted. Run " +
+                      "`/role-menu delete` again to check and finish."
+                    : "I was busy and didn't start deleting the menu. Try again.");
             return;
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
@@ -493,8 +546,8 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         {
             BeanBotLog.RoleMenuDeletionFailed(_logger, menuId.ToString(), exception);
             await SendFreshFeedbackAsync(
-                "Bean Bot couldn't confirm the deletion result. Run `/role-menu delete` again to " +
-                "inspect and finish cleanup.");
+                "I couldn't confirm whether the menu was deleted. Run `/role-menu delete` again to " +
+                "check and finish.");
             return;
         }
 
@@ -520,7 +573,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         if (!isOwner)
         {
             await RespondToInvalidComponentAsync(
-                "That deletion confirmation belongs to another administrator.",
+                "This confirmation belongs to someone else.",
                 cancellation.Token);
             return;
         }
@@ -532,19 +585,19 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
                 operationToken => validComponent.UpdateAsync(
                     properties => SetMessage(
                         properties,
-                        "Role-menu deletion cancelled.",
+                        "Deletion cancelled.",
                         null,
                         MessageComponent.Empty),
                     CreateRequestOptions(operationToken)),
                 operationToken => ReplaceResponseAsync(
-                    "Role-menu deletion cancelled.",
+                    "Deletion cancelled.",
                     operationToken),
                 cancellation.Token);
             return;
         }
 
         await RespondToInvalidComponentAsync(
-            "Role-menu deletion cancelled.",
+            "Deletion cancelled.",
             cancellation.Token);
     }
 
@@ -608,8 +661,8 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
             await RestorePreviewFreshAsync(
                 draft,
                 roles,
-                "Bean Bot confirmed the settings were not saved and removed the panel. " +
-                "You can retry this preview safely.");
+                "I couldn't save your menu, so I took the message back down. You can publish again " +
+                "from this preview.");
             return null;
         }
 
@@ -628,7 +681,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         ObjectId menuId,
         CancellationToken operationCancellationToken)
     {
-        var content = $"Role menu published: {CreateMessageUrl(guildId, channelId, messageId)}";
+        var content = $"Your role menu is ready: {CreateMessageUrl(guildId, channelId, messageId)}";
         if (!operationCancellationToken.IsCancellationRequested)
         {
             try
@@ -668,7 +721,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         RoleMenuSettings settings,
         CancellationToken cancellationToken)
         => await ReplaceResponseAsync(
-            "Confirm this destructive action.",
+            "Delete this role menu?",
             cancellationToken,
             RoleMenuComponents.BuildDeleteConfirmationEmbed(settings),
             RoleMenuComponents.BuildDeleteConfirmationComponents(

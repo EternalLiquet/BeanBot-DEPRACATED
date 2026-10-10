@@ -26,11 +26,39 @@ public class BeanBotConfigurationTests
         Assert.Equal((ulong)123, options.GeneralChannelId);
         Assert.Equal(new Uri("https://example.com/hatoete.png"), options.HatoeteImageUrl);
         Assert.Equal(new Uri("https://example.com/yoshimaru.png"), options.YoshimaruImageUrl);
+        Assert.Null(options.InteractionGuildId);
         Assert.True(options.HealthCheck.Enabled);
         Assert.Equal(8080, options.HealthCheck.Port);
         Assert.Equal(IPAddress.Any, options.HealthCheck.BindAddress);
         Assert.Equal(TimeSpan.FromSeconds(90), options.HealthCheck.MinimumPollInterval);
         Assert.Null(options.HealthCheck.BearerToken);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Options_BlankInteractionGuildPreservesGlobalRegistration(string? guildId)
+    {
+        var values = RequiredSettings();
+        values[BeanBotConfiguration.InteractionGuildVariable] = guildId;
+
+        using var provider = CreateProvider(values);
+        var options = provider.GetRequiredService<BeanBotOptions>();
+
+        Assert.Null(options.InteractionGuildId);
+    }
+
+    [Fact]
+    public void Options_ParsesInteractionGuildSnowflake()
+    {
+        var values = RequiredSettings();
+        values[BeanBotConfiguration.InteractionGuildVariable] = "987654321";
+
+        using var provider = CreateProvider(values);
+        var options = provider.GetRequiredService<BeanBotOptions>();
+
+        Assert.Equal((ulong)987654321, options.InteractionGuildId);
     }
 
     [Fact]
@@ -51,6 +79,9 @@ public class BeanBotConfigurationTests
     [Theory]
     [InlineData("BEANBOT_GENERAL_CHANNEL_ID", "not-a-snowflake")]
     [InlineData("BEANBOT_GENERAL_CHANNEL_ID", "18446744073709551616")]
+    [InlineData("BEANBOT_INTERACTION_GUILD_ID", "not-a-snowflake")]
+    [InlineData("BEANBOT_INTERACTION_GUILD_ID", "0")]
+    [InlineData("BEANBOT_INTERACTION_GUILD_ID", "18446744073709551616")]
     [InlineData("BEANBOT_HATOETE_URL", "relative/image.png")]
     [InlineData("BEANBOT_HATOETE_URL", "file:///tmp/image.png")]
     [InlineData("BEANBOT_HEALTHCHECK_PORT", "not-a-port")]
@@ -120,6 +151,7 @@ public class BeanBotConfigurationTests
             ["generalChannelId"] = "456",
             ["hatoeteUrl"] = "https://legacy.example/hatoete.png",
             ["yoshimaruUrl"] = "https://legacy.example/yoshimaru.png",
+            ["interactionGuildId"] = "654",
             ["healthCheckPort"] = "8081",
             ["healthCheckBindAddress"] = "127.0.0.1",
             ["healthCheckBearerToken"] = "legacy-health-token",
@@ -132,6 +164,7 @@ public class BeanBotConfigurationTests
         Assert.Equal("legacy-token", options.BotToken);
         Assert.Equal("mongodb://legacy:27017", options.MongoConnectionString);
         Assert.Equal((ulong)456, options.GeneralChannelId);
+        Assert.Equal((ulong)654, options.InteractionGuildId);
         Assert.Equal(8081, options.HealthCheck.Port);
         Assert.Equal(IPAddress.Loopback, options.HealthCheck.BindAddress);
         Assert.Equal("legacy-health-token", options.HealthCheck.BearerToken);
@@ -163,7 +196,8 @@ public class BeanBotConfigurationTests
             ["BeanBot:MongoConnectionString"] = "mongodb://section:27017",
             ["BeanBot:GeneralChannelId"] = "321",
             ["BeanBot:HatoeteUrl"] = "https://section.example/hatoete.png",
-            ["BeanBot:YoshimaruUrl"] = "https://section.example/yoshimaru.png"
+            ["BeanBot:YoshimaruUrl"] = "https://section.example/yoshimaru.png",
+            ["BeanBot:InteractionGuildId"] = "654"
         });
         configuration.AddBeanBotConfiguration(Array.Empty<string>());
 
@@ -172,6 +206,7 @@ public class BeanBotConfigurationTests
 
         Assert.Equal("section-token", options.BotToken);
         Assert.Equal((ulong)321, options.GeneralChannelId);
+        Assert.Equal((ulong)654, options.InteractionGuildId);
     }
 
     [Fact]
@@ -186,6 +221,27 @@ public class BeanBotConfigurationTests
             () => host.StartAsync());
 
         Assert.Contains(BeanBotConfiguration.BotTokenVariable, exception.Message);
+        host.Services.GetRequiredService<DiscordSocketClient>().Dispose();
+    }
+
+    [Fact]
+    public async Task ValidateOnStart_RejectsInvalidInteractionGuildBeforeDiscordStartup()
+    {
+        var builder = Host.CreateApplicationBuilder();
+        foreach (var pair in RequiredSettings())
+        {
+            builder.Configuration[pair.Key] = pair.Value;
+        }
+
+        builder.Configuration[BeanBotConfiguration.InteractionGuildVariable] = "0";
+        builder.Configuration.AddBeanBotConfiguration(Array.Empty<string>());
+        builder.Services.AddBeanBot(builder.Configuration);
+        using var host = builder.Build();
+
+        var exception = await Assert.ThrowsAsync<OptionsValidationException>(
+            () => host.StartAsync());
+
+        Assert.Contains(BeanBotConfiguration.InteractionGuildVariable, exception.Message);
         host.Services.GetRequiredService<DiscordSocketClient>().Dispose();
     }
 
@@ -209,6 +265,7 @@ public class BeanBotConfigurationTests
                 "BEANBOT_GENERAL_CHANNEL_ID=789",
                 "BEANBOT_HATOETE_URL=https://dotenv.example/hatoete.png",
                 "BEANBOT_YOSHIMARU_URL=https://dotenv.example/yoshimaru.png",
+                "BEANBOT_INTERACTION_GUILD_ID=987",
                 $"{processMarkerKey}=must-not-escape"
             ]);
             File.WriteAllText(secondPath, "BEANBOT_BOT_TOKEN=second-file-token");
@@ -226,6 +283,7 @@ public class BeanBotConfigurationTests
             Assert.Equal("environment-token", options.BotToken);
             Assert.Equal("mongodb://dotenv:27017", options.MongoConnectionString);
             Assert.Equal((ulong)789, options.GeneralChannelId);
+            Assert.Equal((ulong)987, options.InteractionGuildId);
             Assert.Null(Environment.GetEnvironmentVariable(processMarkerKey));
         }
         finally
