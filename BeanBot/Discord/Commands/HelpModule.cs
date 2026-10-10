@@ -53,6 +53,11 @@ public class HelpModule : ModuleBase<SocketCommandContext>
                     }
                 }
 
+                if (command.Name == "role setting")
+                {
+                    description.AppendLine("Reply cancel at any setup prompt to stop.");
+                }
+
                 description.AppendLine();
             }
 
