@@ -4,7 +4,7 @@ BeanBot can publish persistent Discord panels that let members add or remove an 
 
 ## Requirements
 
-The administrator running `/role-menu create`, `/role-menu edit`, `/role-menu audit`, or `/role-menu delete` must:
+The administrator running `/role-menu create`, `/role-menu edit`, `/role-menu audit`, `/role-menu delete`, or `/role-menu retire-legacy` must:
 
 - run the command in a server, not a direct message;
 - have the server-level **Manage Roles** permission; and
@@ -94,6 +94,14 @@ Picker and confirmation controls expire 15 minutes after the command was used. O
 
 Titles are not required to be unique, and existing titles are never renamed. New titles must contain visible text and fit within 100 characters after trimming.
 
+## Retire a legacy reaction-role panel
+
+Run `/role-menu retire-legacy` to open a private list of saved legacy panels. The picker shows a channel, saved role names and posting time; missing channels and deleted roles have readable fallbacks. It reads at most 26 records per request to show 25 choices and a **Next** button, ordered by stable MongoDB document ID. **Previous** reads one bounded page in the other direction. You do not need to copy a message ID. The preview shows available custom emoji names and role names, and a link to the panel when it still exists.
+
+Retirement requires **Manage Roles** and a private confirmation bound to the administrator and exact saved panel. It expires after 10 minutes. Before changing anything, BeanBot reloads the saved record, rechecks the administrator's permission, and verifies that a present panel is a BeanBot-authored legacy reaction-role message. A changed record or unrecognized message stops retirement. A definitely missing message or channel can be cleaned up from the saved record after confirmation; a timeout or unknown Discord result is not treated as missing.
+
+BeanBot deletes a verified Discord panel once, then conditionally removes the exact saved record and invalidates its reaction-role cache entry. If Discord deletion is ambiguous, BeanBot leaves the saved record and does not retry automatically. Check the panel before running the command again. If Discord deletion succeeds but saving cleanup fails, the panel remains gone; rerun the command to finish cleanup. Retirement does not remove roles that members already hold and does not automatically follow migration.
+
 ## Manual smoke check
 
 Use a test server with BeanBot's role below one test role and above two other test roles.
@@ -111,6 +119,9 @@ Use a test server with BeanBot's role below one test role and above two other te
 10. Delete one panel through **Apps → Delete Role Menu** and another through `/role-menu delete`, then confirm their old controls cannot mutate roles. Confirm neither panel nor the publication and deletion replies show an internal ID.
 11. Temporarily remove BeanBot's hierarchy or permissions and confirm operations fail privately without exposing exception details or changing unrelated roles; audit reports **Broken** for a positively verified permission failure.
 12. Use an existing legacy reaction-role panel and confirm its reactions still add and remove roles exactly as before.
+13. Run `/role-menu retire-legacy`, page past 25 panels if available, review the private preview, and cancel once. Confirm nothing changes.
+14. Confirm retirement removes only the selected panel and saved settings while members keep their roles. Repeat with a missing panel and confirm stale settings are removed.
+15. Change the saved panel or remove **Manage Roles** between preview and confirmation; verify deletion stops.
 
 ## Wording
 
@@ -122,6 +133,6 @@ Role-menu text follows the customer-facing text standard in `AGENTS.md`. Members
 
 `RoleMenuAdministrationService` prepares drafts and connects publication, editing, and deletion to persistence. `RoleMenuAuditService` performs bounded read-only health checks against saved role menus and current Discord state. `RoleMenuMemberService` loads selectors and applies member choices through the mutation coordinator. These services take IDs and submitted values, without an interaction context. Each member operation keeps its own Discord member reference, so concurrent requests cannot share a mutation target.
 
-`DiscordRoleMenuClient` contains Discord REST reads and mutations. `RoleMenuSetupValidation` and `RoleMenuPresentation` keep validation and result text separate from transport. The publication, deletion, and member workflows retain their independently tested rules for ambiguous outcomes, rollback, final-state reconciliation, and cancellation. `RoleMenuInteractionService` supplies the shared bounded execution, draft, persistence, and lock operations used by those entry points.
+`DiscordRoleMenuClient` contains native role-menu REST reads and mutations. `LegacyReactionRoleRetirementClient` handles exact legacy source reads and deletion; its workflow coordinates with `ReactionRoleService` so a retired setting cannot be restored from cache. `RoleMenuSetupValidation` and `RoleMenuPresentation` keep validation and result text separate from transport. The publication, deletion, and member workflows retain their independently tested rules for ambiguous outcomes, rollback, final-state reconciliation, and cancellation. `RoleMenuInteractionService` supplies the shared bounded execution, draft, persistence, and lock operations used by those entry points.
 
 Shutdown closes normal interaction, busy-response, and command-registration admission. If a Discord request ignores cancellation and outlives the drain timeout, its ownership remains visible to the application, which skips Discord stop/disposal until the request actually completes. A late `Ready` event cannot restart command registration after shutdown.

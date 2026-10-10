@@ -8,6 +8,62 @@ namespace BeanBot.Tests.Discord.ReactionRoles;
 public class LegacyReactionRoleSetupDiscordOperationsTests
 {
     [Fact]
+    public async Task PublicMessageOperations_ForwardControlsAndDeleteWithTrackedCompletion()
+    {
+        var operations = CreateOperations(
+            new RecordingLogger<LegacyReactionRoleSetupDiscordOperations>());
+        var message = System.Reflection.DispatchProxy.Create<IUserMessage,
+            MessageOperationProxy>();
+        var proxy = (MessageOperationProxy)message;
+        var emote = new Emoji("✅");
+
+        await operations.AddReactionsAsync(message, [emote]);
+        await operations.DeleteMessageAsync(message);
+
+        Assert.Same(emote, Assert.Single(proxy.Reactions));
+        Assert.Equal(1, proxy.DeleteCount);
+        Assert.False(operations.HasPendingOperations);
+    }
+
+    [Fact]
+    public async Task PublicMessageOperations_RejectMissingMessageOrEmotes()
+    {
+        var operations = CreateOperations(
+            new RecordingLogger<LegacyReactionRoleSetupDiscordOperations>());
+        var message = System.Reflection.DispatchProxy.Create<IUserMessage,
+            MessageOperationProxy>();
+
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            operations.AddReactionsAsync(null!, [new Emoji("✅")]));
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            operations.AddReactionsAsync(message, null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            operations.DeleteMessageAsync(null!));
+    }
+
+    public class MessageOperationProxy : System.Reflection.DispatchProxy
+    {
+        public List<IEmote> Reactions { get; } = [];
+        public int DeleteCount { get; private set; }
+
+        protected override object? Invoke(System.Reflection.MethodInfo? targetMethod,
+            object?[]? args)
+        {
+            if (targetMethod?.Name == nameof(IUserMessage.AddReactionAsync))
+            {
+                Reactions.Add((IEmote)args![0]!);
+                return Task.CompletedTask;
+            }
+            if (targetMethod?.Name == nameof(IUserMessage.DeleteAsync))
+            {
+                DeleteCount++;
+                return Task.CompletedTask;
+            }
+            throw new NotSupportedException(targetMethod?.Name);
+        }
+    }
+
+    [Fact]
     public async Task SetupSuccess_AddsEveryControlOnceBeforePersistence()
     {
         var logger = new RecordingLogger<LegacyReactionRoleSetupDiscordOperations>();

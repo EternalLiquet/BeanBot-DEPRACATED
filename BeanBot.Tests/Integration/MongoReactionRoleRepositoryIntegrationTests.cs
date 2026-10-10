@@ -139,6 +139,101 @@ public sealed class MongoReactionRoleRepositoryIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task DeleteBinding_RemovesExactlyMatchingSavedMappings()
+    {
+        var databaseName = CreateDatabaseName();
+        var client = new MongoClient(_fixture.ConnectionString);
+        var repository = CreateRepository(client.GetDatabase(databaseName));
+        try
+        {
+            using var cancellation = new CancellationTokenSource(OperationTimeout);
+            await repository.InsertNewRoleSettings(new ReactionRoleSettings(
+                [new("4", "5")], "1", "2", "42"), cancellation.Token);
+            var saved = Assert.IsType<ReactionRoleSettings>(
+                await repository.GetRoleSetting(42, cancellation.Token));
+
+            Assert.True(await repository.DeleteBindingAsync(saved, "1", "2", "42",
+                cancellation.Token));
+            Assert.Null(await repository.GetRoleSetting(42, cancellation.Token));
+        }
+        finally
+        {
+            await DropDatabaseAsync(client, databaseName);
+        }
+    }
+
+    [Fact]
+    public async Task GetGuildPage_TraversesBeyondTwentyFiveWithoutCrossGuildRecords()
+    {
+        var databaseName = CreateDatabaseName();
+        var client = new MongoClient(_fixture.ConnectionString);
+        var repository = CreateRepository(client.GetDatabase(databaseName));
+        var collection = client.GetDatabase(databaseName)
+            .GetCollection<ReactionRoleSettings>("roleSettings");
+        try
+        {
+            using var cancellation = new CancellationTokenSource(OperationTimeout);
+            var records = Enumerable.Range(1, 30)
+                .Select(index => new ReactionRoleSettings([], "1", "2", index.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                {
+                    Id = MongoDB.Bson.ObjectId.GenerateNewId()
+                }).ToList();
+            await collection.InsertManyAsync(records, cancellationToken: cancellation.Token);
+            await collection.InsertOneAsync(
+                new ReactionRoleSettings([], "9", "2", "100")
+                { Id = MongoDB.Bson.ObjectId.GenerateNewId() },
+                cancellationToken: cancellation.Token);
+
+            var first = await repository.GetGuildPageAsync(1, null, false, 26,
+                cancellation.Token);
+            var second = await repository.GetGuildPageAsync(1, first[24].Id, false, 26,
+                cancellation.Token);
+            var back = await repository.GetGuildPageAsync(1, second[0].Id, true, 26,
+                cancellation.Token);
+
+            Assert.Equal(26, first.Count);
+            Assert.Equal(5, second.Count);
+            Assert.Equal(first.Take(25).Select(item => item.Id),
+                back.Select(item => item.Id));
+            Assert.All(first.Concat(second), item => Assert.Equal("1", item.GuildId));
+            Assert.Equal(30, first.Take(25).Concat(second).Select(item => item.Id).Distinct().Count());
+        }
+        finally
+        {
+            await DropDatabaseAsync(client, databaseName);
+        }
+    }
+
+    [Fact]
+    public async Task DeleteBinding_RejectsChangedMappingsOnSameDocument()
+    {
+        var databaseName = CreateDatabaseName();
+        var client = new MongoClient(_fixture.ConnectionString);
+        var repository = CreateRepository(client.GetDatabase(databaseName));
+        var collection = client.GetDatabase(databaseName)
+            .GetCollection<ReactionRoleSettings>("roleSettings");
+        try
+        {
+            using var cancellation = new CancellationTokenSource(OperationTimeout);
+            await repository.InsertNewRoleSettings(new ReactionRoleSettings(
+                [new("4", "5")], "1", "2", "42"), cancellation.Token);
+            var saved = Assert.IsType<ReactionRoleSettings>(
+                await repository.GetRoleSetting(42, cancellation.Token));
+            await collection.ReplaceOneAsync(item => item.Id == saved.Id,
+                new ReactionRoleSettings([new("6", "7")], "1", "2", "42")
+                { Id = saved.Id }, cancellationToken: cancellation.Token);
+
+            Assert.False(await repository.DeleteBindingAsync(saved, "1", "2", "42",
+                cancellation.Token));
+            Assert.NotNull(await repository.GetRoleSetting(42, cancellation.Token));
+        }
+        finally
+        {
+            await DropDatabaseAsync(client, databaseName);
+        }
+    }
+
     private static ReactionRoleRepository CreateRepository(IMongoDatabase database)
         => new(database, NullLogger<ReactionRoleRepository>.Instance);
 
