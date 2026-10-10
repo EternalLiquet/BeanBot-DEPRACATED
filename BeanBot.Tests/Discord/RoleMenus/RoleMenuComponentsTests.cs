@@ -246,6 +246,14 @@ public class RoleMenuComponentsTests
     }
 
     [Fact]
+    public void FormatCreatedAt_ShowsRelativeAge()
+    {
+        var created = DateTime.UtcNow.AddHours(-2).AddMinutes(-5);
+
+        Assert.Equal("Created 2 hours ago", RoleMenuComponents.FormatCreatedAt(created));
+    }
+
+    [Fact]
     public void BuildDeleteSelector_RendersUntitledAndDatedMenus()
     {
         const ulong userId = 123UL;
