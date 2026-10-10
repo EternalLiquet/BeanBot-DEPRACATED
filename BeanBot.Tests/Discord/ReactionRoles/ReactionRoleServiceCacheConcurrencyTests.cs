@@ -23,7 +23,7 @@ public class ReactionRoleServiceCacheConcurrencyTests
                 await releasePreload.Task.WaitAsync(token);
                 return [setting];
             },
-            GetByMessageId = (_, _) => Task.FromResult(current),
+            GetByMessageId = (_, _) => Task.FromResult<ReactionRoleSettings?>(current),
             Delete = (_, _) =>
             {
                 current = null;
@@ -179,6 +179,14 @@ public class ReactionRoleServiceCacheConcurrencyTests
         {
             GetByMessageIdCallCount++;
             return GetByMessageId(messageId, cancellationToken);
+        }
+
+        public async Task<ReactionRoleSettings?> GetByBindingAsync(
+            string guildId, string channelId, string messageId, CancellationToken cancellationToken)
+        {
+            var setting = await GetByMessageIdAsync(messageId, cancellationToken);
+            return setting?.GuildId == guildId && setting.ChannelId == channelId
+                && setting.MessageId == messageId ? setting : null;
         }
 
         public Task<bool> DeleteBindingAsync(ReactionRoleSettings settings, CancellationToken cancellationToken)

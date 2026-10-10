@@ -440,6 +440,14 @@ public class ReactionRoleServiceTests
             return GetByMessageId(messageId, cancellationToken);
         }
 
+        public async Task<ReactionRoleSettings?> GetByBindingAsync(
+            string guildId, string channelId, string messageId, CancellationToken cancellationToken)
+        {
+            var setting = await GetByMessageIdAsync(messageId, cancellationToken);
+            return setting?.GuildId == guildId && setting.ChannelId == channelId
+                && setting.MessageId == messageId ? setting : null;
+        }
+
         public Task<bool> DeleteBindingAsync(ReactionRoleSettings settings, CancellationToken cancellationToken)
             => Task.FromResult(false);
     }

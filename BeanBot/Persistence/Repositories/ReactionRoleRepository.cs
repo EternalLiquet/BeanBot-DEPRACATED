@@ -14,6 +14,8 @@ internal interface IReactionRoleSettingsStore
         int limit,
         CancellationToken cancellationToken);
     Task<ReactionRoleSettings?> GetByMessageIdAsync(string messageId, CancellationToken cancellationToken);
+    Task<ReactionRoleSettings?> GetByBindingAsync(
+        string guildId, string channelId, string messageId, CancellationToken cancellationToken);
     Task<bool> DeleteBindingAsync(ReactionRoleSettings settings, CancellationToken cancellationToken);
 }
 
@@ -50,6 +52,17 @@ internal sealed class MongoReactionRoleSettingsStore : IReactionRoleSettingsStor
     {
         var filter = Builders<ReactionRoleSettings>.Filter.Where(
             document => document.MessageId == messageId);
+        return await _roleSettings.Find(filter).FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<ReactionRoleSettings?> GetByBindingAsync(
+        string guildId, string channelId, string messageId, CancellationToken cancellationToken)
+    {
+        var filters = Builders<ReactionRoleSettings>.Filter;
+        var filter = filters.And(
+            filters.Eq(document => document.GuildId, guildId),
+            filters.Eq(document => document.ChannelId, channelId),
+            filters.Eq(document => document.MessageId, messageId));
         return await _roleSettings.Find(filter).FirstOrDefaultAsync(cancellationToken);
     }
 
@@ -115,6 +128,17 @@ public sealed class ReactionRoleRepository
         return _reactionRoleSettingsStore.GetByMessageIdAsync(
             messageId.ToString(CultureInfo.InvariantCulture),
             cancellationToken);
+    }
+
+    public Task<ReactionRoleSettings?> GetRoleSettingByBindingAsync(
+        string guildId,
+        string channelId,
+        string messageId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return _reactionRoleSettingsStore.GetByBindingAsync(
+            guildId, channelId, messageId, cancellationToken);
     }
 
     public async Task<bool> DeleteBindingAsync(

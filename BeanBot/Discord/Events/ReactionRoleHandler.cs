@@ -85,19 +85,49 @@ public sealed class ReactionRoleHandler : IDisposable
             return;
         }
 
+        await ProcessDeletedMessageIdsAsync(
+            guildChannel.Guild.Id, channel.Id,
+            messages.Select(message => message.Id).ToArray(), shutdownToken);
+    }
+
+    internal Task HandleDeletedMessageIdsAsync(
+        ulong guildId,
+        ulong channelId,
+        IReadOnlyCollection<ulong> messageIds)
+        => _roleService.TrackHandlerAsync(token =>
+            ProcessDeletedMessageIdsAsync(guildId, channelId, messageIds, token));
+
+    private async Task ProcessDeletedMessageIdsAsync(
+        ulong guildId,
+        ulong channelId,
+        IReadOnlyCollection<ulong> messageIds,
+        CancellationToken shutdownToken)
+    {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(shutdownToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(20));
         try
         {
-            foreach (var messageId in messages.Select(message => message.Id).Distinct())
+            foreach (var messageId in messageIds.Distinct())
             {
                 timeout.Token.ThrowIfCancellationRequested();
                 try
                 {
                     await _roleService.DeleteSavedPanelAsync(
-                        guildChannel.Guild.Id, channel.Id, messageId, timeout.Token);
+                        guildId, channelId, messageId, timeout.Token);
+                }
+                catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    BeanBotLog.RolePanelDeletionCleanupFailed(_logger, exception);
+                }
+
+                try
+                {
                     await _roleMenus.DeleteSavedPanelsForMessageAsync(
-                        guildChannel.Guild.Id, channel.Id, messageId, timeout.Token);
+                        guildId, channelId, messageId, timeout.Token);
                 }
                 catch (OperationCanceledException) when (timeout.IsCancellationRequested)
                 {

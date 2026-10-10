@@ -171,7 +171,11 @@ public sealed class RoleMenuInteractionService
         var channel = channelId.ToString(CultureInfo.InvariantCulture);
         var message = messageId.ToString(CultureInfo.InvariantCulture);
         var matches = await _repository.GetByMessageAsync(
-            guild, channel, message, maximumMatches, cancellationToken);
+            guild, channel, message, maximumMatches + 1, cancellationToken);
+        if (matches.Count > maximumMatches)
+        {
+            throw new InvalidOperationException("Too many saved role menus match a deleted message.");
+        }
         var deleted = 0;
         foreach (var settings in matches)
         {

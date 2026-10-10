@@ -297,7 +297,11 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
         await _cacheLock.WaitAsync(cancellationToken);
         try
         {
-            var settings = await _reactionRoleRepository.GetRoleSetting(messageId, cancellationToken);
+            var settings = await _reactionRoleRepository.GetRoleSettingByBindingAsync(
+                guildId.ToString(CultureInfo.InvariantCulture),
+                channelId.ToString(CultureInfo.InvariantCulture),
+                messageId.ToString(CultureInfo.InvariantCulture),
+                cancellationToken);
             if (settings is null)
             {
                 return false;
