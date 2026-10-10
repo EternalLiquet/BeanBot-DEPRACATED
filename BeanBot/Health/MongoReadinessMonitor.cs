@@ -32,6 +32,15 @@ internal readonly record struct MongoReadinessSnapshot(
     bool IsReachable,
     DateTimeOffset LastCheckedAtUtc);
 
+internal readonly record struct MongoReadinessMetricsSnapshot(
+    bool IsKnown,
+    bool IsReachable,
+    bool IsFresh,
+    DateTimeOffset? LastCheckedAtUtc,
+    long SuccessCount,
+    long FailureCount,
+    long TimeoutCount);
+
 public sealed class MongoReadinessMonitor
 {
     internal static readonly TimeSpan DefaultProbeTimeout = TimeSpan.FromSeconds(2);
@@ -46,6 +55,9 @@ public sealed class MongoReadinessMonitor
     private ProbeOperation? _inFlight;
     private CachedSnapshot? _lastSnapshot;
     private bool? _lastLoggedReachability;
+    private long _successCount;
+    private long _failureCount;
+    private long _timeoutCount;
 
     public MongoReadinessMonitor(
         IMongoReadinessProbe probe,
@@ -87,6 +99,34 @@ public sealed class MongoReadinessMonitor
             {
                 return _inFlight is not null;
             }
+        }
+    }
+
+    internal MongoReadinessMetricsSnapshot CreateMetricsSnapshot()
+    {
+        lock (_syncRoot)
+        {
+            if (_lastSnapshot is not { } cached)
+            {
+                return new MongoReadinessMetricsSnapshot(
+                    false,
+                    false,
+                    false,
+                    null,
+                    _successCount,
+                    _failureCount,
+                    _timeoutCount);
+            }
+
+            var nowTimestamp = _timeProvider.GetTimestamp();
+            return new MongoReadinessMetricsSnapshot(
+                true,
+                cached.Snapshot.IsReachable,
+                _timeProvider.GetElapsedTime(cached.RecordedTimestamp, nowTimestamp) <= _freshnessWindow,
+                cached.Snapshot.LastCheckedAtUtc,
+                _successCount,
+                _failureCount,
+                _timeoutCount);
         }
     }
 
@@ -192,6 +232,7 @@ public sealed class MongoReadinessMonitor
                 _lastSnapshot = new CachedSnapshot(snapshot, _timeProvider.GetTimestamp());
                 _inFlight = null;
                 transition = UpdateLoggedReachabilityLocked(snapshot.IsReachable);
+                RecordProbeOutcomeLocked(operation, ClassifyOutcome(result));
                 ownsCompletion = true;
             }
         }
@@ -216,6 +257,7 @@ public sealed class MongoReadinessMonitor
             {
                 _lastSnapshot = new CachedSnapshot(snapshot, _timeProvider.GetTimestamp());
                 transition = UpdateLoggedReachabilityLocked(false);
+                RecordProbeOutcomeLocked(operation, MongoProbeOutcome.Timeout);
             }
         }
 
@@ -237,6 +279,42 @@ public sealed class MongoReadinessMonitor
         }
 
         return result.FailureKind ?? "none";
+    }
+
+    private static MongoProbeOutcome ClassifyOutcome(ProbeExecutionResult result)
+    {
+        if (result.CancellationRequestedAtCompletion)
+        {
+            return MongoProbeOutcome.Timeout;
+        }
+
+        return result.Succeeded
+            ? MongoProbeOutcome.Success
+            : MongoProbeOutcome.Failure;
+    }
+
+    private void RecordProbeOutcomeLocked(ProbeOperation operation, MongoProbeOutcome outcome)
+    {
+        if (operation.OutcomeRecorded)
+        {
+            return;
+        }
+
+        operation.OutcomeRecorded = true;
+        switch (outcome)
+        {
+            case MongoProbeOutcome.Success:
+                _successCount++;
+                break;
+            case MongoProbeOutcome.Failure:
+                _failureCount++;
+                break;
+            case MongoProbeOutcome.Timeout:
+                _timeoutCount++;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(outcome));
+        }
     }
 
     private MongoReadinessTransition UpdateLoggedReachabilityLocked(bool isReachable)
@@ -290,6 +368,7 @@ public sealed class MongoReadinessMonitor
 
         public long StartedTimestamp { get; }
         public Task<ProbeExecutionResult> Task { get; }
+        public bool OutcomeRecorded { get; set; }
 
         public void Cancel()
         {
@@ -314,6 +393,13 @@ public sealed class MongoReadinessMonitor
     private readonly record struct CachedSnapshot(
         MongoReadinessSnapshot Snapshot,
         long RecordedTimestamp);
+
+    private enum MongoProbeOutcome
+    {
+        Success,
+        Failure,
+        Timeout
+    }
 
     private enum MongoReadinessTransition
     {

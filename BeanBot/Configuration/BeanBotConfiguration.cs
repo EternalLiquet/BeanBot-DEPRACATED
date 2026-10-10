@@ -21,6 +21,7 @@ internal static class BeanBotConfiguration
     internal const string HealthCheckBearerTokenVariable = "BEANBOT_HEALTHCHECK_BEARER_TOKEN";
     internal const string HealthCheckBearerTokenFileVariable = "BEANBOT_HEALTHCHECK_BEARER_TOKEN_FILE";
     internal const string HealthCheckRateLimitVariable = "BEANBOT_HEALTHCHECK_RATE_LIMIT_SECONDS";
+    internal const string MetricsEnabledVariable = "BEANBOT_METRICS_ENABLED";
     internal const string NewMemberWelcomeEnabledVariable = "BEANBOT_NEW_MEMBER_WELCOME_ENABLED";
     internal const string NewMemberWelcomeMessageVariable = "BEANBOT_NEW_MEMBER_WELCOME_MESSAGE";
     internal const int SecretFileMaxBytes = 16 * 1024;
@@ -51,6 +52,9 @@ internal static class BeanBotConfiguration
 
     private static readonly ConfigurationKey HealthCheckPort =
         new(HealthCheckPortVariable, "healthCheckPort", "HealthCheck:Port");
+
+    private static readonly ConfigurationKey MetricsEnabled =
+        new(MetricsEnabledVariable, "metricsEnabled", "HealthCheck:MetricsEnabled");
 
     private static readonly ConfigurationKey[] HealthCheckKeys =
     [
@@ -95,6 +99,8 @@ internal static class BeanBotConfiguration
         {
             normalizedValues[SectionKey(HealthCheckPort.OptionPath)] = healthCheckPort;
         }
+
+        AddNormalizedValue(configuration, normalizedValues, MetricsEnabled);
 
         if (!string.IsNullOrWhiteSpace(healthCheckPort))
         {
