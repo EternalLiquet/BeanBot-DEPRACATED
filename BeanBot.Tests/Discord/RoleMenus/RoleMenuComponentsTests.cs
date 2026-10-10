@@ -550,6 +550,21 @@ public class RoleMenuComponentsTests
             embed.Description);
     }
 
+    [Fact]
+    public void BuildDeleteConfirmationEmbed_KeepsAgeDetailFromSelector()
+    {
+        var settings = CreateSettings(RoleMenuSelectionMode.Multiple, "Games");
+        settings.CreatedAtUtc = new DateTime(2026, 10, 1, 9, 0, 0, DateTimeKind.Utc);
+
+        var embed = RoleMenuComponents.BuildDeleteConfirmationEmbed(
+            settings,
+            RoleMenuPanelState.Current,
+            new DateTime(2026, 10, 10, 18, 30, 0, DateTimeKind.Utc));
+
+        Assert.Contains("Created 9 days, 9 hours, 30 minutes ago", embed.Description,
+            StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData((int)RoleMenuPanelState.MessageMissing, "The menu's message was deleted.")]
     [InlineData((int)RoleMenuPanelState.ChannelMissing, "The menu's channel was deleted.")]

@@ -213,7 +213,8 @@ internal static class RoleMenuComponents
         lines.Add(
             $"{FormatChoosableRoleCount(settings.RoleIds.Count)} • " +
             FormatSelectionMode(settings.SelectionMode));
-        lines.Add(FormatCreatedAt(settings.CreatedAtUtc, nowUtc ?? DateTime.UtcNow));
+        lines.Add(FormatCreatedAt(settings.CreatedAtUtc, nowUtc ?? DateTime.UtcNow,
+            includeDetail: true));
         var panelNote = panelState switch
         {
             RoleMenuPanelState.MessageMissing => "The menu's message was deleted.",
@@ -255,7 +256,10 @@ internal static class RoleMenuComponents
     internal static string GetDisplayTitle(string? title)
         => RoleMenuText.HasVisibleText(title) ? title!.Trim() : UntitledMenuName;
 
-    internal static string FormatCreatedAt(DateTime createdAtUtc, DateTime? nowUtc = null)
+    internal static string FormatCreatedAt(
+        DateTime createdAtUtc,
+        DateTime? nowUtc = null,
+        bool includeDetail = false)
     {
         var renderedAtUtc = nowUtc ?? DateTime.UtcNow;
         if (createdAtUtc == default || createdAtUtc > renderedAtUtc)
@@ -267,6 +271,17 @@ internal static class RoleMenuComponents
         if (age < TimeSpan.FromMinutes(1))
         {
             return "Created just now";
+        }
+
+        if (includeDetail)
+        {
+            var days = age.Days;
+            var parts = new List<string>();
+            AddAgePart(parts, days / 365, "year");
+            AddAgePart(parts, days % 365, "day");
+            AddAgePart(parts, age.Hours, "hour");
+            AddAgePart(parts, age.Minutes, "minute");
+            return "Created " + string.Join(", ", parts) + " ago";
         }
 
         long amount;
@@ -296,6 +311,15 @@ internal static class RoleMenuComponents
                $"{unit}{(amount == 1 ? "" : "s")} ago";
     }
 
+    private static void AddAgePart(List<string> parts, int amount, string unit)
+    {
+        if (amount > 0)
+        {
+            parts.Add($"{amount.ToString(CultureInfo.InvariantCulture)} " +
+                      $"{unit}{(amount == 1 ? "" : "s")}");
+        }
+    }
+
     private static string FormatSelectionMode(RoleMenuSelectionMode selectionMode)
         => selectionMode == RoleMenuSelectionMode.Exclusive
             ? "Members can choose one"
@@ -306,13 +330,16 @@ internal static class RoleMenuComponents
         Func<ulong, string?> getChannelName,
         DateTime? nowUtc = null)
     {
+        var age = FormatCreatedAt(menu.CreatedAtUtc, nowUtc, includeDetail: true);
         var channelName = RoleMenuCustomIds.TryParseSnowflake(menu.ChannelId, out var channelId)
             ? getChannelName(channelId)
             : null;
         var channel = string.IsNullOrWhiteSpace(channelName)
             ? "Unknown channel"
-            : "#" + RoleMenuText.TruncateWithEllipsis(channelName, 40);
-        return $"{channel} • {FormatCreatedAt(menu.CreatedAtUtc, nowUtc)}";
+            : "#" + RoleMenuText.TruncateWithEllipsis(
+                channelName,
+                Math.Min(40, SelectMenuOptionBuilder.MaxDescriptionLength - age.Length - 4));
+        return $"{channel} • {age}";
     }
 
     internal static string FormatChoosableRoleCount(int roleCount)
