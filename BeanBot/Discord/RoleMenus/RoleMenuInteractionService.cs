@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using BeanBot.Discord.Interactions;
 using BeanBot.Persistence.Models;
@@ -12,6 +13,7 @@ public sealed class RoleMenuInteractionService
     private readonly RoleMenuDraftRegistry _draftRegistry;
     private readonly RoleMenuMutationCoordinator _mutationCoordinator;
     private readonly InteractionExecutionContext _executionContext;
+    private readonly ConcurrentDictionary<(ObjectId MenuId, ulong UserId), byte> _deletionsInProgress = new();
 
     internal RoleMenuInteractionService(
         RoleMenuRepository repository,
@@ -125,6 +127,30 @@ public sealed class RoleMenuInteractionService
             maximumResults,
             cancellationToken);
 
+    internal Task<List<RoleMenuSettings>> GetByMessageAsync(
+        ulong guildId,
+        ulong channelId,
+        ulong messageId,
+        int maximumResults,
+        CancellationToken cancellationToken)
+        => _repository.GetByMessageAsync(
+            guildId.ToString(CultureInfo.InvariantCulture),
+            channelId.ToString(CultureInfo.InvariantCulture),
+            messageId.ToString(CultureInfo.InvariantCulture),
+            maximumResults,
+            cancellationToken);
+
+    internal Task<List<RoleMenuSettings>> GetPageAsync(
+        ulong guildId,
+        RoleMenuPageCursor? cursor,
+        int maximumResults,
+        CancellationToken cancellationToken)
+        => _repository.GetPageAsync(
+            guildId.ToString(CultureInfo.InvariantCulture),
+            cursor,
+            maximumResults,
+            cancellationToken);
+
     internal Task<bool> DeleteAsync(
         ObjectId id,
         ulong guildId,
@@ -133,6 +159,17 @@ public sealed class RoleMenuInteractionService
             id,
             guildId.ToString(CultureInfo.InvariantCulture),
             cancellationToken);
+
+    /// <summary>
+    /// Claims one administrator's confirmed deletion of a menu so a repeated click can't start a
+    /// second one. Each claim belongs to a live interaction and is released when it finishes.
+    /// Different administrators are still serialized by the menu lock.
+    /// </summary>
+    internal bool TryBeginDeletion(ObjectId menuId, ulong userId)
+        => _deletionsInProgress.TryAdd((menuId, userId), 0);
+
+    internal void EndDeletion(ObjectId menuId, ulong userId)
+        => _deletionsInProgress.TryRemove((menuId, userId), out _);
 
     internal Task<T> RunMenuMutationAsync<T>(
         ObjectId menuId,

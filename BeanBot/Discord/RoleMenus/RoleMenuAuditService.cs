@@ -461,7 +461,7 @@ internal static class RoleMenuAuditPresentation
         ArgumentNullException.ThrowIfNull(result);
         if (result.RequestedMenuNotFound)
         {
-            return "I couldn't find that role menu in this server. Check the ID in its footer and try again.";
+            return "I couldn't find that role menu in this server. Check the ID in the audit result and try again.";
         }
 
         if (result.PersistenceUnavailable && result.Items.Count == 0)
@@ -478,7 +478,7 @@ internal static class RoleMenuAuditPresentation
                 RoleMenuAuditStatus.Healthy => string.Empty,
                 RoleMenuAuditStatus.Broken =>
                     "\nFix the issue, then run this audit again. If you no longer need this menu, " +
-                    $"run `/role-menu delete menu-id:{item.MenuId}`.",
+                    "run `/role-menu delete` and choose it from the list.",
                 _ => "\nTry this audit again in a moment. Don't delete the menu based on this result."
             };
             return $"**{item.Status}** — `{item.MenuId}`\n{item.Reason}{nextStep}";
@@ -523,8 +523,8 @@ internal static class RoleMenuAuditPresentation
         if (result.HasMore)
         {
             lines.Add(
-                "I checked only the 25 newest menus. For an older menu, copy its footer ID " +
-                "into `/role-menu audit menu-id:<id>`.");
+                "I checked only the 25 newest menus. If you have an older menu's ID, " +
+                "run `/role-menu audit menu-id:<id>`.");
         }
 
         return RoleMenuPresentation.BoundResponseContent(string.Join('\n', lines));

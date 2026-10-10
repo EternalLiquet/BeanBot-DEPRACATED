@@ -420,6 +420,20 @@ public class RoleMenuAuditServiceTests
 
         Assert.True(content.Length <= RoleMenuConstants.MaximumResponseContentLength);
         Assert.Contains("25 newest", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("footer", content, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Presentation_BrokenMenu_UsesPagedDeleteCommand()
+    {
+        var menuId = ObjectId.GenerateNewId();
+        var content = RoleMenuAuditPresentation.Format(
+            new RoleMenuAuditBatchResult(
+                [new RoleMenuAuditItem(menuId, RoleMenuAuditStatus.Broken, "The panel is gone.")]),
+            menuId);
+
+        Assert.Contains("run `/role-menu delete`", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("delete menu-id:", content, StringComparison.Ordinal);
     }
 
     [Fact]
