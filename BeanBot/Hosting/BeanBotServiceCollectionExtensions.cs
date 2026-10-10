@@ -1,6 +1,7 @@
 using BeanBot.Configuration;
 using BeanBot.Discord.Commands;
 using BeanBot.Discord.Events;
+using BeanBot.Discord.Interactions;
 using BeanBot.Discord.Fortunes;
 using BeanBot.Discord.Lifecycle;
 using BeanBot.Discord.Media;
@@ -170,6 +171,12 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<RoleMenuRepository>();
         services.AddSingleton<RoleMenuDraftRegistry>();
         services.AddSingleton(_ => new RoleMenuMutationCoordinator());
+        services.AddSingleton(_ => new InteractionExecutionContext());
+        services.AddSingleton(provider => new RoleMenuInteractionService(
+            provider.GetRequiredService<RoleMenuRepository>(),
+            provider.GetRequiredService<RoleMenuDraftRegistry>(),
+            provider.GetRequiredService<RoleMenuMutationCoordinator>(),
+            provider.GetRequiredService<InteractionExecutionContext>()));
         services.AddSingleton<DiscordMessageCleanupService>();
 
         services.AddSingleton<IInstanceLeaseClock, SystemInstanceLeaseClock>();

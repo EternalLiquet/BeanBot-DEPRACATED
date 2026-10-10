@@ -243,6 +243,13 @@ public sealed class MongoRoleMenuRepositoryIntegrationTests
             Assert.False(await repository.DeleteBindingAsync(stale, "2", "20", "30", cancellation.Token));
             Assert.False(await repository.DeleteBindingAsync(stale, "1", "21", "30", cancellation.Token));
 
+            await Task.Delay(15, cancellation.Token);
+            await repository.UpsertAsync(new RoleMenuSettings(original.Id, "1", "20", "30",
+                "Updated games", "", ["40"], RoleMenuSelectionMode.Multiple), cancellation.Token);
+            Assert.False(await repository.DeleteBindingAsync(stale, "1", "20", "30", cancellation.Token));
+            Assert.Equal("Updated games", (await repository.GetAsync(
+                original.Id, "1", cancellation.Token))?.Title);
+
             var repaired = new RoleMenuSettings(original.Id, "1", "20", "31", "Games", "", ["40"],
                 RoleMenuSelectionMode.Multiple);
             await repository.UpsertAsync(repaired, cancellation.Token);
