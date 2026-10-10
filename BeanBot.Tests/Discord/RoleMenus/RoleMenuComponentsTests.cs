@@ -12,6 +12,66 @@ namespace BeanBot.Tests.Discord.RoleMenus;
 public class RoleMenuComponentsTests
 {
     [Fact]
+    public void MigrationPreview_ShowsSourceRolesModeAndExplicitPublishControl()
+    {
+        var menuId = ObjectId.GenerateNewId();
+        var draftId = Guid.NewGuid();
+        var draft = new RoleMenuDraft(
+            draftId, menuId, 1, 2, 3, "Games", "", [4],
+            RoleMenuSelectionMode.Multiple, DateTimeOffset.UtcNow.AddMinutes(10),
+            5, "source-binding");
+        var roles = new[] { new RoleMenuRoleSnapshot(4, "Gamer", false, false, 1) };
+
+        var embed = RoleMenuComponents.BuildMigrationPreviewEmbed(
+            draft, roles, "https://discord.com/channels/1/3/5");
+        var controls = RoleMenuComponents.BuildMigrationPreviewComponents(draftId);
+        var fields = embed.Fields.ToDictionary(field => field.Name, field => field.Value);
+        var buttons = controls.Components.OfType<ActionRowComponent>()
+            .SelectMany(row => row.Components).OfType<ButtonComponent>().ToArray();
+
+        Assert.Equal("Games", embed.Title);
+        Assert.Equal("[Open legacy panel](https://discord.com/channels/1/3/5)",
+            fields["Legacy source"]);
+        Assert.Contains("<@&4>", fields["Roles"], StringComparison.Ordinal);
+        Assert.Equal("Multiple selection", fields["Mode"]);
+        Assert.Contains("stay unchanged", fields["Retirement"], StringComparison.Ordinal);
+        Assert.Equal(RoleMenuCustomIds.MigrateConfirm(draftId), buttons[0].CustomId);
+        Assert.Equal(RoleMenuCustomIds.MigrateCancel(draftId), buttons[1].CustomId);
+    }
+
+    [Fact]
+    public void EditPreview_OpenControlTargetsItsBoundDraft()
+    {
+        var draftId = Guid.NewGuid();
+
+        var controls = RoleMenuComponents.BuildEditOpenComponents(draftId);
+        var button = Assert.Single(controls.Components.OfType<ActionRowComponent>()
+            .SelectMany(row => row.Components).OfType<ButtonComponent>());
+
+        Assert.Equal("Edit values", button.Label);
+        Assert.Equal(RoleMenuCustomIds.EditOpen(draftId), button.CustomId);
+        Assert.Equal(ButtonStyle.Primary, button.Style);
+        Assert.StartsWith("role-menu:edit-modal:",
+            RoleMenuCustomIds.EditModal(draftId), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DeleteConfirmation_DoesNotLinkMalformedSavedMessage()
+    {
+        var settings = new RoleMenuSettings(ObjectId.GenerateNewId(),
+            "1", "invalid", "3", "Games", "", ["4"],
+            RoleMenuSelectionMode.Multiple);
+
+        var controls = RoleMenuComponents.BuildDeleteConfirmationComponents(
+            9, settings, RoleMenuPanelState.Current);
+        var buttons = controls.Components.OfType<ActionRowComponent>()
+            .SelectMany(row => row.Components).OfType<ButtonComponent>().ToArray();
+
+        Assert.Equal(2, buttons.Length);
+        Assert.DoesNotContain(buttons, button => button.Style == ButtonStyle.Link);
+    }
+
+    [Fact]
     public void BuildPublicComponents_ContainsStableManageIdentifier()
     {
         var menuId = ObjectId.GenerateNewId();

@@ -25,8 +25,10 @@ internal static class BeanBotInteractionServiceCollectionExtensions
         services.AddSingleton(provider => InteractionCommandRegistrationTarget.FromGuildId(
             provider.GetRequiredService<BeanBotOptions>().InteractionGuildId));
         services.AddSingleton<DiscordRoleMenuClient>();
+        services.AddSingleton<LegacyReactionRoleMigrationClient>();
         services.AddSingleton<RoleMenuMemberService>();
         services.AddSingleton<RoleMenuAdministrationService>();
+        services.AddSingleton<RoleMenuMigrationService>();
         services.AddSingleton<RoleMenuAuditService>();
         services.AddSingleton<InteractionHandler>();
         services.AddSingleton<BeanBotInteractionHostedService>();

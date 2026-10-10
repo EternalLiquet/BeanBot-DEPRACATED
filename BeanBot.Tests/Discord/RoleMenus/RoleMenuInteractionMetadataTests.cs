@@ -29,6 +29,25 @@ public class RoleMenuInteractionMetadataTests
     }
 
     [Fact]
+    public void MigrationCommand_IsPartOfExistingAdminModule()
+    {
+        var method = typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.MigrateAsync));
+
+        Assert.NotNull(method);
+        var slashCommand = method.GetCustomAttribute<SlashCommandAttribute>();
+        Assert.NotNull(slashCommand);
+        Assert.Equal("migrate", slashCommand.Name);
+        Assert.Equal(RunMode.Sync, slashCommand.RunMode);
+        Assert.True(method.GetParameters()[0].IsOptional);
+        Assert.NotNull(typeof(RoleMenuAdminModule).GetMethod(
+            nameof(RoleMenuAdminModule.ChangeMigrationPageAsync))
+            ?.GetCustomAttribute<ComponentInteractionAttribute>());
+        Assert.NotNull(typeof(RoleMenuAdminModule).GetMethod(
+            nameof(RoleMenuAdminModule.SelectMigrationPanelAsync))
+            ?.GetCustomAttribute<ComponentInteractionAttribute>());
+    }
+
+    [Fact]
     public void AdminCommands_ShareOneGroupedInteractionModule()
     {
         var groupedRoleMenuModules = typeof(RoleMenuAdminModule).Assembly
@@ -137,6 +156,9 @@ public class RoleMenuInteractionMetadataTests
         {
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.HandleCreateModalAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.PublishAsync)),
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ConfirmMigrationAsync)),
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ChangeMigrationPageAsync)),
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.SelectMigrationPanelAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.HandleEditModalAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ChangeEditPageAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.SelectEditAsync)),

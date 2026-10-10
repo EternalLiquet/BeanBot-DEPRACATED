@@ -152,6 +152,26 @@ public class RoleMenuRepairWorkflowTests
     }
 
     [Fact]
+    public void RepairDraft_PreservesMigrationSourceAndDetectsProvenanceChanges()
+    {
+        var original = CreateSettings();
+        var migrated = new RoleMenuSettings(original.Id, original.GuildId,
+            original.ChannelId, original.MessageId, original.Title,
+            original.Description, original.RoleIds, original.SelectionMode, "777");
+        Assert.True(RoleMenuSettingsParser.TryParse(migrated, out var parsed, out _));
+
+        var draft = RoleMenuRepairWorkflow.CreateRepairDraft(
+            migrated, parsed, administratorId: 50, targetChannelId: 99);
+        var repaired = RoleMenuPublicationSettings.Create(draft, messageId: 100);
+
+        Assert.Equal(777UL, draft.LegacyReactionRoleMessageId);
+        Assert.Equal("777", repaired.MigratedFromReactionRoleMessageId);
+        Assert.False(RoleMenuRepairWorkflow.HasSameSavedConfiguration(original, migrated));
+        Assert.False(RoleMenuRepairWorkflow.MatchesPreview(
+            original, RoleMenuRepairWorkflow.GetPreviewFingerprint(migrated)));
+    }
+
+    [Fact]
     public void PreviewFingerprint_RejectsChangedSettingsEvenWhenTimestampIsUnchanged()
     {
         var original = CreateSettings();

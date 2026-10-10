@@ -39,6 +39,20 @@ public class RoleMenuPublicationSettingsTests
         Assert.False(RoleMenuPublicationSettings.Matches(mismatched, draft, 30UL));
     }
 
+    [Fact]
+    public void CreateAndMatches_PreserveLegacyMigrationProvenance()
+    {
+        var menuId = ObjectId.GenerateNewId();
+        var draft = CreateDraft(menuId) with { LegacyReactionRoleMessageId = 777UL };
+
+        var settings = RoleMenuPublicationSettings.Create(draft, 30UL);
+
+        Assert.Equal("777", settings.MigratedFromReactionRoleMessageId);
+        Assert.True(RoleMenuPublicationSettings.Matches(settings, draft, 30UL));
+        var wrongSource = draft with { LegacyReactionRoleMessageId = 778UL };
+        Assert.False(RoleMenuPublicationSettings.Matches(settings, wrongSource, 30UL));
+    }
+
     private static RoleMenuDraft CreateDraft(ObjectId menuId)
         => new(
             Guid.NewGuid(),

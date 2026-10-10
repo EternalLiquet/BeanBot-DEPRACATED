@@ -94,7 +94,7 @@ public class RoleMenuInteractionServiceTests
     }
 
     [Fact]
-    public void ModuleConstructors_RequireFacadeAndLogger()
+    public void ModuleConstructors_RequireFacadesAndLogger()
     {
         var fixture = CreateFixture();
         var discord = new DiscordRoleMenuClient(
@@ -103,6 +103,15 @@ public class RoleMenuInteractionServiceTests
 
         var administration = new RoleMenuAdministrationService(
             fixture.Service, discord, NullLogger<RoleMenuAdministrationService>.Instance);
+        var migration = new RoleMenuMigrationService(
+            new ReactionRoleRepository(
+                new EmptyReactionRoleStore(),
+                NullLogger<ReactionRoleRepository>.Instance),
+            fixture.Service,
+            discord,
+            new LegacyReactionRoleMigrationClient(
+                (_, _) => Task.FromResult<global::Discord.IChannel?>(null)),
+            administration);
         var audit = new RoleMenuAuditService(fixture.Service, discord);
         var members = new RoleMenuMemberService(
             fixture.Service, discord, NullLogger<RoleMenuMemberService>.Instance);
@@ -117,6 +126,7 @@ public class RoleMenuInteractionServiceTests
             null!,
             discord,
             administration,
+            migration,
             audit,
             legacy,
             NullLogger<RoleMenuAdminModule>.Instance));
@@ -125,12 +135,14 @@ public class RoleMenuInteractionServiceTests
             discord,
             administration,
             null!,
+            audit,
             legacy,
             NullLogger<RoleMenuAdminModule>.Instance));
         Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
             fixture.Service,
             discord,
             administration,
+            migration,
             audit,
             legacy,
             null!));
@@ -138,6 +150,7 @@ public class RoleMenuInteractionServiceTests
             fixture.Service,
             discord,
             administration,
+            migration,
             audit,
             legacy,
             NullLogger<RoleMenuAdminModule>.Instance);
@@ -505,6 +518,57 @@ public class RoleMenuInteractionServiceTests
 
             _settings = null;
             return Task.FromResult(true);
+        }
+    }
+
+    private sealed class EmptyReactionRoleStore : IReactionRoleSettingsStore
+    {
+        public Task InsertAsync(
+            ReactionRoleSettings roleSettings,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+
+        public Task<List<ReactionRoleSettings>> GetRecentAsync(
+            DateTime oldestLastAccessedUtc,
+            int limit,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new List<ReactionRoleSettings>());
+        }
+
+        public Task<ReactionRoleSettings?> GetByMessageIdAsync(
+            string messageId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<ReactionRoleSettings?>(null);
+        }
+
+        public Task<List<ReactionRoleSettings>> GetGuildPageAsync(
+            string guildId, ObjectId? cursor, bool newer, int limit,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new List<ReactionRoleSettings>());
+        }
+
+        public Task<ReactionRoleSettings?> GetByBindingAsync(
+            string guildId, string channelId, string messageId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<ReactionRoleSettings?>(null);
+        }
+
+        public Task<bool> DeleteBindingAsync(
+            ReactionRoleSettings settings, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new InvalidOperationException("Migration must never delete the legacy source.");
         }
     }
 }

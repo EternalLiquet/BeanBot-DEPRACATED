@@ -17,7 +17,7 @@ using static BeanBot.Discord.RoleMenus.RoleMenuSetupValidation;
 
 namespace BeanBot.Discord.RoleMenus;
 
-[Group("role-menu", "Create, repair, and delete role menus.")]
+[Group("role-menu", "Create, migrate, edit, repair, and delete role menus.")]
 [CommandContextType(InteractionContextType.Guild)]
 [RequireContext(ContextType.Guild)]
 [RequireUserPermission(GuildPermission.ManageRoles)]
@@ -26,6 +26,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
 {
     private readonly DiscordRoleMenuClient _discord;
     private readonly RoleMenuAdministrationService _administration;
+    private readonly RoleMenuMigrationService _migration;
     private readonly RoleMenuAuditService _audit;
     private readonly ReactionRoleService _legacyReactionRoles;
     private readonly ILogger<RoleMenuAdminModule> _logger;
@@ -34,6 +35,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         RoleMenuInteractionService roleMenuService,
         DiscordRoleMenuClient discord,
         RoleMenuAdministrationService administration,
+        RoleMenuMigrationService migration,
         RoleMenuAuditService audit,
         ReactionRoleService legacyReactionRoles,
         ILogger<RoleMenuAdminModule> logger)
@@ -41,6 +43,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
     {
         _discord = discord ?? throw new ArgumentNullException(nameof(discord));
         _administration = administration ?? throw new ArgumentNullException(nameof(administration));
+        _migration = migration ?? throw new ArgumentNullException(nameof(migration));
         _audit = audit ?? throw new ArgumentNullException(nameof(audit));
         _legacyReactionRoles = legacyReactionRoles
             ?? throw new ArgumentNullException(nameof(legacyReactionRoles));

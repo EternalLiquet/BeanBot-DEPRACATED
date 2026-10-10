@@ -33,7 +33,9 @@ internal static class LegacyReactionRoleRetirementPicker
         bool newer,
         Func<ulong, string?> channelName,
         Func<ulong, string?> roleName,
-        DateTime? nowUtc = null)
+        DateTime? nowUtc = null,
+        string? selectId = null,
+        Func<ulong, bool, ObjectId, string>? pageId = null)
     {
         ArgumentNullException.ThrowIfNull(fetched);
         ArgumentNullException.ThrowIfNull(channelName);
@@ -44,7 +46,7 @@ internal static class LegacyReactionRoleRetirementPicker
         if (page.Count > 0)
         {
             var selector = new SelectMenuBuilder()
-                .WithCustomId(Select(userId))
+                .WithCustomId(selectId ?? Select(userId))
                 .WithPlaceholder("Choose a legacy panel")
                 .WithMinValues(1)
                 .WithMaxValues(1);
@@ -88,15 +90,27 @@ internal static class LegacyReactionRoleRetirementPicker
         {
             if (newer ? fetched.Count > PageSize : requestCursor is not null)
             {
-                components.WithButton("Previous", Page(userId, true, page[0].Id),
+                components.WithButton("Previous", (pageId ?? Page)(userId, true, page[0].Id),
                     ButtonStyle.Secondary, row: 1);
             }
             if (newer ? requestCursor is not null : fetched.Count > PageSize)
             {
-                components.WithButton("Next", Page(userId, false, page[^1].Id),
+                components.WithButton("Next", (pageId ?? Page)(userId, false, page[^1].Id),
                     ButtonStyle.Secondary, row: 1);
             }
         }
         return components.Build();
     }
+}
+
+internal static class LegacyReactionRoleMigrationPicker
+{
+    internal const string SelectPattern = "rm:ms:*:*";
+    internal const string PagePattern = "rm:mp:*:*:*:*";
+
+    internal static string Select(ulong userId, Guid selectionId)
+        => $"rm:ms:{userId}:{selectionId:N}";
+
+    internal static string Page(ulong userId, Guid selectionId, bool newer, ObjectId cursor)
+        => $"rm:mp:{userId}:{selectionId:N}:{(newer ? "n" : "o")}:{cursor}";
 }

@@ -1,4 +1,5 @@
 using BeanBot.Persistence.Models;
+using Discord;
 using MongoDB.Bson;
 
 namespace BeanBot.Discord.RoleMenus;
@@ -28,6 +29,19 @@ internal sealed record RoleMenuDraft(
     string Description,
     IReadOnlyList<ulong> RoleIds,
     RoleMenuSelectionMode SelectionMode,
+    DateTimeOffset ExpiresAtUtc,
+    ulong? LegacyReactionRoleMessageId = null,
+    string? LegacySourceFingerprint = null);
+
+internal sealed record RoleMenuMigrationSelection(
+    Guid Id,
+    ulong GuildId,
+    ulong UserId,
+    ulong? TargetChannelId,
+    ulong? TargetChannelGuildId,
+    ChannelType? TargetChannelType,
+    string? Title,
+    string? Description,
     DateTimeOffset ExpiresAtUtc);
 
 internal sealed class RoleMenuDraftRegistry
@@ -41,6 +55,8 @@ internal sealed class RoleMenuDraftRegistry
     private readonly object _syncRoot = new();
     private readonly Dictionary<Guid, DraftEntry> _drafts = [];
     private readonly Dictionary<(ulong GuildId, ulong UserId), Guid> _draftByOwner = [];
+    private readonly Dictionary<Guid, RoleMenuMigrationSelection> _migrationSelections = [];
+    private readonly Dictionary<(ulong GuildId, ulong UserId), Guid> _selectionByOwner = [];
     private readonly TimeProvider _timeProvider;
     private readonly int _capacity;
     private readonly TimeSpan _lifetime;
@@ -67,6 +83,52 @@ internal sealed class RoleMenuDraftRegistry
         _editDraftRegistry = new RoleMenuEditDraftRegistry(timeProvider, capacity, lifetime);
     }
 
+    internal bool CreateMigrationSelection(
+        ulong guildId, ulong userId, ulong? targetChannelId,
+        ulong? targetChannelGuildId, ChannelType? targetChannelType,
+        string? title, string? description,
+        out RoleMenuMigrationSelection? selection)
+    {
+        lock (_syncRoot)
+        {
+            PurgeExpiredUnsafe();
+            var owner = (guildId, userId);
+            if (_selectionByOwner.Remove(owner, out var oldId))
+            {
+                _migrationSelections.Remove(oldId);
+            }
+            if (_migrationSelections.Count >= _capacity)
+            {
+                selection = null;
+                return false;
+            }
+            selection = new RoleMenuMigrationSelection(
+                Guid.NewGuid(), guildId, userId,
+                targetChannelId, targetChannelGuildId, targetChannelType,
+                title, description, _timeProvider.GetUtcNow().Add(_lifetime));
+            _migrationSelections.Add(selection.Id, selection);
+            _selectionByOwner.Add(owner, selection.Id);
+            return true;
+        }
+    }
+
+    internal bool TryGetMigrationSelection(
+        Guid id, ulong guildId, ulong userId,
+        out RoleMenuMigrationSelection? selection)
+    {
+        lock (_syncRoot)
+        {
+            PurgeExpiredUnsafe();
+            if (_migrationSelections.TryGetValue(id, out selection)
+                && selection.GuildId == guildId && selection.UserId == userId)
+            {
+                return true;
+            }
+            selection = null;
+            return false;
+        }
+    }
+
     internal RoleMenuDraftCreateStatus Create(
         ulong guildId,
         ulong userId,
@@ -75,6 +137,64 @@ internal sealed class RoleMenuDraftRegistry
         string description,
         IReadOnlyCollection<ulong> roleIds,
         RoleMenuSelectionMode selectionMode,
+        out RoleMenuDraft? draft)
+        => CreateCore(
+            guildId,
+            userId,
+            targetChannelId,
+            title,
+            description,
+            roleIds,
+            selectionMode,
+            ObjectId.GenerateNewId(),
+            legacyReactionRoleMessageId: null,
+            legacySourceFingerprint: null,
+            out draft);
+
+    internal RoleMenuDraftCreateStatus CreateMigration(
+        ulong guildId,
+        ulong userId,
+        ulong targetChannelId,
+        string title,
+        string description,
+        IReadOnlyCollection<ulong> roleIds,
+        ObjectId menuId,
+        ulong legacyReactionRoleMessageId,
+        string legacySourceFingerprint,
+        out RoleMenuDraft? draft)
+    {
+        if (menuId == ObjectId.Empty)
+        {
+            throw new ArgumentException("A deterministic menu ID is required.", nameof(menuId));
+        }
+
+        ArgumentOutOfRangeException.ThrowIfZero(legacyReactionRoleMessageId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(legacySourceFingerprint);
+        return CreateCore(
+            guildId,
+            userId,
+            targetChannelId,
+            title,
+            description,
+            roleIds,
+            RoleMenuSelectionMode.Multiple,
+            menuId,
+            legacyReactionRoleMessageId,
+            legacySourceFingerprint,
+            out draft);
+    }
+
+    private RoleMenuDraftCreateStatus CreateCore(
+        ulong guildId,
+        ulong userId,
+        ulong targetChannelId,
+        string title,
+        string description,
+        IReadOnlyCollection<ulong> roleIds,
+        RoleMenuSelectionMode selectionMode,
+        ObjectId menuId,
+        ulong? legacyReactionRoleMessageId,
+        string? legacySourceFingerprint,
         out RoleMenuDraft? draft)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
@@ -107,7 +227,7 @@ internal sealed class RoleMenuDraftRegistry
             var now = _timeProvider.GetUtcNow();
             draft = new RoleMenuDraft(
                 Guid.NewGuid(),
-                ObjectId.GenerateNewId(),
+                menuId,
                 guildId,
                 userId,
                 targetChannelId,
@@ -115,7 +235,9 @@ internal sealed class RoleMenuDraftRegistry
                 description,
                 [.. roleIds],
                 selectionMode,
-                now.Add(_lifetime));
+                now.Add(_lifetime),
+                legacyReactionRoleMessageId,
+                legacySourceFingerprint);
             _drafts[draft.Id] = new DraftEntry { Draft = draft };
             _draftByOwner[owner] = draft.Id;
             return RoleMenuDraftCreateStatus.Created;
@@ -251,6 +373,17 @@ internal sealed class RoleMenuDraftRegistry
     private void PurgeExpiredUnsafe()
     {
         var now = _timeProvider.GetUtcNow();
+        foreach (var selection in _migrationSelections.Values
+                     .Where(candidate => candidate.ExpiresAtUtc <= now).ToList())
+        {
+            _migrationSelections.Remove(selection.Id);
+            var owner = (selection.GuildId, selection.UserId);
+            if (_selectionByOwner.TryGetValue(owner, out var currentId)
+                && currentId == selection.Id)
+            {
+                _selectionByOwner.Remove(owner);
+            }
+        }
         foreach (var entry in _drafts.Values
                      .Where(candidate => !candidate.IsPublishing
                                          && candidate.Draft.ExpiresAtUtc <= now)

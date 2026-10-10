@@ -1,11 +1,37 @@
 using BeanBot.Discord.RoleMenus;
 using BeanBot.Persistence.Models;
+using Discord;
+using MongoDB.Bson;
 using Xunit;
 
 namespace BeanBot.Tests.Discord.RoleMenus;
 
 public class RoleMenuDraftRegistryTests
 {
+    [Fact]
+    public void MigrationSelection_CarriesCustomizationsAndRejectsStaleOrForeignControls()
+    {
+        var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
+        var registry = new RoleMenuDraftRegistry(clock, 1, TimeSpan.FromMinutes(10));
+        Assert.True(registry.CreateMigrationSelection(1, 2, 3, 1,
+            ChannelType.Text, "New title", "New description", out var first));
+        var selected = Assert.IsType<RoleMenuMigrationSelection>(first);
+        Assert.False(registry.TryGetMigrationSelection(selected.Id, 1, 9, out _));
+        Assert.False(registry.CreateMigrationSelection(1, 9, null, null, null,
+            null, null, out _));
+
+        Assert.True(registry.CreateMigrationSelection(1, 2, 4, 1,
+            ChannelType.Text, "Replacement", "Updated", out var second));
+        Assert.False(registry.TryGetMigrationSelection(selected.Id, 1, 2, out _));
+        Assert.True(registry.TryGetMigrationSelection(
+            Assert.IsType<RoleMenuMigrationSelection>(second).Id, 1, 2, out var current));
+        Assert.Equal(4UL, current?.TargetChannelId);
+        Assert.Equal("Replacement", current?.Title);
+        Assert.Equal("Updated", current?.Description);
+
+        clock.Advance(TimeSpan.FromMinutes(11));
+        Assert.False(registry.TryGetMigrationSelection(current!.Id, 1, 2, out _));
+    }
     [Fact]
     public void Create_ReplacesPriorDraftForSameGuildAndOwner()
     {
@@ -43,6 +69,69 @@ public class RoleMenuDraftRegistryTests
 
         Assert.Equal(RoleMenuDraftCreateStatus.CapacityReached, status);
         Assert.Null(draft);
+    }
+
+    [Fact]
+    public void CreateMigration_PreservesDeterministicIdentityAndMultipleMode()
+    {
+        var registry = CreateRegistry();
+        var menuId = ObjectId.GenerateNewId();
+
+        var status = registry.CreateMigration(
+            1UL,
+            2UL,
+            3UL,
+            "Games",
+            "Migrated roles",
+            [4UL, 5UL],
+            menuId,
+            777UL,
+            "source-binding",
+            out var created);
+
+        var draft = Assert.IsType<RoleMenuDraft>(created);
+        Assert.Equal(RoleMenuDraftCreateStatus.Created, status);
+        Assert.Equal(menuId, draft.MenuId);
+        Assert.Equal(777UL, draft.LegacyReactionRoleMessageId);
+        Assert.Equal("source-binding", draft.LegacySourceFingerprint);
+        Assert.Equal(RoleMenuSelectionMode.Multiple, draft.SelectionMode);
+        Assert.Equal([4UL, 5UL], draft.RoleIds);
+    }
+
+    [Fact]
+    public void CreateMigration_RejectsEmptyStableIdentityOrSourceBinding()
+    {
+        var registry = CreateRegistry();
+
+        Assert.Throws<ArgumentException>(() => registry.CreateMigration(
+            1, 2, 3, "Games", "", [4], ObjectId.Empty, 5, "binding", out _));
+        Assert.Throws<ArgumentOutOfRangeException>(() => registry.CreateMigration(
+            1, 2, 3, "Games", "", [4], ObjectId.GenerateNewId(), 0,
+            "binding", out _));
+        Assert.Throws<ArgumentException>(() => registry.CreateMigration(
+            1, 2, 3, "Games", "", [4], ObjectId.GenerateNewId(), 5,
+            "", out _));
+    }
+
+    [Fact]
+    public void SharedRegistry_StillOwnsEditDraftLifecycle()
+    {
+        var registry = CreateRegistry();
+        var status = registry.CreateEdit(ObjectId.GenerateNewId(), 1, 2,
+            "Games", "", [4], RoleMenuSelectionMode.Multiple, out var created);
+        var draft = Assert.IsType<RoleMenuEditDraft>(created);
+
+        Assert.Equal(RoleMenuEditDraftCreateStatus.Created, status);
+        Assert.Equal(RoleMenuEditDraftAccessStatus.Acquired,
+            registry.TryGetEdit(draft.Id, 1, 2, out _));
+        Assert.Equal(RoleMenuEditDraftAccessStatus.Acquired,
+            registry.TryBeginEdit(draft.Id, 1, 2, out _));
+        registry.ReleaseEdit(draft.Id, 1, 2);
+        Assert.Equal(RoleMenuEditDraftAccessStatus.Acquired,
+            registry.TryBeginEdit(draft.Id, 1, 2, out _));
+        registry.CompleteEdit(draft.Id, 1, 2);
+        Assert.Equal(RoleMenuEditDraftAccessStatus.NotFound,
+            registry.TryGetEdit(draft.Id, 1, 2, out _));
     }
 
     [Fact]

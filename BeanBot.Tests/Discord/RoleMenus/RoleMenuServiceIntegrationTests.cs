@@ -262,6 +262,23 @@ public class RoleMenuServiceIntegrationTests
     }
 
     [Fact]
+    public async Task Edit_MigratedMenuKeepsSourceProvenanceForRepeatSafety()
+    {
+        var fixture = new Fixture();
+        fixture.Settings = new RoleMenuSettings(
+            fixture.Settings.Id, "1", "4", "5", "Roles", "",
+            ["10", "11"], RoleMenuSelectionMode.Multiple, "987654321");
+        fixture.Store.Settings = fixture.Settings;
+        var draft = PrepareEdit(fixture);
+
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("Edited", "", "multiple", [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.Updated, result.Status);
+        Assert.Equal("987654321", fixture.Store.Settings?.MigratedFromReactionRoleMessageId);
+    }
+
+    [Fact]
     public async Task Edit_PanelModifyReturnsMissingAfterSave()
     {
         var fixture = new Fixture

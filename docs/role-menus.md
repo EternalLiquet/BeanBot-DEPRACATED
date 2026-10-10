@@ -4,7 +4,7 @@ BeanBot can publish persistent Discord panels that let members add or remove an 
 
 ## Requirements
 
-The administrator running `/role-menu create`, `/role-menu edit`, `/role-menu audit`, `/role-menu delete`, or `/role-menu retire-legacy` must:
+The administrator running `/role-menu create`, `/role-menu migrate`, `/role-menu edit`, `/role-menu audit`, `/role-menu delete`, or `/role-menu retire-legacy` must:
 
 - run the command in a server, not a direct message;
 - have the server-level **Manage Roles** permission; and
@@ -29,6 +29,20 @@ The preview expires after 10 minutes. BeanBot holds at most 64 previews at once 
 
 Each public panel contains a stable **Choose your roles** button. The footer shows only the selection mode; internal menu IDs stay in component data rather than appearing on new public panels. Panels published before this change keep working. BeanBot doesn't sweep old messages at startup, so their old footer stays until a later edit or repair flow rewrites the panel. Saved settings include the server, channel, message, title, description, allowlisted role IDs, selection mode, and UTC timestamps, so published panels continue to work after BeanBot restarts.
 
+## Migrate a legacy reaction-role panel
+
+Run `/role-menu migrate` to choose a saved legacy panel from a private list of up to 25 per page. The list uses readable channel and role names and relative posting ages. Optional `target-channel`, `title`, and `description` values follow your selection through the preview. If a panel has no readable title, rerun the command with a visible `title` and choose the panel again. This is one panel at a time; BeanBot does not bulk-convert legacy settings.
+
+After you choose a panel, BeanBot looks up its exact saved reaction-role record and positively identifies the current Discord message as a BeanBot legacy `Role Group:` panel before offering a private preview. When the legacy footer contains a usable role-group label, BeanBot suggests it as the new menu title. You may supply a replacement `title`, optional `description`, and optional `target-channel` directly on the command. If no target is supplied, the replacement defaults to the legacy panel's channel.
+
+Legacy reaction-role behavior maps to a **multiple-selection** role menu: the persisted role allowlist is preserved, while the old emoji IDs are intentionally discarded because dropdown role menus no longer use reaction emoji as controls. The preview shows the exact legacy source message, roles, target channel, and retirement warning before anything is published.
+
+Selecting **Publish migration** performs the safety checks again from current state. BeanBot reloads the persisted legacy configuration and source message, revalidates administrator and bot hierarchy, verifies the exact saved source binding has not changed since the preview, and checks target-channel permissions before using the normal role-menu publication workflow. If any of that state changed, publication stops and the administrator is asked to create a fresh preview.
+
+Migration uses a deterministic role-menu ID derived from the server and legacy source message and stores the source message ID with the new menu. This provenance makes rerunning the same migration idempotent across restarts and serializes concurrent confirmations through the normal per-menu lifecycle lock. If Discord or MongoDB returns an ambiguous publication result, BeanBot does not blindly retry the write; inspect the target channel and persisted role-menu state, then rerun the migration for the same source so the stable identity can reconcile the result rather than creating a second saved replacement.
+
+Migration **does not delete, disable, or edit the legacy reaction-role message or its saved configuration**. Verify the new dropdown panel first, then deliberately retire the old panel through the existing legacy administration workflow. Until you do, both controls may remain active.
+
 ## Edit a published panel
 
 Run `/role-menu edit` to choose from every saved menu in a private, paginated list. Each page shows up to 25 menus.
@@ -40,7 +54,7 @@ BeanBot first shows the menu's current title, description, roles, and selection 
 - 1–25 self-assignable roles; and
 - multiple- or single-selection mode.
 
-Editing is intentionally in place. BeanBot keeps the same saved menu ID, server, channel, public message, and original creation timestamp. Moving a panel to another channel is not supported by edit; delete and recreate the panel when its location must change.
+Editing is intentionally in place. BeanBot keeps the same saved menu ID, server, channel, public message, original creation timestamp, and migration provenance when present. Moving a panel to another channel is not supported by edit; delete and recreate the panel when its location must change.
 
 When the form is submitted, BeanBot reloads the saved menu, confirms it still matches the values shown in the preview, and rechecks the administrator permission, current role existence and hierarchy, BeanBot's role permissions, channel permissions, and the exact public message identity. The edit runs under the same exclusive per-menu write coordination used by publication and deletion, so it cannot race a member role mutation or another menu-level write. Member submissions also reload persisted settings before any role change, so a selector opened before an edit cannot grant a role that the edited menu no longer allows.
 
@@ -119,9 +133,10 @@ Use a test server with BeanBot's role below one test role and above two other te
 10. Delete one panel through **Apps → Delete Role Menu** and another through `/role-menu delete`, then confirm their old controls cannot mutate roles. Confirm neither panel nor the publication and deletion replies show an internal ID.
 11. Temporarily remove BeanBot's hierarchy or permissions and confirm operations fail privately without exposing exception details or changing unrelated roles; audit reports **Broken** for a positively verified permission failure.
 12. Use an existing legacy reaction-role panel and confirm its reactions still add and remove roles exactly as before.
-13. Run `/role-menu retire-legacy`, page past 25 panels if available, review the private preview, and cancel once. Confirm nothing changes.
-14. Confirm retirement removes only the selected panel and saved settings while members keep their roles. Repeat with a missing panel and confirm stale settings are removed.
-15. Change the saved panel or remove **Manage Roles** between preview and confirmation; verify deletion stops.
+13. Run `/role-menu migrate`, choose a saved legacy panel, and review the private multiple-selection preview. Publish it in a test server and verify the source panel and existing member roles remain unchanged. Repeat migration and verify it reports the existing menu.
+14. Run `/role-menu retire-legacy`, page past 25 panels if available, review the private preview, and cancel once. Confirm nothing changes.
+15. Confirm retirement removes only the selected panel and saved settings while members keep their roles. Repeat with a missing panel and confirm stale settings are removed.
+16. Change the saved panel or remove **Manage Roles** between preview and confirmation; verify deletion stops.
 
 ## Wording
 
@@ -131,7 +146,7 @@ Role-menu text follows the customer-facing text standard in `AGENTS.md`. Members
 
 `RoleMenuAdminModule`, `RoleMenuMessageCommandModule` and `RoleMenuMemberModule` validate Discord control bindings and acknowledge interactions before starting work. Their shared `RoleMenuModuleBase` handles private responses, mention suppression, and acknowledgement reconciliation.
 
-`RoleMenuAdministrationService` prepares drafts and connects publication, editing, and deletion to persistence. `RoleMenuAuditService` performs bounded read-only health checks against saved role menus and current Discord state. `RoleMenuMemberService` loads selectors and applies member choices through the mutation coordinator. These services take IDs and submitted values, without an interaction context. Each member operation keeps its own Discord member reference, so concurrent requests cannot share a mutation target.
+`RoleMenuAdministrationService` prepares drafts and connects publication, editing, and deletion to persistence. `RoleMenuMigrationService` performs one-source migration through shared publication. `RoleMenuAuditService` performs bounded read-only health checks against saved role menus and current Discord state. `RoleMenuMemberService` loads selectors and applies member choices through the mutation coordinator. These services take IDs and submitted values, without an interaction context. Each member operation keeps its own Discord member reference, so concurrent requests cannot share a mutation target.
 
 `DiscordRoleMenuClient` contains native role-menu REST reads and mutations. `LegacyReactionRoleRetirementClient` handles exact legacy source reads and deletion; its workflow coordinates with `ReactionRoleService` so a retired setting cannot be restored from cache. `RoleMenuSetupValidation` and `RoleMenuPresentation` keep validation and result text separate from transport. The publication, deletion, and member workflows retain their independently tested rules for ambiguous outcomes, rollback, final-state reconciliation, and cancellation. `RoleMenuInteractionService` supplies the shared bounded execution, draft, persistence, and lock operations used by those entry points.
 

@@ -298,7 +298,8 @@ public sealed class RoleMenuAdministrationService
             title,
             description,
             request.RoleIds!.Select(roleId => roleId.ToString(CultureInfo.InvariantCulture)),
-            selectionMode)
+            selectionMode,
+            settings.MigratedFromReactionRoleMessageId)
         {
             CreatedAtUtc = settings.CreatedAtUtc
         };
