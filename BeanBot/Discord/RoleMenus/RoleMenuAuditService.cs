@@ -37,8 +37,15 @@ internal sealed record RoleMenuAuditOperations(
 public sealed class RoleMenuAuditService
 {
     internal static readonly TimeSpan LookupTimeout = TimeSpan.FromSeconds(5);
+    internal const int MaximumOwnedReads = 32;
 
+    private readonly object _gate = new();
+    private readonly HashSet<OwnedRead> _ownedReads = [];
     private readonly RoleMenuAuditOperations _operations;
+    private readonly TimeSpan _lookupTimeout;
+    private readonly int _maximumOwnedReads;
+    private readonly Action<CancellationTokenSource, TimeSpan> _scheduleTimeout;
+    private int _observedLateFaults;
 
     public RoleMenuAuditService(
         RoleMenuInteractionService roleMenus,
@@ -65,9 +72,52 @@ public sealed class RoleMenuAuditService
         ArgumentNullException.ThrowIfNull(discord);
     }
 
-    internal RoleMenuAuditService(RoleMenuAuditOperations operations)
+    internal RoleMenuAuditService(
+        RoleMenuAuditOperations operations,
+        TimeSpan? lookupTimeout = null,
+        Action<CancellationTokenSource, TimeSpan>? scheduleTimeout = null,
+        int maximumOwnedReads = MaximumOwnedReads)
     {
         _operations = operations ?? throw new ArgumentNullException(nameof(operations));
+        _lookupTimeout = lookupTimeout ?? LookupTimeout;
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(_lookupTimeout, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maximumOwnedReads, 1);
+        _maximumOwnedReads = maximumOwnedReads;
+        _scheduleTimeout = scheduleTimeout ?? ((cancellation, timeout) => cancellation.CancelAfter(timeout));
+    }
+
+    internal int OwnedReadCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _ownedReads.Count;
+            }
+        }
+    }
+
+    internal bool HasPendingOperations => OwnedReadCount > 0;
+
+    internal int ObservedLateFaultCount => Volatile.Read(ref _observedLateFaults);
+
+    internal async Task WaitForOwnedReadsAsync(CancellationToken cancellationToken = default)
+    {
+        while (true)
+        {
+            Task[] completions;
+            lock (_gate)
+            {
+                if (_ownedReads.Count == 0)
+                {
+                    return;
+                }
+
+                completions = [.. _ownedReads.Select(read => read.Completion.Task)];
+            }
+
+            await Task.WhenAll(completions).WaitAsync(cancellationToken);
+        }
     }
 
     internal async Task<RoleMenuAuditBatchResult> AuditAsync(
@@ -88,7 +138,7 @@ public sealed class RoleMenuAuditService
             if (!read.Succeeded)
             {
                 return new RoleMenuAuditBatchResult(
-                    [Unknown(menuId, "Saved configuration could not be read.")],
+                    [Unknown(menuId, "I couldn't read this menu right now.")],
                     PersistenceUnavailable: true);
             }
 
@@ -131,7 +181,7 @@ public sealed class RoleMenuAuditService
                 boundedSettings
                     .Select(menu => Unknown(
                         menu.Id,
-                        "Bean Bot's current server role state could not be verified."))
+                        "I couldn't check my current roles."))
                     .ToList(),
                 hasMore);
         }
@@ -156,16 +206,14 @@ public sealed class RoleMenuAuditService
         IGuildUser bot,
         CancellationToken cancellationToken)
     {
-        if (!RoleMenuSettingsParser.TryParse(settings, out var parsed, out var settingsIssue))
+        if (!RoleMenuSettingsParser.TryParse(settings, out var parsed, out _))
         {
-            return Broken(
-                settings.Id,
-                $"Saved configuration is invalid ({settingsIssue}).");
+            return Broken(settings.Id, "I can't read this menu's details.");
         }
 
         if (parsed.GuildId != guildId)
         {
-            return Broken(settings.Id, "Saved configuration belongs to a different server.");
+            return Broken(settings.Id, "This menu points to another server.");
         }
 
         RoleMenuRoleValidationResult roleValidation;
@@ -175,7 +223,7 @@ public sealed class RoleMenuAuditService
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
-            return Unknown(settings.Id, "Current role state could not be verified.");
+            return Unknown(settings.Id, "I couldn't check the menu's roles.");
         }
 
         if (!roleValidation.IsValid)
@@ -188,12 +236,12 @@ public sealed class RoleMenuAuditService
             cancellationToken);
         if (!channelRead.Succeeded)
         {
-            return Unknown(settings.Id, "Target channel state could not be verified.");
+            return Unknown(settings.Id, "I couldn't check the menu's channel.");
         }
 
         if (channelRead.Value is null)
         {
-            return Broken(settings.Id, "Target text channel is missing or no longer valid.");
+            return Broken(settings.Id, "I couldn't find the menu's text channel.");
         }
 
         string? permissionFailure;
@@ -203,7 +251,7 @@ public sealed class RoleMenuAuditService
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
-            return Unknown(settings.Id, "Target channel permissions could not be verified.");
+            return Unknown(settings.Id, "I couldn't check permissions in the menu's channel.");
         }
 
         if (permissionFailure is not null)
@@ -221,12 +269,12 @@ public sealed class RoleMenuAuditService
             cancellationToken);
         if (!panelRead.Succeeded)
         {
-            return Unknown(settings.Id, "Published panel state could not be verified.");
+            return Unknown(settings.Id, "I couldn't check the menu message.");
         }
 
         if (panelRead.Value is null)
         {
-            return Broken(settings.Id, "Published panel message is missing.");
+            return Broken(settings.Id, "I couldn't find the menu message.");
         }
 
         var panelIssue = RoleMenuPanelContextValidator.Validate(
@@ -245,18 +293,58 @@ public sealed class RoleMenuAuditService
         return new RoleMenuAuditItem(
             settings.Id,
             RoleMenuAuditStatus.Healthy,
-            "Panel, roles, and required permissions were verified.");
+            "I checked the menu message, roles, and permissions.");
     }
 
-    private static async Task<ReadResult<T>> TryReadAsync<T>(
+    private async Task<ReadResult<T>> TryReadAsync<T>(
         Func<CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken)
     {
-        using var lookupCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        lookupCancellation.CancelAfter(LookupTimeout);
+        cancellationToken.ThrowIfCancellationRequested();
+        var lookupCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        OwnedRead? owner;
+        lock (_gate)
+        {
+            owner = _ownedReads.Count < _maximumOwnedReads
+                ? new OwnedRead(lookupCancellation)
+                : null;
+            if (owner is not null)
+            {
+                _ownedReads.Add(owner);
+            }
+        }
+
+        if (owner is null)
+        {
+            lookupCancellation.Dispose();
+            cancellationToken.ThrowIfCancellationRequested();
+            return new ReadResult<T>(false, default);
+        }
+
         try
         {
-            return new ReadResult<T>(true, await operation(lookupCancellation.Token));
+            _scheduleTimeout(lookupCancellation, _lookupTimeout);
+            lookupCancellation.Token.ThrowIfCancellationRequested();
+            var readTask = operation(lookupCancellation.Token)
+                ?? throw new InvalidOperationException("An audit lookup returned no task.");
+            Volatile.Write(ref owner.ReadTaskStarted, 1);
+            _ = readTask.ContinueWith(
+                completed => CompleteRead(owner, completed),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            try
+            {
+                var value = await readTask.WaitAsync(lookupCancellation.Token);
+                return lookupCancellation.IsCancellationRequested
+                    ? new ReadResult<T>(false, default)
+                    : new ReadResult<T>(true, value);
+            }
+            catch
+            {
+                Volatile.Write(ref owner.WaiterDetached, 1);
+                throw;
+            }
         }
         catch (OperationCanceledException)
             when (!cancellationToken.IsCancellationRequested && lookupCancellation.IsCancellationRequested)
@@ -267,32 +355,94 @@ public sealed class RoleMenuAuditService
         {
             return new ReadResult<T>(false, default);
         }
+        finally
+        {
+            if (owner.ReadTaskStarted == 0)
+            {
+                CompleteRead(owner, null);
+            }
+
+            owner.MarkWaiterDone();
+        }
+    }
+
+    private void CompleteRead(OwnedRead owner, Task? completedTask)
+    {
+        if (completedTask?.IsFaulted == true)
+        {
+            _ = completedTask.Exception;
+            if (Volatile.Read(ref owner.WaiterDetached) != 0)
+            {
+                Interlocked.Increment(ref _observedLateFaults);
+            }
+        }
+
+        lock (_gate)
+        {
+            _ownedReads.Remove(owner);
+        }
+
+        owner.Completion.TrySetResult();
+        owner.MarkReadDone();
+    }
+
+    private sealed class OwnedRead(CancellationTokenSource cancellation)
+    {
+        private int _readDone;
+        private int _waiterDone;
+        private int _disposed;
+
+        internal TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal int ReadTaskStarted;
+        internal int WaiterDetached;
+
+        internal void MarkReadDone()
+        {
+            Volatile.Write(ref _readDone, 1);
+            TryDispose();
+        }
+
+        internal void MarkWaiterDone()
+        {
+            Volatile.Write(ref _waiterDone, 1);
+            TryDispose();
+        }
+
+        private void TryDispose()
+        {
+            if (Volatile.Read(ref _readDone) != 0 &&
+                Volatile.Read(ref _waiterDone) != 0 &&
+                Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                cancellation.Dispose();
+            }
+        }
     }
 
     private static string FormatRoleIssue(RoleMenuRoleIssue issue)
         => issue.Kind switch
         {
             RoleMenuRoleIssueKind.BotMissingManageRoles =>
-                "Bean Bot no longer has the Manage Roles permission.",
-            RoleMenuRoleIssueKind.Missing => "A configured role was deleted.",
-            RoleMenuRoleIssueKind.Everyone => "The menu contains the @everyone role.",
-            RoleMenuRoleIssueKind.Managed => "A configured role is now managed by Discord or an integration.",
+                "I need the Manage Roles permission to serve this menu.",
+            RoleMenuRoleIssueKind.Missing => "One of this menu's roles was deleted.",
+            RoleMenuRoleIssueKind.Everyone => "I can't give members the @everyone role.",
+            RoleMenuRoleIssueKind.Managed => "I can't give members a role managed by Discord or an integration.",
             RoleMenuRoleIssueKind.BotHierarchy =>
-                "A configured role is now at or above Bean Bot's highest role.",
-            RoleMenuRoleIssueKind.Duplicate => "The saved menu contains a duplicate role.",
-            _ => "A configured role is no longer assignable by Bean Bot."
+                "One of this menu's roles is at or above my highest role.",
+            RoleMenuRoleIssueKind.Duplicate => "This menu lists the same role twice.",
+            _ => "I can't give members one of this menu's roles."
         };
 
     private static string FormatPanelIssue(RoleMenuPanelContextIssue issue)
         => issue switch
         {
-            RoleMenuPanelContextIssue.GuildMismatch => "Published panel points at the wrong server.",
-            RoleMenuPanelContextIssue.ChannelMismatch => "Published panel points at the wrong channel.",
-            RoleMenuPanelContextIssue.MessageMismatch => "Published panel points at the wrong message.",
-            RoleMenuPanelContextIssue.UnexpectedAuthor => "Referenced message was not authored by Bean Bot.",
+            RoleMenuPanelContextIssue.GuildMismatch => "This menu message points to another server.",
+            RoleMenuPanelContextIssue.ChannelMismatch => "This menu message points to another channel.",
+            RoleMenuPanelContextIssue.MessageMismatch => "This menu points to another message.",
+            RoleMenuPanelContextIssue.UnexpectedAuthor => "I didn't post this menu message.",
             RoleMenuPanelContextIssue.MissingManageButton =>
-                "Referenced message no longer contains this menu's Manage Roles button.",
-            _ => "Published panel identity is invalid."
+                "I couldn't find this menu's Manage Roles button on its message.",
+            _ => "I couldn't match this message to the menu."
         };
 
     private static RoleMenuAuditItem Broken(ObjectId menuId, string reason)
@@ -311,25 +461,32 @@ internal static class RoleMenuAuditPresentation
         ArgumentNullException.ThrowIfNull(result);
         if (result.RequestedMenuNotFound)
         {
-            return "No saved role menu with that ID exists in this server.";
+            return "I couldn't find that role menu in this server. Check the ID in its footer and try again.";
         }
 
         if (result.PersistenceUnavailable && result.Items.Count == 0)
         {
-            return "**Unknown** — Bean Bot could not read the saved role-menu configuration. " +
-                   "No Discord state was changed.";
+            return "**Unknown** — I couldn't check your role menus right now. " +
+                   "Try `/role-menu audit` again in a moment.";
         }
 
         if (requestedMenuId is not null && result.Items.Count == 1)
         {
             var item = result.Items[0];
-            return $"**{item.Status}** — `{item.MenuId}`\n{item.Reason}\n\n" +
-                   "Audit is read-only; no Discord or saved role-menu state was changed.";
+            var nextStep = item.Status switch
+            {
+                RoleMenuAuditStatus.Healthy => string.Empty,
+                RoleMenuAuditStatus.Broken =>
+                    "\nFix the issue, then run this audit again. If you no longer need this menu, " +
+                    $"run `/role-menu delete menu-id:{item.MenuId}`.",
+                _ => "\nTry this audit again in a moment. Don't delete the menu based on this result."
+            };
+            return $"**{item.Status}** — `{item.MenuId}`\n{item.Reason}{nextStep}";
         }
 
         if (result.Items.Count == 0)
         {
-            return "This server has no saved dropdown role menus.";
+            return "I couldn't find any role menus in this server.";
         }
 
         var healthy = result.Items.Count(item => item.Status == RoleMenuAuditStatus.Healthy);
@@ -337,7 +494,9 @@ internal static class RoleMenuAuditPresentation
         var unknown = result.Items.Count(item => item.Status == RoleMenuAuditStatus.Unknown);
         var lines = new List<string>
         {
-            $"Role-menu audit: **{healthy} Healthy**, **{broken} Broken**, **{unknown} Unknown**."
+            $"I checked {result.Items.Count} role menus: **{healthy} Healthy**, " +
+            $"**{broken} Broken**, **{unknown} Unknown**. Fix Broken menus and audit them again; " +
+            "retry Unknown menus later."
         };
         foreach (var item in result.Items)
         {
@@ -350,10 +509,10 @@ internal static class RoleMenuAuditPresentation
         if (result.HasMore)
         {
             lines.Add(
-                "Only the 25 newest menus were audited. Audit an older panel by passing its footer ID.");
+                "I checked only the 25 newest menus. For an older menu, copy its footer ID " +
+                "into `/role-menu audit menu-id:<id>`.");
         }
 
-        lines.Add("Read-only audit: no Discord or saved state was changed.");
         return RoleMenuPresentation.BoundResponseContent(string.Join('\n', lines));
     }
 }

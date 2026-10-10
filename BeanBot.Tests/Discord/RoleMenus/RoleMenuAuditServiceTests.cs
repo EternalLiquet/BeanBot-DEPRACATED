@@ -88,7 +88,7 @@ public class RoleMenuAuditServiceTests
 
         var item = Assert.Single(result.Items);
         Assert.Equal(RoleMenuAuditStatus.Broken, item.Status);
-        Assert.Contains("authored", item.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("didn't post", item.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -107,6 +107,30 @@ public class RoleMenuAuditServiceTests
         Assert.Equal(RoleMenuAuditStatus.Broken, item.Status);
         Assert.Contains("deleted", item.Reason, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, fixture.ChannelReads);
+    }
+
+    [Fact]
+    public async Task AuditSpecific_InvalidSavedDetails_HidesParserNames()
+    {
+        var fixture = new Fixture();
+        var original = fixture.Settings[0];
+        fixture.Settings[0] = new RoleMenuSettings(
+            original.Id,
+            original.GuildId,
+            original.ChannelId,
+            original.MessageId,
+            original.Title,
+            original.Description,
+            ["invalid-role-id"],
+            original.SelectionMode);
+
+        var result = await fixture.AuditFirstAsync();
+        var content = RoleMenuAuditPresentation.Format(result, fixture.Settings[0].Id);
+
+        Assert.Equal(RoleMenuAuditStatus.Broken, Assert.Single(result.Items).Status);
+        Assert.DoesNotContain("InvalidRoleId", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("Saved configuration", content, StringComparison.Ordinal);
+        Assert.Contains("run this audit again", content, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
@@ -175,6 +199,130 @@ public class RoleMenuAuditServiceTests
             result.Items.Single(item => item.MenuId != firstMenuId).Status);
         Assert.Equal(2, fixture.ChannelReads);
         Assert.Equal(1, fixture.PanelReads);
+    }
+
+    [Fact]
+    public async Task AuditSpecific_IgnoredLookupCancellation_ReturnsUnknownWithoutWaitingForLateRead()
+    {
+        var fixture = new Fixture();
+        var readStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lateRead = new TaskCompletionSource<ITextChannel?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.ChannelReader = (_, _, _) =>
+        {
+            readStarted.TrySetResult();
+            return lateRead.Task;
+        };
+        CancellationTokenSource? channelTimeout = null;
+        var scheduled = 0;
+        var auditService = new RoleMenuAuditService(
+            fixture.Operations,
+            TimeSpan.FromSeconds(30),
+            (cancellation, _) =>
+            {
+                if (Interlocked.Increment(ref scheduled) == 3)
+                {
+                    channelTimeout = cancellation;
+                }
+            });
+
+        var audit = auditService.AuditAsync(Fixture.GuildId, Fixture.BotId, fixture.Settings[0].Id, CancellationToken.None);
+        try
+        {
+            await readStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.NotNull(channelTimeout);
+            channelTimeout.Cancel();
+
+            var item = Assert.Single((await audit.WaitAsync(TimeSpan.FromSeconds(1))).Items);
+            Assert.Equal(RoleMenuAuditStatus.Unknown, item.Status);
+            Assert.Equal(1, auditService.OwnedReadCount);
+        }
+        finally
+        {
+            lateRead.TrySetResult(fixture.Channel);
+        }
+
+        await auditService.WaitForOwnedReadsAsync().WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal(0, auditService.OwnedReadCount);
+    }
+
+    [Fact]
+    public async Task AuditSpecific_ParentCancellation_StopsWaitingForUncooperativeRead()
+    {
+        var fixture = new Fixture();
+        var readStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lateRead = new TaskCompletionSource<ITextChannel?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.ChannelReader = (_, _, _) =>
+        {
+            readStarted.TrySetResult();
+            return lateRead.Task;
+        };
+        using var cancellation = new CancellationTokenSource();
+        var audit = fixture.Service.AuditAsync(Fixture.GuildId, Fixture.BotId, fixture.Settings[0].Id, cancellation.Token);
+        try
+        {
+            await readStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            cancellation.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => audit.WaitAsync(TimeSpan.FromSeconds(1)));
+            Assert.Equal(1, fixture.Service.OwnedReadCount);
+        }
+        finally
+        {
+            lateRead.TrySetResult(fixture.Channel);
+        }
+
+        await fixture.Service.WaitForOwnedReadsAsync().WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal(0, fixture.Service.OwnedReadCount);
+    }
+
+    [Fact]
+    public async Task AuditSpecific_LateFaultIsObservedAndCapacityRecovers()
+    {
+        var fixture = new Fixture();
+        var lateRead = new TaskCompletionSource<ITextChannel?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var channelReads = 0;
+        fixture.ChannelReader = (_, _, _) =>
+        {
+            channelReads++;
+            return channelReads == 1
+                ? lateRead.Task
+                : Task.FromResult<ITextChannel?>(fixture.Channel);
+        };
+        CancellationTokenSource? channelTimeout = null;
+        var scheduled = 0;
+        var auditService = new RoleMenuAuditService(
+            fixture.Operations,
+            TimeSpan.FromSeconds(30),
+            (cancellation, _) =>
+            {
+                if (Interlocked.Increment(ref scheduled) == 3)
+                {
+                    channelTimeout = cancellation;
+                }
+            },
+            maximumOwnedReads: 1);
+
+        var first = auditService.AuditAsync(Fixture.GuildId, Fixture.BotId, fixture.Settings[0].Id, CancellationToken.None);
+        Assert.NotNull(channelTimeout);
+        channelTimeout.Cancel();
+        Assert.Equal(RoleMenuAuditStatus.Unknown, Assert.Single((await first).Items).Status);
+        Assert.True(auditService.HasPendingOperations);
+
+        var saturated = await auditService.AuditAsync(
+            Fixture.GuildId, Fixture.BotId, fixture.Settings[0].Id, CancellationToken.None);
+        Assert.True(saturated.PersistenceUnavailable);
+        Assert.Equal(1, channelReads);
+
+        lateRead.SetException(new InvalidOperationException("late Discord read failed"));
+        await auditService.WaitForOwnedReadsAsync().WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal(1, auditService.ObservedLateFaultCount);
+        Assert.False(auditService.HasPendingOperations);
+
+        var recovered = await auditService.AuditAsync(
+            Fixture.GuildId, Fixture.BotId, fixture.Settings[0].Id, CancellationToken.None);
+        Assert.Equal(RoleMenuAuditStatus.Healthy, Assert.Single(recovered.Items).Status);
+        Assert.Equal(2, channelReads);
     }
 
     [Fact]
@@ -274,6 +422,20 @@ public class RoleMenuAuditServiceTests
         Assert.Contains("25 newest", content, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Presentation_UnknownGivesPlainRetryStepWithoutReassurance()
+    {
+        var menuId = ObjectId.GenerateNewId();
+        var content = RoleMenuAuditPresentation.Format(
+            new RoleMenuAuditBatchResult(
+                [new RoleMenuAuditItem(menuId, RoleMenuAuditStatus.Unknown, "I couldn't check the menu message.")]),
+            menuId);
+
+        Assert.Contains("Try this audit again", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("no Discord", content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("saved role-menu state", content, StringComparison.OrdinalIgnoreCase);
+    }
+
     private sealed class Fixture
     {
         internal const ulong GuildId = 1UL;
@@ -320,7 +482,7 @@ public class RoleMenuAuditServiceTests
                 return Task.FromResult<ITextChannel?>(Channel);
             };
 
-            Service = new RoleMenuAuditService(new RoleMenuAuditOperations(
+            Operations = new RoleMenuAuditOperations(
                 (menuId, guildId, cancellationToken) =>
                     SettingsReader(menuId, guildId, cancellationToken),
                 (guildId, maximumResults, cancellationToken) =>
@@ -342,10 +504,12 @@ public class RoleMenuAuditServiceTests
                     var settings = Settings.Single(item => item.Id == menuId);
                     Assert.Equal(ulong.Parse(settings.MessageId, CultureInfo.InvariantCulture), messageId);
                     return Task.FromResult(PanelFactory(settings));
-                }));
+                });
+            Service = new RoleMenuAuditService(Operations);
         }
 
         internal RoleMenuAuditService Service { get; }
+        internal RoleMenuAuditOperations Operations { get; }
         internal List<RoleMenuSettings> Settings { get; }
         internal ITextChannel? Channel { get; set; }
         internal RoleMenuPanelSnapshot? Panel
