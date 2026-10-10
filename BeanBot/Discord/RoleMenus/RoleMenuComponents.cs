@@ -1,5 +1,6 @@
 using System.Globalization;
 using BeanBot.Persistence.Models;
+using BeanBot.Persistence.Repositories;
 using Discord;
 using MongoDB.Bson;
 
@@ -136,11 +137,63 @@ internal static class RoleMenuComponents
             conflictingSingleSelection);
     }
 
+    internal static Embed BuildEditSummaryEmbed(RoleMenuEditDraft draft)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+        var roleMentions = string.Join(
+            " ",
+            draft.RoleIds.Select(roleId =>
+                $"<@&{roleId.ToString(CultureInfo.InvariantCulture)}>"));
+        var mode = draft.SelectionMode == RoleMenuSelectionMode.Exclusive
+            ? "Single selection"
+            : "Multiple selection";
+        return new EmbedBuilder()
+            .WithTitle(draft.Title)
+            .WithDescription(string.IsNullOrWhiteSpace(draft.Description)
+                ? DefaultDescription
+                : draft.Description)
+            .AddField("Roles", roleMentions)
+            .AddField("Mode", mode, inline: true)
+            .WithFooter("Current values • Only you can see this")
+            .Build();
+    }
+
+    internal static MessageComponent BuildEditOpenComponents(Guid draftId)
+        => new ComponentBuilder()
+            .WithButton(
+                "Edit values",
+                RoleMenuCustomIds.EditOpen(draftId),
+                ButtonStyle.Primary)
+            .Build();
+
+    internal static MessageComponent BuildEditSelector(
+        ulong userId,
+        RoleMenuDeletionPage page,
+        Func<ulong, string?> getChannelName,
+        DateTime? nowUtc = null)
+        => BuildManagementSelector(
+            page, getChannelName, RoleMenuCustomIds.EditSelect(userId),
+            cursor => RoleMenuCustomIds.EditPage(userId, cursor),
+            "Choose a role menu to edit", nowUtc);
+
     internal static MessageComponent BuildDeleteSelector(
         ulong userId,
         RoleMenuDeletionPage page,
         Func<ulong, string?> getChannelName,
         DateTime? nowUtc = null)
+        => BuildManagementSelector(
+            page, getChannelName, RoleMenuCustomIds.DeleteSelect(userId),
+            cursor => RoleMenuCustomIds.DeletePage(userId, cursor),
+            "Choose a role menu", nowUtc, RoleMenuCustomIds.DeleteCancel(userId));
+
+    private static MessageComponent BuildManagementSelector(
+        RoleMenuDeletionPage page,
+        Func<ulong, string?> getChannelName,
+        string selectId,
+        Func<RoleMenuPageCursor, string> pageId,
+        string placeholder,
+        DateTime? nowUtc,
+        string? cancelId = null)
     {
         ArgumentNullException.ThrowIfNull(page);
         ArgumentNullException.ThrowIfNull(getChannelName);
@@ -149,8 +202,8 @@ internal static class RoleMenuComponents
         if (page.Menus.Count > 0)
         {
             var selector = new SelectMenuBuilder()
-                .WithCustomId(RoleMenuCustomIds.DeleteSelect(userId))
-                .WithPlaceholder("Choose a role menu")
+                .WithCustomId(selectId)
+                .WithPlaceholder(placeholder)
                 .WithMinValues(1)
                 .WithMaxValues(1);
             foreach (var menu in page.Menus)
@@ -164,35 +217,15 @@ internal static class RoleMenuComponents
                         DescribeMenuForSelector(menu, getChannelName, renderedAtUtc),
                         SelectMenuOptionBuilder.MaxDescriptionLength));
             }
-
             components.WithSelectMenu(selector);
         }
-
         if (page.Previous is { } previous)
-        {
-            components.WithButton(
-                "Previous",
-                RoleMenuCustomIds.DeletePage(userId, previous),
-                ButtonStyle.Secondary,
-                row: 1);
-        }
-
+            components.WithButton("Previous", pageId(previous), ButtonStyle.Secondary, row: 1);
         if (page.Next is { } next)
-        {
-            components.WithButton(
-                "Next",
-                RoleMenuCustomIds.DeletePage(userId, next),
-                ButtonStyle.Secondary,
-                row: 1);
-        }
-
-        return components
-            .WithButton(
-                "Cancel",
-                RoleMenuCustomIds.DeleteCancel(userId),
-                ButtonStyle.Secondary,
-                row: 1)
-            .Build();
+            components.WithButton("Next", pageId(next), ButtonStyle.Secondary, row: 1);
+        if (cancelId is not null)
+            components.WithButton("Cancel", cancelId, ButtonStyle.Secondary, row: 1);
+        return components.Build();
     }
 
     internal static Embed BuildDeleteConfirmationEmbed(

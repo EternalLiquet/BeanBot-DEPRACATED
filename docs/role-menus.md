@@ -4,7 +4,7 @@ BeanBot can publish persistent Discord panels that let members add or remove an 
 
 ## Requirements
 
-The administrator running `/role-menu create`, `/role-menu audit`, or `/role-menu delete` must:
+The administrator running `/role-menu create`, `/role-menu edit`, `/role-menu audit`, or `/role-menu delete` must:
 
 - run the command in a server, not a direct message;
 - have the server-level **Manage Roles** permission; and
@@ -16,7 +16,7 @@ BeanBot must have:
 - a highest role above every role configured in the menu; and
 - **View Channel**, **Send Messages**, **Embed Links**, and **Read Message History** in the target channel.
 
-Discord does not allow BeanBot to assign `@everyone`, integration-managed roles, or roles at or above BeanBot's highest role. BeanBot validates these rules during setup, immediately before publication, when a member opens a panel, immediately before applying a selection, and when an administrator audits a saved menu.
+Discord does not allow BeanBot to assign `@everyone`, integration-managed roles, or roles at or above BeanBot's highest role. BeanBot validates these rules during setup, immediately before publication or an edit, when a member opens a panel, immediately before applying a selection, and when an administrator audits a saved menu.
 
 ## Create and publish a panel
 
@@ -29,6 +29,30 @@ The preview expires after 10 minutes. BeanBot holds at most 64 previews at once 
 
 Each public panel contains a stable **Choose your roles** button. The footer shows only the selection mode; internal menu IDs stay in component data rather than appearing on new public panels. Panels published before this change keep working. BeanBot doesn't sweep old messages at startup, so their old footer stays until a later edit or repair flow rewrites the panel. Saved settings include the server, channel, message, title, description, allowlisted role IDs, selection mode, and UTC timestamps, so published panels continue to work after BeanBot restarts.
 
+## Edit a published panel
+
+Run `/role-menu edit` to choose from every saved menu in a private, paginated list. Each page shows up to 25 menus.
+
+BeanBot first shows the menu's current title, description, roles, and selection mode privately. Select **Edit values** to open a pre-filled form, then change any of these fields:
+
+- title;
+- optional description;
+- 1–25 self-assignable roles; and
+- multiple- or single-selection mode.
+
+Editing is intentionally in place. BeanBot keeps the same saved menu ID, server, channel, public message, and original creation timestamp. Moving a panel to another channel is not supported by edit; delete and recreate the panel when its location must change.
+
+When the form is submitted, BeanBot reloads the saved menu, confirms it still matches the values shown in the preview, and rechecks the administrator permission, current role existence and hierarchy, BeanBot's role permissions, channel permissions, and the exact public message identity. The edit runs under the same exclusive per-menu write coordination used by publication and deletion, so it cannot race a member role mutation or another menu-level write. Member submissions also reload persisted settings before any role change, so a selector opened before an edit cannot grant a role that the edited menu no longer allows.
+
+Persisted settings are the authorization source of truth. BeanBot saves the replacement configuration before modifying the existing public message. This gives failures deterministic behavior:
+
+- if the persistence write cannot be confirmed, BeanBot leaves the public panel untouched and asks the administrator to inspect persisted state before retrying;
+- if persistence succeeds but the panel is definitely missing or no longer matches the expected BeanBot panel, the new configuration remains authoritative and the unrelated/missing message is not modified;
+- if the Discord message update has an ambiguous outcome, BeanBot does not retry, roll the saved configuration back, or publish a replacement panel; inspect the existing message and rerun the same edit to reconcile it in place;
+- rerunning the same edit is safe because it targets the same stable saved menu and same existing message rather than creating another panel.
+
+Edit previews are bounded and expire after 10 minutes. If the interaction times out while a MongoDB or Discord call is still running, BeanBot gives bounded feedback and keeps shutdown ownership until the call settles.
+
 ## Member behavior
 
 Selecting **Choose your roles** opens a private selector bound to that member and panel. Current roles from that menu are preselected.
@@ -38,7 +62,7 @@ Selecting **Choose your roles** opens a private selector bound to that member an
 - **Remove my roles from this menu** removes every currently assigned role from this menu.
 - Roles that are not configured in the menu are never added or removed.
 
-Submissions for the same member are serialized, including submissions from overlapping menus. Different members may update roles from the same menu concurrently. Publication and deletion take an exclusive menu lifecycle lock so they cannot race member changes or resurrect a deleted configuration. Before changing anything, BeanBot reloads the persisted configuration, confirms the original panel still exists and belongs to BeanBot, fetches current member roles, revalidates role hierarchy, and rejects malformed or non-allowlisted values. After every valid submission, including a no-op or interrupted mutation, BeanBot performs a separate bounded read of Discord's current member roles. It reports only confirmed results from that observed state, in short plain sentences such as "Added Gamer.", and asks the member to reopen the menu when a change failed or the final state cannot be confirmed. Recheck details stay in the logs.
+Submissions for the same member are serialized, including submissions from overlapping menus. Different members may update roles from the same menu concurrently. Publication, editing, and deletion take an exclusive menu lifecycle lock so they cannot race member changes or resurrect a deleted configuration. Before changing anything, BeanBot reloads the persisted configuration, confirms the original panel still exists and belongs to BeanBot, fetches current member roles, revalidates role hierarchy, and rejects malformed or non-allowlisted values. After every valid submission, including a no-op or interrupted mutation, BeanBot performs a separate bounded read of Discord's current member roles. It reports only confirmed results from that observed state, in short plain sentences such as "Added Gamer.", and asks the member to reopen the menu when a change failed or the final state cannot be confirmed. Recheck details stay in the logs.
 
 ## Audit published panels
 
@@ -74,11 +98,12 @@ Titles are not required to be unique, and existing titles are never renamed. New
 
 Use a test server with BeanBot's role below one test role and above two other test roles.
 
-1. Confirm `/role-menu create`, `/role-menu audit`, and `/role-menu delete` are unavailable to a member without **Manage Roles** and cannot run in a direct message.
+1. Confirm `/role-menu create`, `/role-menu edit`, `/role-menu audit`, and `/role-menu delete` are unavailable to a member without **Manage Roles** and cannot run in a direct message.
 2. Confirm setup rejects `@everyone`, a managed role, the role above BeanBot, and a role at or above a non-owner administrator.
 3. Publish a two-role multiple menu and confirm the preview is private while the panel is public in the selected channel.
 4. Run `/role-menu audit` and confirm it reports **Healthy** without changing the panel, roles, or saved record.
-5. Open the same panel as two different members and confirm each receives an independent private selector with only their own current menu roles preselected.
+5. Edit the panel through `/role-menu edit` and confirm the message ID stays the same and stale edit previews cannot overwrite newer settings.
+6. Open the same panel as two different members and confirm each receives an independent private selector with only their own current menu roles preselected.
 6. As a member, add both menu roles, remove one, and clear the menu. Confirm an unrelated role remains assigned throughout.
 7. Publish a single menu, switch between its roles, and confirm no gap is introduced when the replacement can be added.
 8. Delete one configured role in Discord and confirm the stale panel fails privately without changing any remaining or unrelated role; audit the menu and confirm it reports **Broken**.
@@ -95,7 +120,7 @@ Role-menu text follows the customer-facing text standard in `AGENTS.md`. Members
 
 `RoleMenuAdminModule`, `RoleMenuMessageCommandModule` and `RoleMenuMemberModule` validate Discord control bindings and acknowledge interactions before starting work. Their shared `RoleMenuModuleBase` handles private responses, mention suppression, and acknowledgement reconciliation.
 
-`RoleMenuAdministrationService` prepares drafts and connects publication and deletion to persistence. `RoleMenuAuditService` performs bounded read-only health checks against saved role menus and current Discord state. `RoleMenuMemberService` loads selectors and applies member choices through the mutation coordinator. These services take IDs and submitted values, without an interaction context. Each member operation keeps its own Discord member reference, so concurrent requests cannot share a mutation target.
+`RoleMenuAdministrationService` prepares drafts and connects publication, editing, and deletion to persistence. `RoleMenuAuditService` performs bounded read-only health checks against saved role menus and current Discord state. `RoleMenuMemberService` loads selectors and applies member choices through the mutation coordinator. These services take IDs and submitted values, without an interaction context. Each member operation keeps its own Discord member reference, so concurrent requests cannot share a mutation target.
 
 `DiscordRoleMenuClient` contains Discord REST reads and mutations. `RoleMenuSetupValidation` and `RoleMenuPresentation` keep validation and result text separate from transport. The publication, deletion, and member workflows retain their independently tested rules for ambiguous outcomes, rollback, final-state reconciliation, and cancellation. `RoleMenuInteractionService` supplies the shared bounded execution, draft, persistence, and lock operations used by those entry points.
 

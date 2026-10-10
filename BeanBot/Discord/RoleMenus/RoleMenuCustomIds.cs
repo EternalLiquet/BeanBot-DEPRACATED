@@ -13,6 +13,10 @@ internal static class RoleMenuCustomIds
     internal const string ClearPattern = "role-menu:clear:*:*:*";
     internal const string PublishPattern = "role-menu:publish:*";
     internal const string CancelPublishPattern = "role-menu:cancel-publish:*";
+    internal const string EditSelectPattern = "role-menu:edit-select:*";
+    internal const string EditPagePattern = "role-menu:edit-page:*:*:*:*";
+    internal const string EditOpenPattern = "role-menu:edit-open:*";
+    internal const string EditModalPattern = "role-menu:edit-modal:*";
     internal const string DeleteSelectPattern = "role-menu:delete-select:*";
     internal const string DeletePagePattern = "role-menu:delete-page:*:*:*:*";
     internal const string DeleteConfirmPattern = "role-menu:delete-ok:*:*:*";
@@ -38,6 +42,21 @@ internal static class RoleMenuCustomIds
 
     internal static string CancelPublish(Guid draftId)
         => EnsureValid($"role-menu:cancel-publish:{draftId:N}");
+
+    internal static string EditSelect(ulong userId)
+        => EnsureValid($"role-menu:edit-select:{userId.ToString(CultureInfo.InvariantCulture)}");
+
+    internal static string EditPage(ulong userId, RoleMenuPageCursor cursor)
+        => EnsureValid(
+            $"role-menu:edit-page:{userId.ToString(CultureInfo.InvariantCulture)}:" +
+            (cursor.Direction == RoleMenuPageDirection.Newer ? "n" : "o") + ":" +
+            $"{cursor.CreatedAtUtc.Ticks.ToString(CultureInfo.InvariantCulture)}:{cursor.MenuId}");
+
+    internal static string EditOpen(Guid draftId)
+        => EnsureValid($"role-menu:edit-open:{draftId:N}");
+
+    internal static string EditModal(Guid draftId)
+        => EnsureValid($"role-menu:edit-modal:{draftId:N}");
 
     internal static string DeleteSelect(ulong userId)
         => EnsureValid($"role-menu:delete-select:{userId.ToString(CultureInfo.InvariantCulture)}");

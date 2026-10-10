@@ -55,6 +55,19 @@ public sealed class RoleMenuCommandRegistrationTests
     }
 
     [Fact]
+    public async Task GlobalRegistration_EditHasNoMenuIdOption()
+    {
+        await using var registration = await RegistrationFixture.CreateAsync();
+        var roleMenu = Assert.IsType<SlashCommandProperties>(Assert.Single(
+            registration.GetRegisteredProperties(),
+            candidate => candidate is SlashCommandProperties
+                         && candidate.Name.GetValueOrDefault() == "role-menu"));
+        var edit = Assert.Single(roleMenu.Options.GetValueOrDefault()!,
+            option => option.Name == "edit");
+        Assert.True(edit.Options is null or { Count: 0 });
+    }
+
+    [Fact]
     public async Task GlobalRegistration_RepairUsesPickerWithOptionalTargetChannel()
     {
         await using var registration = await RegistrationFixture.CreateAsync();
