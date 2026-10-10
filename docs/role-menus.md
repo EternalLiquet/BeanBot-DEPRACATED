@@ -27,7 +27,7 @@ Discord does not allow BeanBot to assign `@everyone`, integration-managed roles,
 
 The preview expires after 10 minutes. BeanBot holds at most 64 previews at once and replaces an administrator's previous preview in the same server when they create a new one. A failed persistence write rolls back the newly posted panel when Discord permits it. If BeanBot cannot confirm whether Discord posted the panel or MongoDB saved its settings, it closes the preview and disables automatic retry to avoid creating a duplicate. Inspect the target channel, remove any orphaned panel, and confirm the saved state before creating a replacement.
 
-Each public panel contains a stable **Choose your roles** button and its menu ID in the embed footer. Saved settings include the server, channel, message, title, description, allowlisted role IDs, selection mode, and UTC timestamps, so published panels continue to work after BeanBot restarts.
+Each public panel contains a stable **Choose your roles** button. The footer shows only the selection mode; internal menu IDs stay in component data rather than appearing on new public panels. Panels published before this change keep working. BeanBot doesn't sweep old messages at startup, so their old footer stays until a later edit or repair flow rewrites the panel. Saved settings include the server, channel, message, title, description, allowlisted role IDs, selection mode, and UTC timestamps, so published panels continue to work after BeanBot restarts.
 
 ## Member behavior
 
@@ -42,7 +42,7 @@ Submissions for the same member are serialized, including submissions from overl
 
 ## Audit published panels
 
-Run `/role-menu audit` to inspect the 25 newest saved menus without changing Discord or MongoDB. For an older menu, or to inspect one panel in detail, copy the menu ID from its footer and run `/role-menu audit menu-id:<id>`.
+Run `/role-menu audit` to inspect the 25 newest saved menus without changing Discord or MongoDB. Its private result includes each menu's ID. If you already have an ID, run `/role-menu audit menu-id:<id>` to inspect that menu in detail. Newly published panel footers do not show IDs.
 
 Each menu is reported as:
 
@@ -52,13 +52,23 @@ Each menu is reported as:
 
 Bulk auditing is deliberately capped at 25 menus and checks them sequentially so a server with many historical menus cannot create an unbounded MongoDB query or Discord REST burst. Audit lookups share the normal interaction shutdown cancellation and use a shorter per-lookup cancellation bound. Audit never republishes panels, edits or deletes messages, changes roles, or modifies saved menu records.
 
-For **Broken** results, correct the reported Discord role/channel permission problem when possible. If the saved message or channel is gone, use `/role-menu delete menu-id:<id>` to remove the stale saved configuration and then `/role-menu create` if a replacement panel is needed. For **Unknown**, do not delete state based only on the audit result; retry after the dependency recovers.
+For **Broken** results, correct the reported Discord role/channel permission problem when possible. If the saved message or channel is gone, use `/role-menu delete` to select and remove the stale saved configuration, then `/role-menu create` if a replacement panel is needed. For **Unknown**, do not delete state based only on the audit result; retry after the dependency recovers.
 
 ## Delete a panel
 
-Run `/role-menu delete` to choose from the 25 newest saved menus. For an older menu, copy the ID from its panel footer and run `/role-menu delete menu-id:<id>`.
+Right-click a role-menu panel and choose **Apps → Delete Role Menu**. BeanBot accepts only its own panel in the channel where the command was used. The panel's button and saved record must also match by server, channel and message.
 
-Deletion requires a private confirmation. BeanBot deletes a matching BeanBot-owned panel before removing its saved configuration. A missing panel is treated as already removed. If the referenced message no longer looks like the saved BeanBot panel, it is left untouched while the stale configuration is removed. If Discord denies panel deletion, the saved configuration is retained so an administrator can correct permissions and retry.
+`/role-menu delete` opens a private picker instead. It lists every saved menu, newest first, 25 per page, with **Previous** and **Next** buttons. Each entry shows the title (or "Untitled role menu"), channel and creation time, so same-titled menus remain distinguishable. Paging reads one bounded page from MongoDB at a time, ordered by creation time with the menu ID as a tie-breaker. Menus whose message or channel was deleted stay listed so they can be cleaned up.
+
+Both paths show the same private confirmation, bound to the administrator who opened it. It shows the title, channel, role count, selection mode, creation time and, when the panel still exists, a **View menu** link. Before showing it, the picker checks the panel:
+
+- A message or channel that Discord reports as deleted can be cleaned up.
+- A message that is no longer this BeanBot panel is left alone, and only the saved menu is removed.
+- If BeanBot can't open the message or the check fails, no **Delete** button is shown. That isn't proof the message is gone.
+
+Picker and confirmation controls expire 15 minutes after the command was used. On **Delete**, BeanBot takes the menu's lifecycle lock and rereads the saved menu. If it was deleted or changed after the confirmation was shown, BeanBot stops; it never substitutes another menu with the same title. A repeated click while deletion is running is ignored. The existing deletion workflow then rechecks **Manage Roles**, deletes a matching BeanBot-owned panel, and removes its saved configuration. If Discord denies panel deletion or the outcome is unclear, the saved configuration is kept so an administrator can retry.
+
+Titles are not required to be unique, and existing titles are never renamed. New titles must contain visible text and fit within 100 characters after trimming.
 
 ## Manual smoke check
 
@@ -67,13 +77,13 @@ Use a test server with BeanBot's role below one test role and above two other te
 1. Confirm `/role-menu create`, `/role-menu audit`, and `/role-menu delete` are unavailable to a member without **Manage Roles** and cannot run in a direct message.
 2. Confirm setup rejects `@everyone`, a managed role, the role above BeanBot, and a role at or above a non-owner administrator.
 3. Publish a two-role multiple menu and confirm the preview is private while the panel is public in the selected channel.
-4. Run `/role-menu audit menu-id:<id>` and confirm it reports **Healthy** without changing the panel, roles, or saved record.
+4. Run `/role-menu audit` and confirm it reports **Healthy** without changing the panel, roles, or saved record.
 5. Open the same panel as two different members and confirm each receives an independent private selector with only their own current menu roles preselected.
 6. As a member, add both menu roles, remove one, and clear the menu. Confirm an unrelated role remains assigned throughout.
 7. Publish a single menu, switch between its roles, and confirm no gap is introduced when the replacement can be added.
 8. Delete one configured role in Discord and confirm the stale panel fails privately without changing any remaining or unrelated role; audit the menu and confirm it reports **Broken**.
 9. Restart BeanBot and confirm the remaining panels still work from their persisted configuration.
-10. Delete a panel through `/role-menu delete`, then confirm its old controls cannot mutate roles.
+10. Delete one panel through **Apps → Delete Role Menu** and another through `/role-menu delete`, then confirm their old controls cannot mutate roles. Confirm neither panel nor the publication and deletion replies show an internal ID.
 11. Temporarily remove BeanBot's hierarchy or permissions and confirm operations fail privately without exposing exception details or changing unrelated roles; audit reports **Broken** for a positively verified permission failure.
 12. Use an existing legacy reaction-role panel and confirm its reactions still add and remove roles exactly as before.
 
@@ -83,7 +93,7 @@ Role-menu text follows the customer-facing text standard in `AGENTS.md`. Members
 
 ## Code organization
 
-`RoleMenuAdminModule` and `RoleMenuMemberModule` validate Discord control bindings and acknowledge interactions before starting work. Their shared `RoleMenuModuleBase` handles private responses, mention suppression, and acknowledgement reconciliation.
+`RoleMenuAdminModule`, `RoleMenuMessageCommandModule` and `RoleMenuMemberModule` validate Discord control bindings and acknowledge interactions before starting work. Their shared `RoleMenuModuleBase` handles private responses, mention suppression, and acknowledgement reconciliation.
 
 `RoleMenuAdministrationService` prepares drafts and connects publication and deletion to persistence. `RoleMenuAuditService` performs bounded read-only health checks against saved role menus and current Discord state. `RoleMenuMemberService` loads selectors and applies member choices through the mutation coordinator. These services take IDs and submitted values, without an interaction context. Each member operation keeps its own Discord member reference, so concurrent requests cannot share a mutation target.
 

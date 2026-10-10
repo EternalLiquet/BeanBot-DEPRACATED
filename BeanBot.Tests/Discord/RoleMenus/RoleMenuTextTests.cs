@@ -32,4 +32,29 @@ public class RoleMenuTextTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => RoleMenuText.TruncateWithEllipsis("value", 0));
     }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("\u200B\u200D")]
+    [InlineData("\u3164")]
+    [InlineData("\u2800 \u115F")]
+    [InlineData("\u0301")]
+    [InlineData("\U000E0100")]
+    public void HasVisibleText_RejectsBlankAndVisuallyEmptyTitles(string? value)
+    {
+        Assert.False(RoleMenuText.HasVisibleText(value));
+    }
+
+    [Theory]
+    [InlineData("Games")]
+    [InlineData(" Région ")]
+    [InlineData("🎮")]
+    [InlineData("🎮\U000E0100")]
+    [InlineData("\u200BA")]
+    public void HasVisibleText_AcceptsLegitimateTitles(string value)
+    {
+        Assert.True(RoleMenuText.HasVisibleText(value));
+    }
 }
