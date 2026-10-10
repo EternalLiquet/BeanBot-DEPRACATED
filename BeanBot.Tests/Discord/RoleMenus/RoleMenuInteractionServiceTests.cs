@@ -54,6 +54,46 @@ public class RoleMenuInteractionServiceTests
     }
 
     [Fact]
+    public async Task DiscordDeletion_AfterEditSavesNewRevision_RemovesDeletedBinding()
+    {
+        var fixture = CreateFixture();
+        var original = CreateSettings();
+        await fixture.Repository.UpsertAsync(original);
+        var editEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowEdit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deletionReadOldRevision = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Store.OnGetByMessage = () => deletionReadOldRevision.TrySetResult();
+        var edit = fixture.Service.RunMenuMutationAsync(original.Id, async token =>
+        {
+            editEntered.SetResult();
+            await allowEdit.Task.WaitAsync(token);
+            var replacement = new RoleMenuSettings(
+                original.Id, "1", "2", "3", "Edited", "", ["5"], RoleMenuSelectionMode.Exclusive)
+            {
+                CreatedAtUtc = original.CreatedAtUtc
+            };
+            return await RoleMenuEditWorkflow.ExecuteAsync(
+                replacement,
+                new RoleMenuEditCommitOperations(
+                    (settings, writeToken) => fixture.Repository.UpsertAsync(settings, writeToken),
+                    (_, _) => Task.FromResult(RoleMenuPanelUpdateStatus.Missing),
+                    () => false),
+                token);
+        }, CancellationToken.None);
+        await editEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var cleanup = fixture.Service.DeleteSavedPanelsForMessageAsync(
+            1, 2, 3, CancellationToken.None);
+        await deletionReadOldRevision.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        allowEdit.SetResult();
+
+        Assert.Equal(RoleMenuEditCommitStatus.PanelMissing,
+            (await edit.WaitAsync(TimeSpan.FromSeconds(2))).Status);
+        Assert.Equal(1, await cleanup.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.Null(await fixture.Repository.GetAsync(original.Id, "1"));
+    }
+
+    [Fact]
     public void ModuleConstructors_RequireFacadeAndLogger()
     {
         var fixture = CreateFixture();
@@ -343,7 +383,8 @@ public class RoleMenuInteractionServiceTests
             repository,
             drafts,
             coordinator,
-            executionContext);
+            executionContext,
+            store);
     }
 
     private static RoleMenuSettings CreateSettings()
@@ -362,11 +403,13 @@ public class RoleMenuInteractionServiceTests
         RoleMenuRepository Repository,
         RoleMenuDraftRegistry Drafts,
         RoleMenuMutationCoordinator Coordinator,
-        InteractionExecutionContext ExecutionContext);
+        InteractionExecutionContext ExecutionContext,
+        InMemoryStore Store);
 
     private sealed class InMemoryStore : IRoleMenuStore
     {
         private RoleMenuSettings? _settings;
+        internal Action? OnGetByMessage { get; set; }
 
         public Task UpsertAsync(
             RoleMenuSettings settings,
@@ -414,6 +457,7 @@ public class RoleMenuInteractionServiceTests
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            OnGetByMessage?.Invoke();
             List<RoleMenuSettings> settings = _settings is not null
                 && _settings.GuildId == guildId
                 && _settings.ChannelId == channelId

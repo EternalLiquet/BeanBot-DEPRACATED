@@ -30,6 +30,74 @@ internal static class RoleMenuSetupValidation
         targetChannelId = 0;
         selectionMode = default;
         roleValidation = null;
+        if (!TryValidateEditableFields(
+                request.SelectionMode,
+                request.RoleIds,
+                administrator,
+                bot,
+                title,
+                description,
+                out selectionMode,
+                out roleValidation,
+                out validationMessage))
+        {
+            return false;
+        }
+
+        if (request.TargetChannelId is null
+            || request.TargetChannelGuildId != guildId
+            || request.TargetChannelType != ChannelType.Text)
+        {
+            validationMessage = "Choose a text channel in this server.";
+            return false;
+        }
+
+        targetChannelId = request.TargetChannelId.Value;
+        return true;
+    }
+
+    internal static bool TryParseAndValidateEdit(
+        RoleMenuEditRequest request,
+        IGuildUser administrator,
+        IGuildUser bot,
+        string title,
+        string description,
+        out RoleMenuSelectionMode selectionMode,
+        [NotNullWhen(true)] out RoleMenuRoleValidationResult? roleValidation,
+        out string validationMessage)
+    {
+        var valid = TryValidateEditableFields(
+            request.SelectionMode,
+            request.RoleIds,
+            administrator,
+            bot,
+            title,
+            description,
+            out selectionMode,
+            out roleValidation,
+            out validationMessage);
+        if (!valid)
+        {
+            validationMessage = validationMessage
+                .Replace("`/role-menu create`", "`/role-menu edit`", StringComparison.Ordinal)
+                .Replace("publish this menu", "edit this menu", StringComparison.Ordinal);
+        }
+        return valid;
+    }
+
+    private static bool TryValidateEditableFields(
+        string? rawSelectionMode,
+        IReadOnlyCollection<ulong>? roleIds,
+        IGuildUser administrator,
+        IGuildUser bot,
+        string title,
+        string description,
+        out RoleMenuSelectionMode selectionMode,
+        [NotNullWhen(true)] out RoleMenuRoleValidationResult? roleValidation,
+        out string validationMessage)
+    {
+        selectionMode = default;
+        roleValidation = null;
         if (!RoleMenuText.HasVisibleText(title))
         {
             validationMessage = "Give the menu a title.";
@@ -50,32 +118,20 @@ internal static class RoleMenuSetupValidation
             return false;
         }
 
-        if (!TryParseSelectionMode(request.SelectionMode, out selectionMode))
+        if (!TryParseSelectionMode(rawSelectionMode, out selectionMode))
         {
             validationMessage = "Choose how many roles members can pick.";
             return false;
         }
 
-        if (request.TargetChannelId is null
-            || request.TargetChannelGuildId != guildId
-            || request.TargetChannelType != ChannelType.Text)
-        {
-            validationMessage = "Choose a text channel in this server.";
-            return false;
-        }
-
-        targetChannelId = request.TargetChannelId.Value;
-        if (request.RoleIds is not { Count: >= 1 and <= RoleMenuConstants.MaximumRoles })
+        if (roleIds is not { Count: >= 1 and <= RoleMenuConstants.MaximumRoles })
         {
             validationMessage =
                 $"Choose between 1 and {RoleMenuConstants.MaximumRoles} roles.";
             return false;
         }
 
-        roleValidation = ValidateRoles(
-            request.RoleIds,
-            administrator,
-            bot);
+        roleValidation = ValidateRoles(roleIds, administrator, bot);
         if (!roleValidation.IsValid)
         {
             validationMessage = FormatRoleValidationFailure(roleValidation);
@@ -87,7 +143,7 @@ internal static class RoleMenuSetupValidation
     }
 
     internal static bool TryParseSelectionMode(
-        string value,
+        string? value,
         out RoleMenuSelectionMode selectionMode)
     {
         if (string.Equals(value, "multiple", StringComparison.Ordinal))
