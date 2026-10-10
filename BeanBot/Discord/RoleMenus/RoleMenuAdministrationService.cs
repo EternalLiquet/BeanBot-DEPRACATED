@@ -42,7 +42,7 @@ public sealed class RoleMenuAdministrationService
         var currentBot = await _discord.GetGuildUserAsync(guildId, botUserId, requestOptions);
         if (currentAdministrator is null || currentBot is null)
         {
-            return new RoleMenuPreviewResult("Bean Bot couldn't refresh the current server role hierarchy. Try again in a moment.");
+            return new RoleMenuPreviewResult("I couldn't check the server's roles just now. Try again in a moment.");
         }
 
         var title = request.Title.Trim();
@@ -68,7 +68,7 @@ public sealed class RoleMenuAdministrationService
             requestOptions);
         if (targetChannel is null)
         {
-            return new RoleMenuPreviewResult("That target channel no longer exists in this server.");
+            return new RoleMenuPreviewResult("The channel you picked was deleted. Run `/role-menu create` again and pick another channel.");
         }
 
         var channelPermissionFailure = GetChannelPermissionFailure(currentBot, targetChannel);
@@ -89,14 +89,12 @@ public sealed class RoleMenuAdministrationService
         if (createStatus != RoleMenuDraftCreateStatus.Created || draft is null)
         {
             return new RoleMenuPreviewResult(createStatus == RoleMenuDraftCreateStatus.AlreadyPublishing
-                    ? "Your previous role menu is still publishing. Wait for it to finish before " +
-                      "starting another preview."
-                    : "Bean Bot is already holding the maximum number of role-menu previews. " +
-                      "Try again after another preview expires.");
+                    ? "Your last menu is still being published. Wait for it to finish, then try again."
+                    : "Too many role menu previews are open right now. Try again in a few minutes.");
         }
 
         return new RoleMenuPreviewResult(
-            "Review this private preview, then publish it when it looks right.", draft, roleValidation.Roles);
+            "Here's a preview of your menu. It isn't posted yet.", draft, roleValidation.Roles);
     }
 
     internal async Task<RoleMenuPublicationResult> PublishAsync(

@@ -28,10 +28,19 @@ Enable GitHub dependency graph, Dependabot alerts/security updates, CodeQL code 
 
 1. Fetch `origin/master` and `origin/develop` and confirm `git merge-base --is-ancestor origin/master origin/develop` succeeds.
 2. From a clean checkout of the exact `develop` head, run `./scripts/verify.sh full`.
-3. Confirm the exact-head required checks are green and retain the coverage artifact.
-4. Obtain an independent Verifier PASS followed by an independent Reviewer CLEAN.
-5. Open the intentional `develop` to `master` promotion PR and repeat the required exact-head checks.
-6. After promotion, run **Intentional BeanBot Release** on the exact current `master` commit and supply a stable `MAJOR.MINOR.PATCH` version. Normal promotions normally increment the minor version; an emergency compatible hotfix increments the patch version.
+   This automatic gate runs the non-Mongo suite, checks its own measured coverage
+   baseline, and builds and smoke-tests the hardened application image without
+   pulling a MongoDB test container.
+3. With Docker available, run `./scripts/verify.sh mongo-integration` on that
+   same commit and record the result. These seven tests start a disposable,
+   digest-pinned MongoDB container; the loopback Mongo failure test stays in
+   the normal suite. If the image cannot be pulled, record the integration tests
+   as unrun rather than passing. `./scripts/verify.sh all-tests` also checks the
+   historical combined coverage baseline when both suites are runnable.
+4. Confirm the exact-head required checks are green and retain the non-Mongo coverage artifact.
+5. Obtain an independent Verifier PASS followed by an independent Reviewer CLEAN.
+6. Open the intentional `develop` to `master` promotion PR and repeat the required exact-head checks.
+7. After promotion, run **Intentional BeanBot Release** on the exact current `master` commit and supply a stable `MAJOR.MINOR.PATCH` version. Normal promotions normally increment the minor version; an emergency compatible hotfix increments the patch version.
 
 The release workflow rebuilds nothing after verification: it builds and smoke-tests one image, pushes that same image to GHCR using the commit SHA and version tags, produces an SPDX SBOM and checksums, creates GitHub attestations, and then creates the GitHub Release with generated notes. A newly staged digest receives build provenance from that attempt. A reused digest never receives misleading fresh build provenance; its existing OCI provenance must verify against this repository, `.github/workflows/autorelease.yml`, the exact `master` commit and ref, and the selected image digest before evidence or tags can be published.
 
