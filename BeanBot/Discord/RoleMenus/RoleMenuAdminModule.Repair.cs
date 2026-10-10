@@ -12,6 +12,10 @@ using static BeanBot.Discord.RoleMenus.RoleMenuSetupValidation;
 
 namespace BeanBot.Discord.RoleMenus;
 
+internal sealed record RoleMenuRepairFeedback(
+    string Content,
+    MessageComponent? Components = null);
+
 public sealed partial class RoleMenuAdminModule
 {
     [SlashCommand(
@@ -293,6 +297,7 @@ public sealed partial class RoleMenuAdminModule
         }
 
         var mutationStarted = false;
+        var timeoutFeedbackAttempted = false;
         try
         {
             var mutation = RoleMenus.RunMenuMutationAsync(
@@ -310,17 +315,32 @@ public sealed partial class RoleMenuAdminModule
                         operationToken);
                 },
                 cancellation.Token);
-            var feedback = await RoleMenuRepairWorkflow.WaitForMutationAsync(
-                mutation, cancellation.Token);
-            await SendFreshFeedbackAsync(feedback);
+            var feedback = await RoleMenuRepairWorkflow.WaitForOwnedMutationAsync(
+                mutation,
+                async () =>
+                {
+                    timeoutFeedbackAttempted = true;
+                    await SendFreshFeedbackAsync(
+                        mutationStarted
+                            ? "I ran out of time before I could confirm the result. Check the target channel, then run the same repair again."
+                            : "I was busy and couldn't start the repair. Try again.");
+                },
+                cancellation.Token);
+            if (feedback is not null)
+            {
+                await SendFreshFeedbackAsync(feedback.Content, feedback.Components);
+            }
         }
         catch (OperationCanceledException)
             when (cancellation.IsCancellationRequested && !RoleMenus.IsShuttingDown)
         {
-            await SendFreshFeedbackAsync(
-                mutationStarted
-                    ? "I ran out of time before I could confirm the result. Check the target channel, then run the same repair again."
-                    : "I was busy and couldn't start the repair. Try again.");
+            if (!timeoutFeedbackAttempted)
+            {
+                await SendFreshFeedbackAsync(
+                    mutationStarted
+                        ? "I ran out of time before I could confirm the result. Check the target channel, then run the same repair again."
+                        : "I was busy and couldn't start the repair. Try again.");
+            }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -394,7 +414,7 @@ public sealed partial class RoleMenuAdminModule
             _discord.ReadDeletionPanelAsync,
             cancellationToken);
 
-    private async Task<string> RepairUnderLockAsync(
+    private async Task<RoleMenuRepairFeedback> RepairUnderLockAsync(
         ObjectId menuId,
         ulong guildId,
         ulong administratorId,
@@ -410,12 +430,13 @@ public sealed partial class RoleMenuAdminModule
             cancellationToken);
         if (!initialInspection.IsEligible)
         {
-            return FormatRepairInspection(initialInspection);
+            return new RoleMenuRepairFeedback(FormatRepairInspection(initialInspection));
         }
         if (!RoleMenuRepairWorkflow.MatchesPreview(
                 initialInspection.Settings!, previewFingerprint))
         {
-            return "This menu changed since the preview. Run `/role-menu repair` again to review it.";
+            return new RoleMenuRepairFeedback(
+                "This menu changed since the preview. Run `/role-menu repair` again to review it.");
         }
 
         var requestOptions = CreateRequestOptions(cancellationToken);
@@ -429,12 +450,14 @@ public sealed partial class RoleMenuAdminModule
             requestOptions);
         if (currentAdministrator is null || currentBot is null)
         {
-            return "I couldn't check the current server roles. Try again before repairing this menu.";
+            return new RoleMenuRepairFeedback(
+                "I couldn't check the current server roles. Try again before repairing this menu.");
         }
 
         if (!currentAdministrator.GuildPermissions.ManageRoles)
         {
-            return "You need **Manage Roles** permission to repair this menu.";
+            return new RoleMenuRepairFeedback(
+                "You need **Manage Roles** permission to repair this menu.");
         }
 
         var targetChannel = await _discord.GetGuildTextChannelAsync(
@@ -443,7 +466,8 @@ public sealed partial class RoleMenuAdminModule
             requestOptions);
         if (targetChannel is null)
         {
-            return "That channel is gone or isn't a text channel. Choose another `target-channel` and try again.";
+            return new RoleMenuRepairFeedback(
+                "That channel is gone or isn't a text channel. Choose another `target-channel` and try again.");
         }
 
         var finalInspection = await InspectRepairAsync(
@@ -453,7 +477,7 @@ public sealed partial class RoleMenuAdminModule
             cancellationToken);
         if (!finalInspection.IsEligible)
         {
-            return FormatRepairInspection(finalInspection);
+            return new RoleMenuRepairFeedback(FormatRepairInspection(finalInspection));
         }
 
         var initialSettings = initialInspection.Settings
@@ -465,19 +489,20 @@ public sealed partial class RoleMenuAdminModule
         if (!RoleMenuRepairWorkflow.HasSameSavedConfiguration(initialSettings, settings)
             || !RoleMenuRepairWorkflow.MatchesPreview(settings, previewFingerprint))
         {
-            return "This menu changed while you were confirming. Run `/role-menu repair` again to review it.";
+            return new RoleMenuRepairFeedback(
+                "This menu changed while you were confirming. Run `/role-menu repair` again to review it.");
         }
 
         var roleValidation = ValidateRoles(parsed.RoleIds, currentAdministrator, currentBot);
         if (!roleValidation.IsValid)
         {
-            return FormatRoleValidationFailure(roleValidation);
+            return new RoleMenuRepairFeedback(FormatRoleValidationFailure(roleValidation));
         }
 
         var channelPermissionFailure = GetChannelPermissionFailure(currentBot, targetChannel);
         if (channelPermissionFailure is not null)
         {
-            return channelPermissionFailure;
+            return new RoleMenuRepairFeedback(channelPermissionFailure);
         }
 
         var draft = RoleMenuRepairWorkflow.CreateRepairDraft(
@@ -493,11 +518,11 @@ public sealed partial class RoleMenuAdminModule
         return FormatRepairPublication(publication, guildId, targetChannelId);
     }
 
-    private static string FormatRepairInspection(RoleMenuRepairInspectionResult inspection)
+    internal static string FormatRepairInspection(RoleMenuRepairInspectionResult inspection)
         => inspection.Status switch
         {
             RoleMenuRepairInspectionStatus.SettingsMissing =>
-                "I couldn't find a role menu with that ID in this server. Check the ID and try again.",
+                "That role menu is no longer available. Run `/role-menu repair` again to choose a menu.",
             RoleMenuRepairInspectionStatus.SettingsInvalid =>
                 "I can't repair this menu because its saved settings are invalid. Check the menu settings before trying again.",
             RoleMenuRepairInspectionStatus.Healthy =>
@@ -507,7 +532,7 @@ public sealed partial class RoleMenuAdminModule
             _ => "The menu message is missing. Run `/role-menu repair` to restore it."
         };
 
-    private static string FormatRepairPublication(
+    internal static RoleMenuRepairFeedback FormatRepairPublication(
         RoleMenuPublicationResult result,
         ulong guildId,
         ulong targetChannelId)
@@ -515,11 +540,13 @@ public sealed partial class RoleMenuAdminModule
         if (result.Status == RoleMenuPublicationStatus.Published
             && result.MessageId is ulong messageId)
         {
-            return "I repaired the role menu: " +
-                   CreateMessageUrl(guildId, targetChannelId, messageId);
+            return new RoleMenuRepairFeedback(
+                "I repaired the role menu.",
+                RoleMenuComponents.BuildViewMenuLink(
+                    CreateMessageUrl(guildId, targetChannelId, messageId)));
         }
 
-        return result.Status switch
+        var content = result.Status switch
         {
             RoleMenuPublicationStatus.PanelOutcomeUnknown =>
                 "I couldn't tell whether Discord posted the replacement. Check the target channel, then run the same repair again.",
@@ -532,5 +559,6 @@ public sealed partial class RoleMenuAdminModule
             _ =>
                 "I couldn't confirm the repair result. Check the target channel and menu before trying again."
         };
+        return new RoleMenuRepairFeedback(content);
     }
 }

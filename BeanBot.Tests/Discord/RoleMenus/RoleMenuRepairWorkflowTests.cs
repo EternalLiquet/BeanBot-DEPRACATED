@@ -174,9 +174,11 @@ public class RoleMenuRepairWorkflowTests
         var coordinator = new RoleMenuMutationCoordinator();
         var publicationStarted = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var finishPublication = new TaskCompletionSource<int>(
+        var finishPublication = new TaskCompletionSource<string>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var secondStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var timeoutFeedback = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         using var callerCancellation = new CancellationTokenSource();
 
@@ -189,24 +191,32 @@ public class RoleMenuRepairWorkflowTests
             },
             callerCancellation.Token);
         await publicationStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
-        var callerWait = RoleMenuRepairWorkflow.WaitForMutationAsync(
-            first, callerCancellation.Token);
+        var callerWait = RoleMenuRepairWorkflow.WaitForOwnedMutationAsync(
+            first,
+            () =>
+            {
+                timeoutFeedback.SetResult();
+                return Task.CompletedTask;
+            },
+            callerCancellation.Token);
         var second = coordinator.RunMenuWriteAsync(
             "menu:repair-test",
             _ =>
             {
                 secondStarted.SetResult();
-                return Task.FromResult(2);
+                return Task.FromResult("second");
             },
             CancellationToken.None);
 
         callerCancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => callerWait);
+        await timeoutFeedback.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.False(callerWait.IsCompleted);
         Assert.False(secondStarted.Task.IsCompleted);
 
-        finishPublication.SetResult(1);
-        Assert.Equal(1, await first.WaitAsync(TimeSpan.FromSeconds(1)));
-        Assert.Equal(2, await second.WaitAsync(TimeSpan.FromSeconds(1)));
+        finishPublication.SetResult("first");
+        Assert.Null(await callerWait.WaitAsync(TimeSpan.FromSeconds(1)));
+        Assert.Equal("first", await first.WaitAsync(TimeSpan.FromSeconds(1)));
+        Assert.Equal("second", await second.WaitAsync(TimeSpan.FromSeconds(1)));
     }
 
     private static Task<RoleMenuRepairInspectionResult> InspectAsync(

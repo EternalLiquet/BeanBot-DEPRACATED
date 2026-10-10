@@ -66,23 +66,40 @@ internal static class RoleMenuRepairWorkflow
                fingerprint,
                StringComparison.Ordinal);
 
-    internal static async Task<T> WaitForMutationAsync<T>(
+    internal static async Task<T?> WaitForOwnedMutationAsync<T>(
         Task<T> mutation,
+        Func<Task> onTimeout,
         CancellationToken callerCancellation)
+        where T : class
     {
         ArgumentNullException.ThrowIfNull(mutation);
+        ArgumentNullException.ThrowIfNull(onTimeout);
         try
         {
             return await mutation.WaitAsync(callerCancellation);
         }
-        catch
+        catch (OperationCanceledException) when (callerCancellation.IsCancellationRequested)
         {
-            _ = mutation.ContinueWith(
-                completedTask => _ = completedTask.Exception,
-                CancellationToken.None,
-                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
-            throw;
+            try
+            {
+                await onTimeout();
+            }
+            finally
+            {
+                // Keep the interaction handler owned until the real mutation settles.
+                // The coordinator still owns its menu lock throughout this wait.
+                try
+                {
+                    await mutation;
+                }
+                catch
+                {
+                    // A late fault has no reliable interaction response; observing it
+                    // here keeps ownership intact without triggering an unhandled task.
+                }
+            }
+
+            return null;
         }
     }
 

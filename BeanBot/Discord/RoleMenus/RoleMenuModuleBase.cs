@@ -88,7 +88,9 @@ public abstract class RoleMenuModuleBase : InteractionModuleBase<SocketInteracti
             cancellationToken);
     }
 
-    protected async Task SendFreshFeedbackAsync(string content)
+    protected async Task SendFreshFeedbackAsync(
+        string content,
+        MessageComponent? components = null)
     {
         if (RoleMenus.IsShuttingDown)
         {
@@ -96,7 +98,8 @@ public abstract class RoleMenuModuleBase : InteractionModuleBase<SocketInteracti
         }
 
         using var feedbackCancellation = RoleMenus.CreateFeedbackCancellation();
-        await ReplaceResponseAsync(content, feedbackCancellation.Token);
+        await ReplaceResponseAsync(
+            content, feedbackCancellation.Token, components: components);
     }
 
     protected Task<IUserMessage> ReplaceResponseAsync(

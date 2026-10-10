@@ -96,4 +96,42 @@ public class RoleMenuRepairUiTests
         Assert.DoesNotContain(settings.Id.ToString(), embed.Footer?.Text ?? string.Empty,
             StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void PublishedRepairFeedback_UsesLabeledViewMenuButton()
+    {
+        var feedback = RoleMenuAdminModule.FormatRepairPublication(
+            new RoleMenuPublicationResult(RoleMenuPublicationStatus.Published, 30UL, []),
+            10UL, 20UL);
+
+        Assert.Equal("I repaired the role menu.", feedback.Content);
+        Assert.DoesNotContain("https://", feedback.Content, StringComparison.Ordinal);
+        var row = Assert.IsType<ActionRowComponent>(Assert.Single(feedback.Components!.Components));
+        var button = Assert.IsType<ButtonComponent>(Assert.Single(row.Components));
+        Assert.Equal("View menu", button.Label);
+        Assert.Equal(ButtonStyle.Link, button.Style);
+        Assert.Equal("https://discord.com/channels/10/20/30", button.Url);
+    }
+
+    [Fact]
+    public void UncertainRepairFeedback_DoesNotOfferUnverifiedPanelLink()
+    {
+        var feedback = RoleMenuAdminModule.FormatRepairPublication(
+            new RoleMenuPublicationResult(RoleMenuPublicationStatus.PanelOutcomeUnknown, null, []),
+            10UL, 20UL);
+
+        Assert.Contains("couldn't tell whether Discord posted", feedback.Content,
+            StringComparison.Ordinal);
+        Assert.Null(feedback.Components);
+    }
+
+    [Fact]
+    public void RemovedSelectedMenu_InvitesPickingAgainWithoutRawIdAdvice()
+    {
+        var feedback = RoleMenuAdminModule.FormatRepairInspection(
+            new RoleMenuRepairInspectionResult(RoleMenuRepairInspectionStatus.SettingsMissing));
+
+        Assert.Contains("choose a menu", feedback, StringComparison.Ordinal);
+        Assert.DoesNotContain("ID", feedback, StringComparison.Ordinal);
+    }
 }
