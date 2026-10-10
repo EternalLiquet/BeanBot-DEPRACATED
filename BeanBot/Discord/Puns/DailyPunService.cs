@@ -80,7 +80,16 @@ public sealed partial class DailyPunService : IAsyncDisposable
         BeanBotLog.PunServiceInitializing(_logger);
     }
 
-    internal bool HasActiveDiscordOperation => Volatile.Read(ref _activeDiscordOperationCount) != 0;
+    internal bool HasActiveDiscordOperation
+    {
+        get
+        {
+            lock (_discordOperationSync)
+            {
+                return _activeDiscordOperationCount != 0;
+            }
+        }
+    }
 
     private static Func<string, RequestOptions, Task>? ResolveSender(
         DiscordSocketClient client, ulong channelId)
