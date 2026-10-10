@@ -32,7 +32,8 @@ internal static class LegacyReactionRoleRetirementPicker
         ObjectId? requestCursor,
         bool newer,
         Func<ulong, string?> channelName,
-        Func<ulong, string?> roleName)
+        Func<ulong, string?> roleName,
+        DateTime? nowUtc = null)
     {
         ArgumentNullException.ThrowIfNull(fetched);
         ArgumentNullException.ThrowIfNull(channelName);
@@ -65,15 +66,16 @@ internal static class LegacyReactionRoleRetirementPicker
                     .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name));
                 var postedAt = DateTimeOffset.FromUnixTimeMilliseconds(
                     (long)(messageId >> 22) + 1_420_070_400_000L);
+                var age = RoleMenuComponents.FormatCreatedAt(
+                    postedAt.UtcDateTime, nowUtc);
                 selector.AddOption(
                     RoleMenuText.TruncateWithEllipsis(
-                        channel is null ? "Panel in a deleted channel" : $"Panel in #{channel}",
+                        channel is null ? "Panel in an unavailable channel" : $"Panel in #{channel}",
                         SelectMenuOptionBuilder.MaxSelectLabelLength),
                     messageId.ToString(CultureInfo.InvariantCulture),
                     RoleMenuText.TruncateWithEllipsis(
-                        firstRole is null ? "Saved legacy role panel" :
-                            $"Includes {firstRole} · {setting.RoleEmotePairs.Count} roles · Posted " +
-                            postedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) + " UTC",
+                        firstRole is null ? $"{age} · Saved legacy role panel" :
+                            $"{age} · Includes {firstRole} · {setting.RoleEmotePairs.Count} roles",
                         SelectMenuOptionBuilder.MaxDescriptionLength));
                 addedOptions++;
             }

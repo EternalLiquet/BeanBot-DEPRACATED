@@ -82,7 +82,29 @@ public class LegacyReactionRoleRetirementPickerTests
             .SelectMany(row => row.Components).OfType<SelectMenuComponent>()
             .Single().Options.Single();
 
-        Assert.Contains("deleted channel", option.Label, StringComparison.Ordinal);
-        Assert.Equal("Saved legacy role panel", option.Description);
+        Assert.Equal("Panel in an unavailable channel", option.Label);
+        Assert.Contains("Saved legacy role panel", option.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_ShowsRelativeAgeAndReadableRoleAtRenderTime()
+    {
+        var posted = new DateTimeOffset(2026, 10, 10, 10, 0, 0, TimeSpan.Zero);
+        var now = posted.AddHours(2);
+        var messageId = ((ulong)(posted.ToUnixTimeMilliseconds() - 1_420_070_400_000L) << 22)
+            .ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var setting = new ReactionRoleSettings(
+            [new RoleEmotePair("4", "5")], "1", "2", messageId)
+        { Id = ObjectId.GenerateNewId() };
+
+        var first = LegacyReactionRoleRetirementPicker.Build(9, [setting], null,
+            newer: false, _ => "general", _ => "Gamer", now.UtcDateTime);
+        var option = first.Components.OfType<ActionRowComponent>()
+            .SelectMany(row => row.Components).OfType<SelectMenuComponent>()
+            .Single().Options.Single();
+
+        Assert.Contains("Created 2 hours ago", option.Description, StringComparison.Ordinal);
+        Assert.Contains("Gamer", option.Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("UTC", option.Description, StringComparison.Ordinal);
     }
 }

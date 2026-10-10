@@ -135,7 +135,7 @@ internal static class LegacyReactionRoleRetirementComponents
             LegacyReactionRoleRetirementStatus.PanelDeletionFailed =>
                 "I couldn't delete that legacy panel. Its saved settings are still there. Check the panel and run `/role-menu retire-legacy` again.",
             LegacyReactionRoleRetirementStatus.PanelOutcomeUnknown =>
-                "I couldn't confirm whether Discord deleted that panel. Its saved settings are still there. Check Discord before running `/role-menu retire-legacy` again.",
+                "I couldn't confirm whether Discord deleted that panel or whether its saved settings remain. Check Discord before running `/role-menu retire-legacy` again.",
             LegacyReactionRoleRetirementStatus.PersistenceKept =>
                 "The legacy panel is gone, but I couldn't remove its saved settings. Run `/role-menu retire-legacy` again to finish.",
             LegacyReactionRoleRetirementStatus.PersistenceOutcomeUnknown =>

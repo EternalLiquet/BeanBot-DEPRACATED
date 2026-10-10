@@ -80,6 +80,17 @@ public class LegacyReactionRoleRetirementComponentsTests
     }
 
     [Fact]
+    public void AmbiguousPanelDeletion_DoesNotClaimSavedSettingsRemain()
+    {
+        var result = LegacyReactionRoleRetirementComponents.FormatResult(new(
+            LegacyReactionRoleRetirementStatus.PanelOutcomeUnknown));
+
+        Assert.Contains("Check Discord", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("saved settings are still there", result,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void ConfirmationComponents_UseExactUserMessageExpiryAndFingerprint()
     {
         var components = LegacyReactionRoleRetirementComponents.BuildConfirmationComponents(
