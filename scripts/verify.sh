@@ -5,7 +5,7 @@ repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repository_root"
 
 usage() {
-  echo "Usage: $0 {fast|full|build-test}" >&2
+  echo "Usage: $0 {fast|full|build-test|mongo-integration|all-tests}" >&2
 }
 
 if [[ $# -ne 1 ]]; then
@@ -15,7 +15,7 @@ fi
 
 mode="$1"
 case "$mode" in
-  fast|full|build-test) ;;
+  fast|full|build-test|mongo-integration|all-tests) ;;
   *)
     echo "Unknown verification mode: $mode" >&2
     usage
@@ -57,18 +57,30 @@ build_and_test() {
   run_stage "Verify redundant using cleanup" \
     dotnet format BeanBot.sln --verify-no-changes --no-restore --diagnostics IDE0005
   run_stage "Build Release" dotnet build BeanBot.sln --configuration Release --no-restore
-  if [[ "$mode" == "full" ]]; then
+  if [[ "$mode" == "full" || "$mode" == "all-tests" ]]; then
     mkdir -p .artifacts/TestResults .artifacts/coverage
     find .artifacts/TestResults -mindepth 1 -delete
+    local baseline=".config/coverage-baseline-unit.json"
+    local test_filter=(--filter 'Category!=MongoIntegration')
+    if [[ "$mode" == "all-tests" ]]; then
+      baseline=".config/coverage-baseline.json"
+      test_filter=()
+    fi
     run_stage "Run Release tests with coverage" \
       dotnet test BeanBot.sln --configuration Release --no-build \
+        "${test_filter[@]}" \
         --settings coverage.runsettings --collect "Code Coverage" \
         --results-directory .artifacts/TestResults
     run_stage "Check coverage baseline" \
       python3 scripts/check-coverage.py \
-        .artifacts/TestResults .config/coverage-baseline.json .artifacts/coverage
+        .artifacts/TestResults "$baseline" .artifacts/coverage
+  elif [[ "$mode" == "mongo-integration" ]]; then
+    run_stage "Run isolated MongoDB integration tests" \
+      dotnet test BeanBot.sln --configuration Release --no-build \
+        --filter 'Category=MongoIntegration' --blame-hang-timeout 5m
   else
-    run_stage "Run Release tests" dotnet test BeanBot.sln --configuration Release --no-build
+    run_stage "Run Release tests" dotnet test BeanBot.sln --configuration Release --no-build \
+      --filter 'Category!=MongoIntegration'
   fi
 }
 
@@ -109,7 +121,7 @@ validate_workflow
 build_and_test
 check_diff
 
-if [[ "$mode" == "full" ]]; then
+if [[ "$mode" == "full" || "$mode" == "all-tests" ]]; then
   branch_integrity_candidate="${BEANBOT_BRANCH_INTEGRITY_CANDIDATE:-HEAD}"
   run_stage "Verify master ancestry" \
     scripts/check-branch-integrity.sh origin/master "$branch_integrity_candidate" \

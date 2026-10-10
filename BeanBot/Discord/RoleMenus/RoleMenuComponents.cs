@@ -12,7 +12,8 @@ internal sealed record RoleMenuMemberSelector(
 internal static class RoleMenuComponents
 {
     private const string DefaultDescription =
-        "Choose the roles you want. You can update this at any time.";
+        "Choose the roles you want. You can change them any time.";
+    private const string UntitledMenuName = "Untitled role menu";
 
     internal static Embed BuildPublicEmbed(
         ObjectId menuId,
@@ -22,7 +23,7 @@ internal static class RoleMenuComponents
     {
         var modeText = selectionMode == RoleMenuSelectionMode.Exclusive
             ? "Choose one role"
-            : "Choose any combination";
+            : "Choose as many as you like";
         return new EmbedBuilder()
             .WithTitle(title)
             .WithDescription(string.IsNullOrWhiteSpace(description)
@@ -35,7 +36,7 @@ internal static class RoleMenuComponents
     internal static MessageComponent BuildPublicComponents(ObjectId menuId)
         => new ComponentBuilder()
             .WithButton(
-                "Manage Roles",
+                "Choose your roles",
                 RoleMenuCustomIds.Manage(menuId),
                 ButtonStyle.Primary)
             .Build();
@@ -52,30 +53,30 @@ internal static class RoleMenuComponents
             roles.Select(role => $"<@&{role.Id.ToString(CultureInfo.InvariantCulture)}>"));
         if (roleMentions.Length == 0)
         {
-            roleMentions = "No valid roles remain.";
+            roleMentions = "None of these roles can be used anymore.";
         }
         var selectionMode = draft.SelectionMode == RoleMenuSelectionMode.Exclusive
-            ? "Single selection"
-            : "Multiple selection";
+            ? "One role"
+            : "Any number";
         return new EmbedBuilder()
             .WithTitle(draft.Title)
             .WithDescription(string.IsNullOrWhiteSpace(draft.Description)
                 ? DefaultDescription
                 : draft.Description)
             .AddField("Roles", roleMentions)
-            .AddField("Mode", selectionMode, inline: true)
+            .AddField("Members can choose", selectionMode, inline: true)
             .AddField(
                 "Channel",
                 $"<#{draft.TargetChannelId.ToString(CultureInfo.InvariantCulture)}>",
                 inline: true)
-            .WithFooter("Preview • Not published")
+            .WithFooter("Preview • Only you can see this")
             .Build();
     }
 
     internal static MessageComponent BuildPreviewComponents(Guid draftId)
         => new ComponentBuilder()
             .WithButton(
-                "Publish",
+                "Publish menu",
                 RoleMenuCustomIds.Publish(draftId),
                 ButtonStyle.Success)
             .WithButton(
@@ -128,7 +129,7 @@ internal static class RoleMenuComponents
             new ComponentBuilder()
                 .WithSelectMenu(selector)
                 .WithButton(
-                    "Clear menu roles",
+                    "Remove my roles from this menu",
                     RoleMenuCustomIds.Clear(settings.Id, userId, parsed.MessageId),
                     ButtonStyle.Secondary,
                     row: 1)
@@ -149,15 +150,15 @@ internal static class RoleMenuComponents
         foreach (var menu in settings)
         {
             var mode = menu.SelectionMode == RoleMenuSelectionMode.Exclusive
-                ? "Single selection"
-                : "Multiple selection";
+                ? "One role"
+                : "Any number of roles";
             var date = menu.CreatedAtUtc == default
-                ? "Unknown creation date"
-                : menu.CreatedAtUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                ? "Creation date unknown"
+                : "Created " + menu.CreatedAtUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             selector.AddOption(
                 RoleMenuText.TruncateWithEllipsis(
                     string.IsNullOrWhiteSpace(menu.Title)
-                        ? "Untitled or stale role menu"
+                        ? UntitledMenuName
                         : menu.Title,
                     SelectMenuOptionBuilder.MaxSelectLabelLength),
                 menu.Id.ToString(),
@@ -174,24 +175,43 @@ internal static class RoleMenuComponents
         ArgumentNullException.ThrowIfNull(settings);
         var title = RoleMenuText.TruncateWithEllipsis(
             string.IsNullOrWhiteSpace(settings.Title)
-                ? "Untitled or stale role menu"
+                ? UntitledMenuName
                 : settings.Title,
             RoleMenuConstants.MaximumTitleLength);
+        var details = FormatChoosableRoleCount(settings.RoleIds.Count);
+        if (ulong.TryParse(
+                settings.ChannelId,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var channelId)
+            && channelId != 0)
+        {
+            details = $"In <#{channelId.ToString(CultureInfo.InvariantCulture)}> • {details}";
+        }
 
         return new EmbedBuilder()
-            .WithTitle("Delete role menu?")
+            .WithTitle(title)
             .WithDescription(
-                $"**{title}**\n\nThis removes the published panel and its saved configuration.")
+                $"{details}\n\nThis removes the menu message. Members will keep the roles they " +
+                "already have.")
             .WithColor(Color.Red)
             .Build();
     }
+
+    internal static string FormatChoosableRoleCount(int roleCount)
+        => roleCount switch
+        {
+            <= 0 => "No roles members can choose",
+            1 => "1 role members can choose",
+            _ => $"{roleCount.ToString(CultureInfo.InvariantCulture)} roles members can choose"
+        };
 
     internal static MessageComponent BuildDeleteConfirmationComponents(
         ulong userId,
         ObjectId menuId)
         => new ComponentBuilder()
             .WithButton(
-                "Delete",
+                "Delete menu",
                 RoleMenuCustomIds.DeleteConfirm(userId, menuId),
                 ButtonStyle.Danger)
             .WithButton(

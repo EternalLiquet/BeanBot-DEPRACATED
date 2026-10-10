@@ -58,7 +58,8 @@ public class RoleMenuSelectionReconcilerTests
             roleIds,
             [],
             [],
-            roleIds);
+            roleIds,
+            []);
         var names = roleIds.ToDictionary(
             roleId => roleId,
             roleId => new string((char)('A' + roleId % 26), 100));
@@ -66,6 +67,6 @@ public class RoleMenuSelectionReconcilerTests
         var content = RoleMenuPresentation.FormatReconciliation(reconciliation, names);
 
         Assert.True(content.Length <= RoleMenuConstants.MaximumResponseContentLength);
-        Assert.Contains("Some role details were omitted", content, StringComparison.Ordinal);
+        Assert.Contains("That list was too long to show in full", content, StringComparison.Ordinal);
     }
 }
