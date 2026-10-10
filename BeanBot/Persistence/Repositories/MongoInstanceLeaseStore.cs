@@ -67,7 +67,7 @@ internal sealed class MongoInstanceLeaseStore : IInstanceLeaseStore
         var update = Builders<InstanceLeaseDocument>.Update
             .SetOnInsert(lease => lease.Id, botIdentity)
             .Set(lease => lease.HolderId, holderId)
-            .Set(lease => lease.ExpiresAtUtc, expiresAtUtc);
+            .Max(lease => lease.ExpiresAtUtc, expiresAtUtc);
 
         try
         {
@@ -122,7 +122,7 @@ internal sealed class MongoInstanceLeaseStore : IInstanceLeaseStore
             Builders<InstanceLeaseDocument>.Filter.Eq(lease => lease.HolderId, holderId),
             Builders<InstanceLeaseDocument>.Filter.Gt(lease => lease.ExpiresAtUtc, nowUtc));
         var update = Builders<InstanceLeaseDocument>.Update
-            .Set(lease => lease.ExpiresAtUtc, expiresAtUtc);
+            .Max(lease => lease.ExpiresAtUtc, expiresAtUtc);
         var result = await _leases.UpdateOneAsync(filter, update, cancellationToken: cancellationToken);
         return result.IsAcknowledged && result.MatchedCount == 1;
     }

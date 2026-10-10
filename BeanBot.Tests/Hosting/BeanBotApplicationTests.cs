@@ -250,7 +250,7 @@ public class BeanBotApplicationTests
     [InlineData("unsubscribe-events", "stop-pun")]
     [InlineData("stop-pun", "stop-health")]
     [InlineData("stop-health", "flush-alerts")]
-    [InlineData("flush-alerts", "stop-discord")]
+    [InlineData("flush-alerts", "stop-health")]
     [InlineData("stop-discord", "flush-alerts")]
     [InlineData("dispose-discord", "flush-alerts")]
     public async Task StopAsync_StageFailure_ContinuesLaterSafeCleanupAndPreservesFirstFailure(
@@ -322,7 +322,8 @@ public class BeanBotApplicationTests
             () => application.StopAsync(CancellationToken.None));
 
         Assert.Contains("stop-health", runtime.Calls);
-        Assert.Contains("dispose-discord", runtime.Calls);
+        Assert.DoesNotContain("stop-discord", runtime.Calls);
+        Assert.DoesNotContain("dispose-discord", runtime.Calls);
         Assert.Contains("flush-alerts", runtime.Calls);
     }
 
@@ -358,7 +359,8 @@ public class BeanBotApplicationTests
 
             Assert.Contains("stop-new-member", runtime.Calls);
             Assert.Contains("stop-health", runtime.Calls);
-            Assert.Contains("dispose-discord", runtime.Calls);
+            Assert.DoesNotContain("stop-discord", runtime.Calls);
+            Assert.DoesNotContain("dispose-discord", runtime.Calls);
         }
         finally
         {

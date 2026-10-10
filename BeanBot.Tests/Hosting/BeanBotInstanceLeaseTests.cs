@@ -162,6 +162,122 @@ public class BeanBotInstanceLeaseTests
     }
 
     [Fact]
+    public async Task Renewal_TimedOutWriteIgnoresCancellationAndRemainsSingleFlightUntilItSettles()
+    {
+        var pendingRenewal = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var renewalStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var observedExpiry = StartUtc + TestOptions.LeaseDuration;
+        var store = new RecordingLeaseStore
+        {
+            Renew = (_, _, _, _, _) =>
+            {
+                renewalStarted.TrySetResult();
+                return pendingRenewal.Task;
+            },
+            Get = (_, _) => Task.FromResult<InstanceLeaseSnapshot?>(
+                new InstanceLeaseSnapshot("holder-pending", observedExpiry))
+        };
+        var clock = new ControlledLeaseClock(StartUtc);
+        var lifetime = new RecordingHostApplicationLifetime();
+        await using var lease = CreateLease(store, clock, lifetime, "holder-pending",
+            TestOptions with { OperationTimeout = TimeSpan.FromMilliseconds(25) });
+        await lease.AcquireAsync(42, CancellationToken.None);
+
+        clock.AdvanceAndCompleteNextDelay(TestOptions.RenewInterval);
+        await renewalStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await clock.WaitForDelayCountAsync(2);
+        clock.AdvanceAndCompleteNextDelay(TestOptions.UncertainRetryDelay);
+        await clock.WaitForDelayCountAsync(3);
+
+        Assert.Single(store.RenewCalls);
+        Assert.True(lease.IsHeld);
+
+        observedExpiry = StartUtc.AddSeconds(60);
+        pendingRenewal.TrySetResult(true);
+        clock.AdvanceAndCompleteNextDelay(TestOptions.UncertainRetryDelay);
+        await clock.WaitForDelayCountAsync(4);
+
+        Assert.Equal(2, store.RenewCalls.Count);
+        Assert.True(lease.IsHeld);
+        Assert.False(lifetime.StopRequested);
+    }
+
+    [Fact]
+    public async Task Renewal_PendingWriteCannotOutliveSafetyDeadlineOrRestartAfterLateFault()
+    {
+        var pendingRenewal = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var renewalStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new RecordingLeaseStore
+        {
+            Renew = (_, _, _, _, _) =>
+            {
+                renewalStarted.TrySetResult();
+                return pendingRenewal.Task;
+            },
+            Get = (_, _) => Task.FromResult<InstanceLeaseSnapshot?>(
+                new InstanceLeaseSnapshot("holder-deadline", StartUtc + TestOptions.LeaseDuration))
+        };
+        var clock = new ControlledLeaseClock(StartUtc);
+        var lifetime = new RecordingHostApplicationLifetime();
+        await using var lease = CreateLease(store, clock, lifetime, "holder-deadline",
+            TestOptions with { OperationTimeout = TimeSpan.FromMilliseconds(25) });
+        await lease.AcquireAsync(42, CancellationToken.None);
+
+        clock.AdvanceAndCompleteNextDelay(TestOptions.RenewInterval);
+        await renewalStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await clock.WaitForDelayCountAsync(2);
+        clock.SetUtcNow(StartUtc + TestOptions.LeaseDuration - TestOptions.SafetyMargin);
+        clock.CompleteNextDelay();
+        await lifetime.StopRequestedTask.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Single(store.RenewCalls);
+        Assert.False(lease.IsHeld);
+        pendingRenewal.TrySetException(new InvalidOperationException("late Mongo failure"));
+        Assert.False(lease.IsHeld);
+    }
+
+    [Fact]
+    public async Task Renewal_LateFaultSettlesBeforeDeadlineAndAllowsOneLaterRetry()
+    {
+        var pendingRenewal = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var renewalStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new RecordingLeaseStore
+        {
+            Renew = (_, _, _, _, _) =>
+            {
+                renewalStarted.TrySetResult();
+                return pendingRenewal.Task;
+            },
+            Get = (_, _) => Task.FromResult<InstanceLeaseSnapshot?>(
+                new InstanceLeaseSnapshot("holder-late-fault", StartUtc + TestOptions.LeaseDuration))
+        };
+        var clock = new ControlledLeaseClock(StartUtc);
+        var lifetime = new RecordingHostApplicationLifetime();
+        await using var lease = CreateLease(store, clock, lifetime, "holder-late-fault",
+            TestOptions with { OperationTimeout = TimeSpan.FromMilliseconds(25) });
+        await lease.AcquireAsync(42, CancellationToken.None);
+
+        clock.AdvanceAndCompleteNextDelay(TestOptions.RenewInterval);
+        await renewalStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await clock.WaitForDelayCountAsync(2);
+        Assert.Single(store.RenewCalls);
+
+        pendingRenewal.TrySetException(new InvalidOperationException("late Mongo failure"));
+        clock.AdvanceAndCompleteNextDelay(TestOptions.UncertainRetryDelay);
+        await clock.WaitForDelayCountAsync(3);
+
+        Assert.Equal(2, store.RenewCalls.Count);
+        Assert.True(lease.IsHeld);
+        Assert.False(lifetime.StopRequested);
+    }
+
+    [Fact]
     public async Task Renewal_FencedByAnotherHolderRequestsShutdownImmediately()
     {
         var store = new RecordingLeaseStore

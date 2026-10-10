@@ -221,6 +221,35 @@ public sealed class MongoInstanceLeaseStoreIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task LateRenewalWithOlderExpiryCannotShortenNewerConfirmedExpiry()
+    {
+        var scope = CreateScope();
+        try
+        {
+            using var cancellation = new CancellationTokenSource(OperationTimeout);
+            var store = new MongoInstanceLeaseStore(scope.Database);
+            var initialExpiry = StartUtc.AddSeconds(45);
+            var newerExpiry = StartUtc.AddSeconds(75);
+            var olderExpiry = StartUtc.AddSeconds(60);
+            Assert.Equal(InstanceLeaseAcquireResult.Acquired,
+                await store.TryAcquireAsync("bot-1", "holder-a", StartUtc,
+                    initialExpiry, cancellation.Token));
+
+            Assert.True(await store.TryRenewAsync("bot-1", "holder-a",
+                StartUtc.AddSeconds(30), newerExpiry, cancellation.Token));
+            Assert.True(await store.TryRenewAsync("bot-1", "holder-a",
+                StartUtc.AddSeconds(15), olderExpiry, cancellation.Token));
+
+            Assert.Equal(newerExpiry,
+                (await store.GetAsync("bot-1", cancellation.Token))?.ExpiresAtUtc);
+        }
+        finally
+        {
+            await scope.DisposeAsync();
+        }
+    }
+
     private TestDatabaseScope CreateScope()
     {
         var databaseName = $"BeanBotLease_{Guid.NewGuid():N}";

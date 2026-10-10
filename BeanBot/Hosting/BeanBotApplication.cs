@@ -208,7 +208,8 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         var canReleaseInstanceLease = false;
         await RunSynchronousStageAsync(
             "instance-lease-release-state",
-            () => canReleaseInstanceLease = commandServicesDrained &&
+            () => canReleaseInstanceLease = firstFailure is null &&
+                commandServicesDrained &&
                 ownerAlertsDrained &&
                 ownerAlertsStopped &&
                 !_runtime.HasActiveDiscordLifecycleOperation);
@@ -228,7 +229,8 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         var canStopDiscord = false;
         await RunSynchronousStageAsync(
             "discord-startup-state",
-            () => canStopDiscord = commandServicesDrained &&
+            () => canStopDiscord = firstFailure is null &&
+                commandServicesDrained &&
                 !_runtime.HasActiveDiscordLifecycleOperation);
         if (!canStopDiscord)
         {

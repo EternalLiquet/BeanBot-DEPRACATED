@@ -66,6 +66,7 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
     private readonly string _holderId;
     private CancellationTokenSource? _renewalCancellation;
     private Task? _renewalTask;
+    private PendingRenewal? _pendingRenewal;
     private string? _botIdentity;
     private DateTime _knownExpiresAtUtc;
     private bool _held;
@@ -111,6 +112,12 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
         {
             lock (_syncRoot)
             {
+                if (_pendingRenewal is { Operation.IsCompleted: false })
+                {
+                    throw new InvalidOperationException(
+                        "A previous instance lease renewal is still pending.");
+                }
+
                 if (_held)
                 {
                     if (string.Equals(_botIdentity, botIdentity, StringComparison.Ordinal))
@@ -312,11 +319,14 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
 
                 using var safetyCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 safetyCancellation.CancelAfter(remainingSafety);
-                var requestedExpiryUtc = nowUtc + _options.LeaseDuration;
-                var confirmation = await TryRenewAndReconcileAsync(
+                var pendingRenewal = GetOrStartRenewal(
                     botIdentity,
                     nowUtc,
-                    requestedExpiryUtc,
+                    nowUtc + _options.LeaseDuration,
+                    cancellationToken);
+                var confirmation = await TryRenewAndReconcileAsync(
+                    botIdentity,
+                    pendingRenewal,
                     safetyCancellation.Token);
                 if (confirmation.State == LeaseConfirmationState.Held)
                 {
@@ -325,7 +335,10 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
                     {
                         if (_held && string.Equals(_botIdentity, botIdentity, StringComparison.Ordinal))
                         {
-                            _knownExpiresAtUtc = confirmation.ExpiresAtUtc;
+                            if (confirmation.ExpiresAtUtc > _knownExpiresAtUtc)
+                            {
+                                _knownExpiresAtUtc = confirmation.ExpiresAtUtc;
+                            }
                         }
                     }
 
@@ -410,24 +423,71 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
         }
     }
 
-    private async Task<LeaseConfirmation> TryRenewAndReconcileAsync(
+    private PendingRenewal GetOrStartRenewal(
         string botIdentity,
         DateTime nowUtc,
         DateTime requestedExpiryUtc,
         CancellationToken cancellationToken)
     {
-        try
+        lock (_syncRoot)
         {
-            var renewed = await RunBoundedStoreOperationAsync(
-                token => _store.TryRenewAsync(
+            if (_pendingRenewal is { Operation.IsCompleted: false } existing)
+            {
+                return existing;
+            }
+
+            var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            Task<bool> operation;
+            try
+            {
+                operation = _store.TryRenewAsync(
                     botIdentity,
                     _holderId,
                     nowUtc,
                     requestedExpiryUtc,
-                    token),
+                    operationCancellation.Token);
+            }
+            catch
+            {
+                operationCancellation.Dispose();
+                throw;
+            }
+
+            var pending = new PendingRenewal(operation, operationCancellation, requestedExpiryUtc);
+            _pendingRenewal = pending;
+            _ = operation.ContinueWith(
+                completedTask =>
+                {
+                    _ = completedTask.Exception;
+                    lock (_syncRoot)
+                    {
+                        if (ReferenceEquals(_pendingRenewal, pending))
+                        {
+                            _pendingRenewal = null;
+                        }
+                    }
+
+                    operationCancellation.Dispose();
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            return pending;
+        }
+    }
+
+    private async Task<LeaseConfirmation> TryRenewAndReconcileAsync(
+        string botIdentity,
+        PendingRenewal pending,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var renewed = await pending.Operation.WaitAsync(
+                _options.OperationTimeout,
                 cancellationToken);
             return renewed
-                ? LeaseConfirmation.Held(requestedExpiryUtc)
+                ? LeaseConfirmation.Held(pending.RequestedExpiryUtc)
                 : LeaseConfirmation.NotHeld();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -436,6 +496,18 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
         }
         catch (Exception)
         {
+            if (!pending.Operation.IsCompleted)
+            {
+                try
+                {
+                    pending.Cancellation.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Completion disposed the token source after the status check.
+                }
+            }
+
             return await ReconcileAsync(botIdentity, cancellationToken);
         }
     }
@@ -537,4 +609,9 @@ internal sealed class BeanBotInstanceLease : IInstanceLeaseHealth, IAsyncDisposa
         public static LeaseConfirmation Unknown()
             => new(LeaseConfirmationState.Unknown, default);
     }
+
+    private sealed record PendingRenewal(
+        Task<bool> Operation,
+        CancellationTokenSource Cancellation,
+        DateTime RequestedExpiryUtc);
 }

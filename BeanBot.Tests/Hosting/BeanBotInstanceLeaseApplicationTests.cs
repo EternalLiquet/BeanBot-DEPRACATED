@@ -95,6 +95,35 @@ public class BeanBotInstanceLeaseApplicationTests
     }
 
     [Fact]
+    public async Task StopAsync_BlockedEventTeardownDoesNotReleaseLeaseOrDisposeDiscord()
+    {
+        var blockedStop = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var runtime = new RecordingRuntime
+        {
+            BlockedOperation = "stop-edited-message",
+            BlockedCompletion = blockedStop
+        };
+        var application = new BeanBotApplication(
+            runtime,
+            NullLogger<BeanBotApplication>.Instance,
+            TimeSpan.FromMilliseconds(25));
+
+        try
+        {
+            await Assert.ThrowsAsync<TimeoutException>(() => application.StopAsync(CancellationToken.None));
+
+            Assert.Contains("skip-lease-release", runtime.Calls);
+            Assert.DoesNotContain("release-lease", runtime.Calls);
+            Assert.DoesNotContain("dispose-discord", runtime.Calls);
+        }
+        finally
+        {
+            blockedStop.TrySetResult();
+        }
+    }
+
+    [Fact]
     public async Task StopAsync_ActiveDiscordOperationKeepsLeaseForExpiryFallback()
     {
         var runtime = new RecordingRuntime { HasActiveDiscordLifecycleOperation = true };
@@ -146,6 +175,8 @@ public class BeanBotInstanceLeaseApplicationTests
         public bool CommandServicesDrained { get; init; } = true;
         public InvalidOperationException? LeaseAcquisitionFailure { get; init; }
         public InvalidOperationException? OwnerAlertFlushFailure { get; init; }
+        public string? BlockedOperation { get; init; }
+        public TaskCompletionSource? BlockedCompletion { get; init; }
 
         public void SubscribeApplicationEvents() => Calls.Add("subscribe-events");
         public Task StartHealthServerAsync(CancellationToken cancellationToken) => RecordAsync("start-health");
@@ -197,7 +228,9 @@ public class BeanBotInstanceLeaseApplicationTests
         private Task RecordAsync(string operation)
         {
             Calls.Add(operation);
-            return Task.CompletedTask;
+            return operation == BlockedOperation
+                ? BlockedCompletion?.Task ?? Task.CompletedTask
+                : Task.CompletedTask;
         }
     }
 }
