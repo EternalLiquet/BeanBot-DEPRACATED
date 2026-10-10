@@ -1,8 +1,8 @@
 using BeanBot.Configuration;
 using BeanBot.Discord.Commands;
 using BeanBot.Discord.Events;
-using BeanBot.Discord.Interactions;
 using BeanBot.Discord.Fortunes;
+using BeanBot.Discord.Interactions;
 using BeanBot.Discord.Lifecycle;
 using BeanBot.Discord.Media;
 using BeanBot.Discord.Messaging;
