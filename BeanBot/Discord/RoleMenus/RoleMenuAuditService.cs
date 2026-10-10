@@ -492,12 +492,26 @@ internal static class RoleMenuAuditPresentation
         var healthy = result.Items.Count(item => item.Status == RoleMenuAuditStatus.Healthy);
         var broken = result.Items.Count(item => item.Status == RoleMenuAuditStatus.Broken);
         var unknown = result.Items.Count(item => item.Status == RoleMenuAuditStatus.Unknown);
+        var menuNoun = result.Items.Count == 1 ? "role menu" : "role menus";
         var lines = new List<string>
         {
-            $"I checked {result.Items.Count} role menus: **{healthy} Healthy**, " +
-            $"**{broken} Broken**, **{unknown} Unknown**. Fix Broken menus and audit them again; " +
-            "retry Unknown menus later."
+            $"I checked {result.Items.Count} {menuNoun}: **{healthy} Healthy**, " +
+            $"**{broken} Broken**, **{unknown} Unknown**."
         };
+        if (broken > 0)
+        {
+            lines.Add(broken == 1
+                ? "Fix the broken menu and audit it again."
+                : "Fix the broken menus and audit them again.");
+        }
+
+        if (unknown > 0)
+        {
+            lines.Add(unknown == 1
+                ? "Try the unknown menu again later."
+                : "Try the unknown menus again later.");
+        }
+
         foreach (var item in result.Items)
         {
             var reason = item.Status == RoleMenuAuditStatus.Healthy

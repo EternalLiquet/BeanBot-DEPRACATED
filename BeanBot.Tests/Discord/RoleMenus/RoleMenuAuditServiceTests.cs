@@ -436,6 +436,45 @@ public class RoleMenuAuditServiceTests
         Assert.DoesNotContain("saved role-menu state", content, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Presentation_BulkHealthySingleMenu_HasSingularNounAndNoFailureAdvice()
+    {
+        var content = RoleMenuAuditPresentation.Format(
+            new RoleMenuAuditBatchResult(
+                [new RoleMenuAuditItem(ObjectId.GenerateNewId(), RoleMenuAuditStatus.Healthy, "I checked it.")]),
+            null);
+
+        Assert.StartsWith("I checked 1 role menu:", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("Fix the broken", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("Try the unknown", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Presentation_BulkBrokenSingleMenu_ShowsOnlyRelevantNextStep()
+    {
+        var content = RoleMenuAuditPresentation.Format(
+            new RoleMenuAuditBatchResult(
+                [new RoleMenuAuditItem(ObjectId.GenerateNewId(), RoleMenuAuditStatus.Broken, "I couldn't find it.")]),
+            null);
+
+        Assert.StartsWith("I checked 1 role menu:", content, StringComparison.Ordinal);
+        Assert.Contains("Fix the broken menu and audit it again.", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("Try the unknown", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Presentation_BulkUnknownSingleMenu_ShowsOnlyRelevantNextStep()
+    {
+        var content = RoleMenuAuditPresentation.Format(
+            new RoleMenuAuditBatchResult(
+                [new RoleMenuAuditItem(ObjectId.GenerateNewId(), RoleMenuAuditStatus.Unknown, "I couldn't check it.")]),
+            null);
+
+        Assert.StartsWith("I checked 1 role menu:", content, StringComparison.Ordinal);
+        Assert.Contains("Try the unknown menu again later.", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("Fix the broken", content, StringComparison.Ordinal);
+    }
+
     private sealed class Fixture
     {
         internal const ulong GuildId = 1UL;
