@@ -11,21 +11,6 @@ namespace BeanBot.Discord.RoleMenus;
 
 public sealed partial class RoleMenuAdminModule
 {
-    private ReactionRoleService? _legacyReactionRoles;
-
-    public RoleMenuAdminModule(
-        RoleMenuInteractionService roleMenuService,
-        DiscordRoleMenuClient discord,
-        RoleMenuAdministrationService administration,
-        RoleMenuAuditService audit,
-        ReactionRoleService legacyReactionRoles,
-        ILogger<RoleMenuAdminModule> logger)
-        : this(roleMenuService, discord, administration, audit, logger)
-    {
-        _legacyReactionRoles = legacyReactionRoles
-            ?? throw new ArgumentNullException(nameof(legacyReactionRoles));
-    }
-
     [SlashCommand(
         "retire-legacy",
         "Retire a legacy reaction-role panel. Members keep their roles.",
@@ -284,10 +269,7 @@ public sealed partial class RoleMenuAdminModule
             cancellation.Token);
     }
 
-    private ReactionRoleService LegacyReactionRoles
-        => _legacyReactionRoles
-           ?? throw new InvalidOperationException(
-               "Legacy reaction-role retirement dependencies were not configured.");
+    private ReactionRoleService LegacyReactionRoles => _legacyReactionRoles;
 
     private async Task<LegacyReactionRoleRetirementPreview?> CreateLegacyRetirementPreviewAsync(
         ulong messageId,

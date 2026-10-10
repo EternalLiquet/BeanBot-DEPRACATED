@@ -74,14 +74,14 @@ internal static class LegacyReactionRoleRetirementComponents
             ? "Unlabeled legacy panel"
             : preview.Label;
         var sourceText = preview.SourceWasMissing
-            ? "The saved channel/message is already missing. Confirming removes only the stale saved configuration."
+            ? "The panel message or channel is gone. I'll remove its saved settings."
             : $"[Open legacy panel](https://discord.com/channels/{source.GuildId}/{source.ChannelId}/{source.MessageId})";
         var builder = new EmbedBuilder()
             .WithTitle("Retire legacy reaction-role panel?")
             .WithDescription(
                 $"**{RoleMenuText.TruncateWithEllipsis(label, RoleMenuConstants.MaximumTitleLength)}**\n\n" +
                 $"{sourceText}\n\n" +
-                "Bean Bot will revalidate the source, delete the matching legacy panel first, then remove its saved configuration. Existing member roles are not changed.")
+                "I'll delete this panel and its saved settings. Members keep the roles they already have.")
             .WithColor(Color.Red);
 
         for (var index = 0; index < preview.Mappings.Count; index += MappingsPerField)
@@ -93,7 +93,7 @@ internal static class LegacyReactionRoleRetirementComponents
                     .Take(MappingsPerField)
                     .Select(FormatMapping));
             builder.AddField(
-                index == 0 ? "Configured role / emote mappings" : "More mappings",
+                index == 0 ? "Roles and custom emoji" : "More mappings",
                 value);
         }
 
@@ -119,27 +119,27 @@ internal static class LegacyReactionRoleRetirementComponents
         return result.Status switch
         {
             LegacyReactionRoleRetirementStatus.Retired when result.SourceWasMissing =>
-                "The legacy panel was already missing. Bean Bot removed its stale saved configuration. Existing member roles were not changed.",
+                "I removed the saved settings for that missing legacy panel.",
             LegacyReactionRoleRetirementStatus.Retired =>
-                "Legacy reaction-role panel retired. The matching panel and saved configuration are gone. Existing member roles were not changed.",
+                "I retired that legacy role panel and removed its saved settings.",
             LegacyReactionRoleRetirementStatus.StaleConfirmation =>
                 "This confirmation has expired because the saved panel changed. Run `/role-menu retire-legacy` again.",
             LegacyReactionRoleRetirementStatus.AlreadyRetired =>
-                "No saved legacy reaction-role configuration exists for that message. Nothing was changed.",
+                "I couldn't find that saved legacy panel. Run `/role-menu retire-legacy` again to choose another.",
             LegacyReactionRoleRetirementStatus.AuthorizationDenied =>
-                "Bean Bot could not confirm that you still have Manage Roles. Nothing was changed.",
+                "I couldn't confirm you still have Manage Roles. Ask a server administrator to check your permission, then run `/role-menu retire-legacy` again.",
             LegacyReactionRoleRetirementStatus.InvalidSavedConfiguration =>
-                "The saved legacy configuration no longer matches this server and message. Nothing was deleted.",
+                "That saved panel no longer matches this server. Run `/role-menu retire-legacy` again.",
             LegacyReactionRoleRetirementStatus.UnsafeSource =>
-                "The saved message could not be positively identified as the expected Bean Bot legacy role panel. Nothing was deleted.",
+                "I couldn't verify that this is my legacy role panel. Check the message and run `/role-menu retire-legacy` again.",
             LegacyReactionRoleRetirementStatus.PanelDeletionFailed =>
-                "Bean Bot confirmed the legacy panel still exists or changed before deletion. Its saved configuration was kept; inspect the source and retry after correcting it.",
+                "I couldn't delete that legacy panel. Its saved settings are still there. Check the panel and run `/role-menu retire-legacy` again.",
             LegacyReactionRoleRetirementStatus.PanelOutcomeUnknown =>
-                "Bean Bot could not confirm whether Discord deleted the legacy panel. Saved configuration was kept and no automatic retry was attempted. Inspect the source before retrying.",
+                "I couldn't confirm whether Discord deleted that panel. Its saved settings are still there. Check Discord before running `/role-menu retire-legacy` again.",
             LegacyReactionRoleRetirementStatus.PersistenceKept =>
-                "The legacy Discord panel is gone, but its saved configuration could not be removed. Run the retirement command again to finish stale-state cleanup. Existing member roles were not changed.",
+                "The legacy panel is gone, but I couldn't remove its saved settings. Run `/role-menu retire-legacy` again to finish.",
             LegacyReactionRoleRetirementStatus.PersistenceOutcomeUnknown =>
-                "The legacy Discord panel is gone, but Bean Bot could not confirm whether the saved configuration was removed. Run the retirement command again to reconcile the exact source record.",
+                "The legacy panel is gone, but I couldn't confirm whether its saved settings were removed. Run `/role-menu retire-legacy` again to check.",
             _ => throw new ArgumentOutOfRangeException(nameof(result), result.Status, null)
         };
     }

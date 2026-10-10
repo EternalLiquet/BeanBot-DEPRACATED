@@ -1,9 +1,11 @@
 using BeanBot.Discord.Interactions;
+using BeanBot.Discord.ReactionRoles;
 using BeanBot.Discord.RoleMenus;
 using BeanBot.Persistence.Models;
 using BeanBot.Persistence.Repositories;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
+using MongoDB.Driver;
 using Xunit;
 
 namespace BeanBot.Tests.Discord.RoleMenus;
@@ -64,30 +66,40 @@ public class RoleMenuInteractionServiceTests
         var audit = new RoleMenuAuditService(fixture.Service, discord);
         var members = new RoleMenuMemberService(
             fixture.Service, discord, NullLogger<RoleMenuMemberService>.Instance);
+        using var legacy = new ReactionRoleService(
+            new ReactionRoleRepository(
+                new MongoClient("mongodb://127.0.0.1:1").GetDatabase("constructor_test"),
+                NullLogger<ReactionRoleRepository>.Instance),
+            client: null, TimeSpan.FromSeconds(1),
+            NullLogger<ReactionRoleService>.Instance, 8, CancellationToken.None);
 
         Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
             null!,
             discord,
             administration,
             audit,
+            legacy,
             NullLogger<RoleMenuAdminModule>.Instance));
         Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
             fixture.Service,
             discord,
             administration,
             null!,
+            legacy,
             NullLogger<RoleMenuAdminModule>.Instance));
         Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
             fixture.Service,
             discord,
             administration,
             audit,
+            legacy,
             null!));
         _ = new RoleMenuAdminModule(
             fixture.Service,
             discord,
             administration,
             audit,
+            legacy,
             NullLogger<RoleMenuAdminModule>.Instance);
 
         Assert.Throws<ArgumentNullException>(() => new RoleMenuMemberModule(

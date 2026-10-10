@@ -1,5 +1,6 @@
 using System.Reflection;
 using BeanBot.Discord.Interactions;
+using BeanBot.Discord.ReactionRoles;
 using BeanBot.Discord.RoleMenus;
 using BeanBot.Persistence.Repositories;
 using Discord;
@@ -114,6 +115,12 @@ public sealed class RoleMenuCommandRegistrationTests
             var services = new ServiceCollection()
                 .AddSingleton(roleMenus)
                 .AddSingleton(discord)
+                .AddSingleton(new ReactionRoleService(
+                    new ReactionRoleRepository(
+                        new MongoClient("mongodb://127.0.0.1:1").GetDatabase("registration_test"),
+                        NullLogger<ReactionRoleRepository>.Instance),
+                    client: null, TimeSpan.FromSeconds(1),
+                    NullLogger<ReactionRoleService>.Instance, 8, CancellationToken.None))
                 .AddSingleton(new RoleMenuAuditService(roleMenus, discord))
                 .AddSingleton(new RoleMenuAdministrationService(
                     roleMenus,

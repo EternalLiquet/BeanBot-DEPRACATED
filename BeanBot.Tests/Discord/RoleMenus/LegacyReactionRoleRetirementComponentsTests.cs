@@ -23,9 +23,25 @@ public class LegacyReactionRoleRetirementComponentsTests
         Assert.Contains(":smile: → Gamer", mappingText, StringComparison.Ordinal);
         Assert.Contains(":wave: → Reader", mappingText, StringComparison.Ordinal);
         Assert.Contains(
-            "Existing member roles are not changed.",
+            "Members keep the roles they already have.",
             embed.Description,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildConfirmationEmbed_MissingCustomEmojiUsesNameFallbackWithoutRawId()
+    {
+        var preview = new LegacyReactionRoleRetirementPreview(
+            new LegacyReactionRoleSource(1, 2, 3, [4]),
+            "Games", false,
+            [new LegacyReactionRoleRetirementMapping(4, "123456789", null, null)]);
+
+        var embed = LegacyReactionRoleRetirementComponents.BuildConfirmationEmbed(preview);
+        var text = Assert.Single(embed.Fields).Value;
+
+        Assert.Contains("Custom emoji unavailable → Deleted role", text,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("123456789", text, StringComparison.Ordinal);
     }
 
     [Fact]

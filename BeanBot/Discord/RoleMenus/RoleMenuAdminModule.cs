@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Net;
+using BeanBot.Discord.ReactionRoles;
 using BeanBot.Logging;
 using BeanBot.Persistence.Models;
 using BeanBot.Persistence.Repositories;
@@ -10,7 +11,6 @@ using Discord.Net;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
-
 using static BeanBot.Discord.RoleMenus.DiscordRoleMenuClient;
 using static BeanBot.Discord.RoleMenus.RoleMenuPresentation;
 using static BeanBot.Discord.RoleMenus.RoleMenuSetupValidation;
@@ -27,6 +27,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
     private readonly DiscordRoleMenuClient _discord;
     private readonly RoleMenuAdministrationService _administration;
     private readonly RoleMenuAuditService _audit;
+    private readonly ReactionRoleService _legacyReactionRoles;
     private readonly ILogger<RoleMenuAdminModule> _logger;
 
     public RoleMenuAdminModule(
@@ -34,12 +35,15 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         DiscordRoleMenuClient discord,
         RoleMenuAdministrationService administration,
         RoleMenuAuditService audit,
+        ReactionRoleService legacyReactionRoles,
         ILogger<RoleMenuAdminModule> logger)
         : base(roleMenuService)
     {
         _discord = discord ?? throw new ArgumentNullException(nameof(discord));
         _administration = administration ?? throw new ArgumentNullException(nameof(administration));
         _audit = audit ?? throw new ArgumentNullException(nameof(audit));
+        _legacyReactionRoles = legacyReactionRoles
+            ?? throw new ArgumentNullException(nameof(legacyReactionRoles));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
