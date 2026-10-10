@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using BeanBot.Configuration;
 using BeanBot.Discord.Puns;
+using BeanBot.Health;
 using BeanBot.Persistence.Repositories;
 using Discord;
 using Discord.WebSocket;
@@ -22,6 +24,7 @@ public class DailyPunServiceTests
         var options = CreateBeanBotOptions();
         var handler = new DailyPunService(
             client,
+            new DiscordConnectionHealth(),
             options,
             new UnavailablePunProvider(),
             new InMemoryClaimStore(),
@@ -208,6 +211,282 @@ public class DailyPunServiceTests
         Assert.Equal([TimeSpan.FromSeconds(30)], clock.Delays);
         Assert.Equal(3, messages.Count);
         Assert.Equal(1, claimStore.CallCount);
+    }
+
+    [Fact]
+    public async Task RunOccurrenceAsync_RepeatedMissingChannelAlertsOnlyOnce()
+    {
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
+        var clock = new AdvancingPunClock(
+            new DateTimeOffset(2026, 9, 7, 21, 20, 0, TimeSpan.Zero));
+        var logger = new RecordingLogger();
+        var claims = new InMemoryClaimStore();
+        var options = CreateSchedulerOptions(
+            catchUpGraceWindow: TimeSpan.FromSeconds(61),
+            preflightRetryDelay: TimeSpan.FromSeconds(30));
+        await using var handler = CreateHandler(claims, clock, () => null, options, logger: logger);
+        var window = DailyPunService.CreateScheduleWindow(
+            timezone,
+            new DateOnly(2026, 9, 7),
+            ScheduledLocalTime,
+            options.CatchUpGraceWindow);
+
+        var result = await handler.RunOccurrenceAsync(window, timezone, CancellationToken.None);
+
+        Assert.Equal(PunOccurrenceResult.GraceExpired, result);
+        Assert.Equal(1, logger.Levels.Count(level => level == LogLevel.Error));
+        Assert.Contains(logger.Messages, message => message.Contains(
+            "I can't post daily puns because I can't access the chosen channel. Check the channel setting and my access.",
+            StringComparison.Ordinal));
+        Assert.Equal([TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(1)], clock.Delays);
+        Assert.Equal(0, claims.CallCount);
+    }
+
+    [Fact]
+    public async Task RunOccurrenceAsync_WaitsForReadyBeforeAlertingAboutMissingChannel()
+    {
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
+        var clock = new AdvancingPunClock(
+            new DateTimeOffset(2026, 9, 7, 21, 20, 0, TimeSpan.Zero));
+        var logger = new RecordingLogger();
+        var resolverCalls = 0;
+        var errorsBeforeReady = -1;
+        var options = CreateSchedulerOptions(
+            catchUpGraceWindow: TimeSpan.FromSeconds(61),
+            preflightRetryDelay: TimeSpan.FromSeconds(30));
+        await using var handler = CreateHandler(
+            new InMemoryClaimStore(),
+            clock,
+            () =>
+            {
+                resolverCalls++;
+                if (resolverCalls == 2)
+                {
+                    errorsBeforeReady = logger.Levels.Count(level => level == LogLevel.Error);
+                }
+                return null;
+            },
+            options,
+            logger: logger,
+            isGatewayReady: () => resolverCalls >= 2);
+        var window = DailyPunService.CreateScheduleWindow(
+            timezone,
+            new DateOnly(2026, 9, 7),
+            ScheduledLocalTime,
+            options.CatchUpGraceWindow);
+
+        await handler.RunOccurrenceAsync(window, timezone, CancellationToken.None);
+
+        Assert.Equal(4, resolverCalls);
+        Assert.Equal(0, errorsBeforeReady);
+        Assert.Equal(1, logger.Levels.Count(level => level == LogLevel.Error));
+    }
+
+    [Fact]
+    public async Task RunOccurrenceAsync_ConcurrentMissingChecksProduceOneAlert()
+    {
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
+        var clock = new BlockingPunClock(
+            new DateTimeOffset(2026, 9, 7, 21, 20, 0, TimeSpan.Zero),
+            expectedDelays: 2);
+        var logger = new RecordingLogger();
+        await using var handler = CreateHandler(
+            new InMemoryClaimStore(),
+            clock,
+            () => null,
+            logger: logger);
+        var window = DailyPunService.CreateScheduleWindow(
+            timezone,
+            new DateOnly(2026, 9, 7),
+            ScheduledLocalTime,
+            DefaultGraceWindow);
+        using var cancellation = new CancellationTokenSource();
+
+        var first = handler.RunOccurrenceAsync(window, timezone, cancellation.Token);
+        var second = handler.RunOccurrenceAsync(window, timezone, cancellation.Token);
+        await clock.DelayStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => second);
+        Assert.Equal(1, logger.Levels.Count(level => level == LogLevel.Error));
+    }
+
+    [Fact]
+    public async Task RunOccurrenceAsync_StartupMissingStatusKeepsRetriesQuietAndRecoverySends()
+    {
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
+        var clock = new AdvancingPunClock(
+            new DateTimeOffset(2026, 9, 7, 21, 20, 0, TimeSpan.Zero));
+        var logger = new RecordingLogger();
+        var claims = new InMemoryClaimStore();
+        var messages = new List<string>();
+        var resolverCalls = 0;
+        await using var handler = CreateHandler(
+            claims,
+            clock,
+            () => ++resolverCalls <= 2 ? null : CreateRecordingSender(messages),
+            logger: logger,
+            waitForStartupReport: true);
+        handler.RecordStartupChannelStatus(channelUnavailable: true);
+        var window = DailyPunService.CreateScheduleWindow(
+            timezone,
+            new DateOnly(2026, 9, 7),
+            ScheduledLocalTime,
+            DefaultGraceWindow);
+
+        var result = await handler.RunOccurrenceAsync(window, timezone, CancellationToken.None);
+
+        Assert.Equal(PunOccurrenceResult.Attempted, result);
+        Assert.DoesNotContain(LogLevel.Error, logger.Levels);
+        Assert.Equal(3, messages.Count);
+        Assert.Equal(1, claims.CallCount);
+    }
+
+    [Fact]
+    public async Task RunOccurrenceAsync_ReadyBeforeStartupReportDoesNotRaceAnAlert()
+    {
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
+        var clock = new BlockingPunClock(
+            new DateTimeOffset(2026, 9, 7, 21, 20, 0, TimeSpan.Zero));
+        var logger = new RecordingLogger();
+        await using var handler = CreateHandler(
+            new InMemoryClaimStore(),
+            clock,
+            () => null,
+            logger: logger,
+            waitForStartupReport: true);
+        var window = DailyPunService.CreateScheduleWindow(
+            timezone,
+            new DateOnly(2026, 9, 7),
+            ScheduledLocalTime,
+            DefaultGraceWindow);
+        using var cancellation = new CancellationTokenSource();
+
+        var running = handler.RunOccurrenceAsync(window, timezone, cancellation.Token);
+        await clock.DelayStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.DoesNotContain(LogLevel.Error, logger.Levels);
+        handler.RecordStartupChannelStatus(channelUnavailable: true);
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => running);
+        Assert.DoesNotContain(LogLevel.Error, logger.Levels);
+    }
+
+    [Fact]
+    public async Task RunOccurrenceAsync_HealthyStartupAllowsOneLaterMissingAlert()
+    {
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
+        var clock = new AdvancingPunClock(
+            new DateTimeOffset(2026, 9, 7, 21, 20, 0, TimeSpan.Zero));
+        var logger = new RecordingLogger();
+        var options = CreateSchedulerOptions(
+            catchUpGraceWindow: TimeSpan.FromSeconds(61),
+            preflightRetryDelay: TimeSpan.FromSeconds(30));
+        await using var handler = CreateHandler(
+            new InMemoryClaimStore(),
+            clock,
+            () => null,
+            options,
+            logger: logger,
+            waitForStartupReport: true);
+        handler.RecordStartupChannelStatus(channelUnavailable: false);
+        var window = DailyPunService.CreateScheduleWindow(
+            timezone,
+            new DateOnly(2026, 9, 7),
+            ScheduledLocalTime,
+            options.CatchUpGraceWindow);
+
+        await handler.RunOccurrenceAsync(window, timezone, CancellationToken.None);
+
+        Assert.Equal(1, logger.Levels.Count(level => level == LogLevel.Error));
+    }
+
+    [Fact]
+    public async Task RunOccurrenceAsync_OtherPostingErrorIsStillLoggedAfterChannelAlert()
+    {
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
+        var clock = new AdvancingPunClock(
+            new DateTimeOffset(2026, 9, 7, 21, 20, 0, TimeSpan.Zero));
+        var logger = new RecordingLogger();
+        var resolverCalls = 0;
+        await using var handler = CreateHandler(
+            new InMemoryClaimStore(),
+            clock,
+            () => ++resolverCalls == 1
+                ? null
+                : (_, _) => Task.FromException(new InvalidOperationException("send failed")),
+            logger: logger);
+        var window = DailyPunService.CreateScheduleWindow(
+            timezone,
+            new DateOnly(2026, 9, 7),
+            ScheduledLocalTime,
+            DefaultGraceWindow);
+
+        var result = await handler.RunOccurrenceAsync(window, timezone, CancellationToken.None);
+
+        Assert.Equal(PunOccurrenceResult.Attempted, result);
+        Assert.Equal(2, logger.Levels.Count(level => level == LogLevel.Error));
+    }
+
+    [Fact]
+    public async Task RunOccurrenceAsync_RecoveryAndLaterFailureDoNotRearmAlert()
+    {
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
+        var clock = new AdvancingPunClock(
+            new DateTimeOffset(2026, 9, 7, 21, 20, 0, TimeSpan.Zero));
+        var logger = new RecordingLogger();
+        var claims = new InMemoryClaimStore();
+        var messages = new List<string>();
+        var resolverCalls = 0;
+        var channelAvailable = true;
+        await using var handler = CreateHandler(
+            claims,
+            clock,
+            () =>
+            {
+                resolverCalls++;
+                return channelAvailable && resolverCalls > 2
+                    ? CreateRecordingSender(messages)
+                    : null;
+            },
+            logger: logger);
+        var firstWindow = DailyPunService.CreateScheduleWindow(
+            timezone,
+            new DateOnly(2026, 9, 7),
+            ScheduledLocalTime,
+            DefaultGraceWindow);
+
+        var firstResult = await handler.RunOccurrenceAsync(firstWindow, timezone, CancellationToken.None);
+        Assert.Equal(1, logger.Levels.Count(level => level == LogLevel.Error));
+        channelAvailable = false;
+        var secondWindow = DailyPunService.CreateScheduleWindow(
+            timezone,
+            new DateOnly(2026, 9, 8),
+            ScheduledLocalTime,
+            DefaultGraceWindow);
+        var secondResult = await handler.RunOccurrenceAsync(secondWindow, timezone, CancellationToken.None);
+
+        Assert.Equal(PunOccurrenceResult.Attempted, firstResult);
+        Assert.Equal(PunOccurrenceResult.GraceExpired, secondResult);
+        Assert.Equal(3, messages.Count);
+        Assert.Equal(1, claims.CallCount);
+        Assert.Equal(1, logger.Levels.Count(level => level == LogLevel.Error));
+
+        var restartLogger = new RecordingLogger();
+        await using var restarted = CreateHandler(
+            claims,
+            clock,
+            () => null,
+            logger: restartLogger);
+        var thirdWindow = DailyPunService.CreateScheduleWindow(
+            timezone,
+            new DateOnly(2026, 9, 9),
+            ScheduledLocalTime,
+            DefaultGraceWindow);
+        await restarted.RunOccurrenceAsync(thirdWindow, timezone, CancellationToken.None);
+
+        Assert.Equal(1, restartLogger.Levels.Count(level => level == LogLevel.Error));
     }
 
     [Fact]
@@ -581,16 +860,20 @@ public class DailyPunServiceTests
         TimeProvider clock,
         Func<Func<string, RequestOptions, Task>?> resolveSendMessage,
         PunSchedulerOptions? schedulerOptions = null,
-        DailyPunSchedule? schedule = null)
+        DailyPunSchedule? schedule = null,
+        ILogger<DailyPunService>? logger = null,
+        Func<bool>? isGatewayReady = null,
+        bool waitForStartupReport = false)
         => new(
-            123,
             new StaticPunProvider("test pun"),
             claimStore,
             resolveSendMessage,
             clock,
             schedulerOptions ?? CreateSchedulerOptions(),
-            NullLogger<DailyPunService>.Instance,
-            schedule ?? DailyPunSchedule.CreateDefault());
+            logger ?? NullLogger<DailyPunService>.Instance,
+            schedule ?? DailyPunSchedule.CreateDefault(),
+            isGatewayReady ?? (() => true),
+            waitForStartupReport);
 
     private static PunSchedulerOptions CreateSchedulerOptions(
         TimeSpan? catchUpGraceWindow = null,
@@ -714,22 +997,27 @@ public class DailyPunServiceTests
         }
     }
 
-    private sealed class BlockingPunClock(DateTimeOffset utcNow) : TimeProvider
+    private sealed class BlockingPunClock(DateTimeOffset utcNow, int expectedDelays = 1) : TimeProvider
     {
+        private int _delayCount;
         public override DateTimeOffset GetUtcNow() => utcNow;
         public TaskCompletionSource DelayStarted { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
-            DelayStarted.TrySetResult();
+            if (Interlocked.Increment(ref _delayCount) == expectedDelays)
+            {
+                DelayStarted.TrySetResult();
+            }
             return base.CreateTimer(callback, state, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         }
     }
 
-    private sealed class RecordingLogger : ILogger
+    private sealed class RecordingLogger : ILogger<DailyPunService>
     {
-        public List<LogLevel> Levels { get; } = [];
+        public ConcurrentQueue<LogLevel> Levels { get; } = new();
+        public ConcurrentQueue<string> Messages { get; } = new();
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public bool IsEnabled(LogLevel logLevel) => true;
         public void Log<TState>(
@@ -738,6 +1026,9 @@ public class DailyPunServiceTests
             TState state,
             Exception? exception,
             Func<TState, Exception?, string> formatter)
-            => Levels.Add(logLevel);
+        {
+            Levels.Enqueue(logLevel);
+            Messages.Enqueue(formatter(state, exception));
+        }
     }
 }

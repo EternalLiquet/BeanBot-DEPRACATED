@@ -39,8 +39,14 @@ internal static partial class BeanBotLog
     [LoggerMessage(Level = LogLevel.Information, Message = "Posting daily pun at {LocalTime} Chicago")]
     internal static partial void PunPosting(ILogger logger, DateTimeOffset localTime);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "Could not find general channel with ID {ChannelId} to post daily pun")]
-    internal static partial void PunChannelMissing(ILogger logger, ulong channelId);
+    [LoggerMessage(Level = LogLevel.Error, Message = "I can't post daily puns because I can't access the chosen channel. Check the channel setting and my access.")]
+    internal static partial void PunChannelMissing(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not queue BeanBot startup report")]
+    internal static partial void StartupReportFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not inspect daily pun channel for startup report")]
+    internal static partial void StartupChannelCheckFailed(ILogger logger, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Loaded {PunCount} puns from {ResourcePath}")]
     internal static partial void PunResourceLoaded(ILogger logger, int punCount, string resourcePath);

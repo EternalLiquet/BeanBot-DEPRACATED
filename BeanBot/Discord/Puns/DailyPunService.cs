@@ -1,5 +1,6 @@
 using System.Globalization;
 using BeanBot.Configuration;
+using BeanBot.Health;
 using BeanBot.Logging;
 using BeanBot.Persistence.Repositories;
 using Discord;
@@ -10,10 +11,10 @@ namespace BeanBot.Discord.Puns;
 
 public sealed partial class DailyPunService : IAsyncDisposable
 {
-    private readonly ulong _generalChannelId;
     private readonly IPunProvider _punProvider;
     private readonly IDailyPunClaimStore _claimStore;
     private readonly Func<Func<string, RequestOptions, Task>?> _resolveSendMessage;
+    private readonly Func<bool> _isGatewayReady;
     private readonly TimeProvider _timeProvider;
     private readonly DailyPunSchedule _schedule;
     private Task<DailyPunClaimResult>? _pendingClaim;
@@ -22,59 +23,77 @@ public sealed partial class DailyPunService : IAsyncDisposable
     private readonly CancellationTokenSource _tokenSource = new();
     private Task? _runner;
     private int _disposed;
+    private int _missingChannelAlertLogged;
+    private int _startupChannelChecked;
 
     internal static readonly TimeSpan MessageSendTimeout = TimeSpan.FromSeconds(10);
 
     public DailyPunService(
         DiscordSocketClient discordSocketClient,
+        DiscordConnectionHealth connectionHealth,
         BeanBotOptions options,
         IPunProvider punProvider,
         IDailyPunClaimStore claimStore,
         ILogger<DailyPunService> logger)
-        : this(discordSocketClient, options, punProvider, claimStore, logger, TimeProvider.System)
+        : this(discordSocketClient, connectionHealth, options, punProvider, claimStore, logger, TimeProvider.System)
     {
     }
 
     internal DailyPunService(
         DiscordSocketClient discordSocketClient,
+        DiscordConnectionHealth connectionHealth,
         BeanBotOptions options,
         IPunProvider punProvider,
         IDailyPunClaimStore claimStore,
         ILogger<DailyPunService> logger,
         TimeProvider timeProvider)
         : this(
-            options.GeneralChannelId,
             punProvider,
             claimStore,
             () => ResolveSender(discordSocketClient, options.GeneralChannelId),
             timeProvider,
             PunSchedulerOptions.Default,
             logger,
-            options.DailyPun)
+            options.DailyPun,
+            () => connectionHealth.CreateSnapshot(discordSocketClient).IsHealthy,
+            waitForStartupReport: true)
     {
         ArgumentNullException.ThrowIfNull(discordSocketClient);
+        ArgumentNullException.ThrowIfNull(connectionHealth);
     }
 
     internal DailyPunService(
-        ulong generalChannelId,
         IPunProvider punProvider,
         IDailyPunClaimStore claimStore,
         Func<Func<string, RequestOptions, Task>?> resolveSendMessage,
         TimeProvider timeProvider,
         PunSchedulerOptions schedulerOptions,
         ILogger<DailyPunService> logger,
-        DailyPunSchedule schedule)
+        DailyPunSchedule schedule,
+        Func<bool> isGatewayReady,
+        bool waitForStartupReport = false)
     {
-        _generalChannelId = generalChannelId;
         _punProvider = punProvider ?? throw new ArgumentNullException(nameof(punProvider));
         _claimStore = claimStore ?? throw new ArgumentNullException(nameof(claimStore));
         _resolveSendMessage = resolveSendMessage ?? throw new ArgumentNullException(nameof(resolveSendMessage));
+        _isGatewayReady = isGatewayReady ?? throw new ArgumentNullException(nameof(isGatewayReady));
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _schedule = schedule ?? throw new ArgumentNullException(nameof(schedule));
         _schedulerOptions = schedulerOptions ?? throw new ArgumentNullException(nameof(schedulerOptions));
         ValidateSchedulerOptions(_schedulerOptions);
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _startupChannelChecked = waitForStartupReport ? 0 : 1;
         BeanBotLog.PunServiceInitializing(_logger);
+    }
+
+    internal void RecordStartupChannelStatus(bool channelUnavailable)
+    {
+        if (channelUnavailable)
+        {
+            Interlocked.Exchange(ref _missingChannelAlertLogged, 1);
+        }
+
+        Volatile.Write(ref _startupChannelChecked, 1);
     }
 
     private static Func<string, RequestOptions, Task>? ResolveSender(
@@ -178,7 +197,12 @@ public sealed partial class DailyPunService : IAsyncDisposable
             var sendMessage = _resolveSendMessage();
             if (sendMessage is null)
             {
-                BeanBotLog.PunChannelMissing(_logger, _generalChannelId);
+                if (_isGatewayReady()
+                    && Volatile.Read(ref _startupChannelChecked) != 0
+                    && Interlocked.CompareExchange(ref _missingChannelAlertLogged, 1, 0) == 0)
+                {
+                    BeanBotLog.PunChannelMissing(_logger);
+                }
                 if (!await DelayForPreSendRetryAsync(window, localDate, "channel-unavailable", token))
                 {
                     return PunOccurrenceResult.GraceExpired;
