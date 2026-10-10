@@ -107,12 +107,32 @@ public class RoleMenuInteractionMetadataTests
     }
 
     [Fact]
+    public void RepairCommand_UsesIdFreePickerAndOptionalTextChannelTarget()
+    {
+        var method = Assert.IsAssignableFrom<MethodInfo>(
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.RepairAsync)));
+        var command = method.GetCustomAttribute<SlashCommandAttribute>();
+        var parameters = method.GetParameters();
+
+        Assert.NotNull(command);
+        Assert.Equal("repair", command.Name);
+        Assert.Equal(RunMode.Sync, command.RunMode);
+        var parameter = Assert.Single(parameters);
+        Assert.Equal(typeof(ITextChannel), parameter.ParameterType);
+        Assert.True(parameter.HasDefaultValue);
+        Assert.Null(parameter.DefaultValue);
+    }
+
+    [Fact]
     public void MutatingHandlers_UseSynchronousInteractionRunMode()
     {
         var methods = new[]
         {
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.HandleCreateModalAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.PublishAsync)),
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ConfirmRepairAsync)),
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ChangeRepairPageAsync)),
+            typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.SelectRepairAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ConfirmDeleteAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.ChangeDeletePageAsync)),
             typeof(RoleMenuAdminModule).GetMethod(nameof(RoleMenuAdminModule.SelectDeleteAsync)),

@@ -274,8 +274,17 @@ internal static class RoleMenuPublicationWorkflow
             RoleMenuConstants.PanelReconciliationSearchLimit,
             cancellationToken);
         ArgumentNullException.ThrowIfNull(recentPanels);
-        return recentPanels.FirstOrDefault(
-            panel => IsExpectedPanel(panel, draft, botUserId));
+        var matchingPanels = recentPanels
+            .Where(panel => IsExpectedPanel(panel, draft, botUserId))
+            .Take(2)
+            .ToArray();
+        if (matchingPanels.Length > 1)
+        {
+            throw new InvalidOperationException(
+                "Multiple matching role-menu panels were found in the target channel.");
+        }
+
+        return matchingPanels.FirstOrDefault();
     }
 
     private static bool IsExpectedPanel(

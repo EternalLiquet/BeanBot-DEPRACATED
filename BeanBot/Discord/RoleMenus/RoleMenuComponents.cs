@@ -264,7 +264,7 @@ internal static class RoleMenuComponents
             ? "Members can choose one"
             : "Members can choose any number";
 
-    private static string DescribeMenuForSelector(
+    internal static string DescribeMenuForSelector(
         RoleMenuSettings menu,
         Func<ulong, string?> getChannelName)
     {
