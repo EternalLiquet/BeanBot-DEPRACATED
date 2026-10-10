@@ -65,7 +65,9 @@ public class RoleMenuServiceIntegrationTests
             fixture.Settings.Id, 1UL, 4UL, 5UL, 999UL, 2UL, 3UL, true, CancellationToken.None);
 
         Assert.Null(selector.Components);
-        Assert.Contains("invalid", selector.Content, StringComparison.Ordinal);
+        Assert.Equal(
+            "This role menu isn't working anymore. Ask a server admin to set it up again.",
+            selector.Content);
         Assert.Equal(0, fixture.UserReads);
         Assert.Empty(fixture.Mutations);
     }

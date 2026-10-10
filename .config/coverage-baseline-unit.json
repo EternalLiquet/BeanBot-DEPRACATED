@@ -1,0 +1,6 @@
+{
+  "scope": "non-Mongo",
+  "lineRate": 0.7630,
+  "branchRate": 0.6943,
+  "tolerance": 0.01
+}
