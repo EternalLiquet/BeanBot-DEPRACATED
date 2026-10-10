@@ -248,9 +248,38 @@ public class RoleMenuComponentsTests
     [Fact]
     public void FormatCreatedAt_ShowsRelativeAge()
     {
-        var created = DateTime.UtcNow.AddHours(-2).AddMinutes(-5);
+        var now = new DateTime(2026, 10, 10, 12, 0, 0, DateTimeKind.Utc);
+        var created = now.AddHours(-2).AddMinutes(-5);
 
-        Assert.Equal("Created 2 hours ago", RoleMenuComponents.FormatCreatedAt(created));
+        Assert.Equal("Created 2 hours ago", RoleMenuComponents.FormatCreatedAt(created, now));
+    }
+
+    [Theory]
+    [InlineData(0, "Created just now")]
+    [InlineData(59, "Created just now")]
+    [InlineData(60, "Created 1 minute ago")]
+    [InlineData(120, "Created 2 minutes ago")]
+    [InlineData(3599, "Created 59 minutes ago")]
+    [InlineData(3600, "Created 1 hour ago")]
+    [InlineData(7200, "Created 2 hours ago")]
+    [InlineData(86399, "Created 23 hours ago")]
+    [InlineData(86400, "Created 1 day ago")]
+    [InlineData(172800, "Created 2 days ago")]
+    public void FormatCreatedAt_UsesWholeAgeUnits(int elapsedSeconds, string expected)
+    {
+        var now = new DateTime(2026, 10, 10, 12, 0, 0, DateTimeKind.Utc);
+
+        Assert.Equal(expected, RoleMenuComponents.FormatCreatedAt(now.AddSeconds(-elapsedSeconds), now));
+    }
+
+    [Fact]
+    public void FormatCreatedAt_HandlesUnknownFutureAndOldDates()
+    {
+        var now = new DateTime(2026, 10, 10, 12, 0, 0, DateTimeKind.Utc);
+
+        Assert.Equal("Creation date unknown", RoleMenuComponents.FormatCreatedAt(default, now));
+        Assert.Equal("Creation date unknown", RoleMenuComponents.FormatCreatedAt(now.AddSeconds(1), now));
+        Assert.Equal("Created 26 years ago", RoleMenuComponents.FormatCreatedAt(now.AddYears(-26), now));
     }
 
     [Fact]
@@ -264,7 +293,8 @@ public class RoleMenuComponentsTests
         var select = GetSelect(RoleMenuComponents.BuildDeleteSelector(
             userId,
             new RoleMenuDeletionPage([stale, normal], null, null),
-            channelId => channelId == 2UL ? "roles" : null));
+            channelId => channelId == 2UL ? "roles" : null,
+            new DateTime(2026, 10, 10, 14, 5, 0, DateTimeKind.Utc)));
 
         Assert.Equal(RoleMenuCustomIds.DeleteSelect(userId), select.CustomId);
         Assert.Equal(1, select.MinValues);
@@ -278,7 +308,24 @@ public class RoleMenuComponentsTests
             select.Options,
             option => option.Value == normal.Id.ToString());
         Assert.Equal("Music", normalOption.Label);
-        Assert.Equal("#roles • Created Aug 20, 2026, 2:05 PM UTC", normalOption.Description);
+        Assert.Equal("#roles • Created 51 days ago", normalOption.Description);
+    }
+
+    [Fact]
+    public void BuildDeleteSelector_RecalculatesAgeWhenRenderedAgain()
+    {
+        var menu = CreateSettings(RoleMenuSelectionMode.Multiple, "Games");
+        var created = new DateTime(2026, 10, 10, 10, 0, 0, DateTimeKind.Utc);
+        menu.CreatedAtUtc = created;
+        var page = new RoleMenuDeletionPage([menu], null, null);
+
+        var first = GetSelect(RoleMenuComponents.BuildDeleteSelector(
+            123UL, page, _ => "roles", created.AddMinutes(2)));
+        var later = GetSelect(RoleMenuComponents.BuildDeleteSelector(
+            123UL, page, _ => "roles", created.AddHours(2)));
+
+        Assert.Equal("#roles • Created 2 minutes ago", Assert.Single(first.Options).Description);
+        Assert.Equal("#roles • Created 2 hours ago", Assert.Single(later.Options).Description);
     }
 
     [Theory]
@@ -310,7 +357,8 @@ public class RoleMenuComponentsTests
         var select = GetSelect(RoleMenuComponents.BuildDeleteSelector(
             123UL,
             new RoleMenuDeletionPage([sameChannel, first, otherChannel], null, null),
-            channelId => channelId == 234567890123456789UL ? "roles" : "games"));
+            channelId => channelId == 234567890123456789UL ? "roles" : "games",
+            new DateTime(2026, 10, 10, 18, 30, 0, DateTimeKind.Utc)));
 
         Assert.Equal(3, select.Options.Count);
         Assert.All(select.Options, option => Assert.Equal("Game Roles", option.Label));
@@ -471,12 +519,13 @@ public class RoleMenuComponentsTests
 
         var embed = RoleMenuComponents.BuildDeleteConfirmationEmbed(
             settings,
-            RoleMenuPanelState.Current);
+            RoleMenuPanelState.Current,
+            new DateTime(2026, 10, 10, 11, 15, 0, DateTimeKind.Utc));
 
         Assert.Equal("Game Roles", embed.Title);
         Assert.Equal(
             "In <#2>\n2 roles members can choose • Members can choose any number\n" +
-            "Created Oct 10, 2026, 9:15 AM UTC\n\nMembers keep the roles they already have.",
+            "Created 2 hours ago\n\nMembers keep the roles they already have.",
             embed.Description);
     }
 

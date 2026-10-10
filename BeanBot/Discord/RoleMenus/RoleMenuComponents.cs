@@ -139,10 +139,12 @@ internal static class RoleMenuComponents
     internal static MessageComponent BuildDeleteSelector(
         ulong userId,
         RoleMenuDeletionPage page,
-        Func<ulong, string?> getChannelName)
+        Func<ulong, string?> getChannelName,
+        DateTime? nowUtc = null)
     {
         ArgumentNullException.ThrowIfNull(page);
         ArgumentNullException.ThrowIfNull(getChannelName);
+        var renderedAtUtc = nowUtc ?? DateTime.UtcNow;
         var components = new ComponentBuilder();
         if (page.Menus.Count > 0)
         {
@@ -159,7 +161,7 @@ internal static class RoleMenuComponents
                         SelectMenuOptionBuilder.MaxSelectLabelLength),
                     menu.Id.ToString(),
                     RoleMenuText.TruncateWithEllipsis(
-                        DescribeMenuForSelector(menu, getChannelName),
+                        DescribeMenuForSelector(menu, getChannelName, renderedAtUtc),
                         SelectMenuOptionBuilder.MaxDescriptionLength));
             }
 
@@ -195,7 +197,8 @@ internal static class RoleMenuComponents
 
     internal static Embed BuildDeleteConfirmationEmbed(
         RoleMenuSettings settings,
-        RoleMenuPanelState panelState)
+        RoleMenuPanelState panelState,
+        DateTime? nowUtc = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         var title = RoleMenuText.TruncateWithEllipsis(
@@ -210,7 +213,7 @@ internal static class RoleMenuComponents
         lines.Add(
             $"{FormatChoosableRoleCount(settings.RoleIds.Count)} • " +
             FormatSelectionMode(settings.SelectionMode));
-        lines.Add(FormatCreatedAt(settings.CreatedAtUtc));
+        lines.Add(FormatCreatedAt(settings.CreatedAtUtc, nowUtc ?? DateTime.UtcNow));
         var panelNote = panelState switch
         {
             RoleMenuPanelState.MessageMissing => "The menu's message was deleted.",
@@ -252,12 +255,46 @@ internal static class RoleMenuComponents
     internal static string GetDisplayTitle(string? title)
         => RoleMenuText.HasVisibleText(title) ? title!.Trim() : UntitledMenuName;
 
-    internal static string FormatCreatedAt(DateTime createdAtUtc)
-        => createdAtUtc == default
-            ? "Creation date unknown"
-            : "Created " +
-              createdAtUtc.ToString("MMM d, yyyy, h:mm tt", CultureInfo.InvariantCulture) +
-              " UTC";
+    internal static string FormatCreatedAt(DateTime createdAtUtc, DateTime? nowUtc = null)
+    {
+        var renderedAtUtc = nowUtc ?? DateTime.UtcNow;
+        if (createdAtUtc == default || createdAtUtc > renderedAtUtc)
+        {
+            return "Creation date unknown";
+        }
+
+        var age = renderedAtUtc - createdAtUtc;
+        if (age < TimeSpan.FromMinutes(1))
+        {
+            return "Created just now";
+        }
+
+        long amount;
+        string unit;
+        if (age < TimeSpan.FromHours(1))
+        {
+            amount = (long)age.TotalMinutes;
+            unit = "minute";
+        }
+        else if (age < TimeSpan.FromDays(1))
+        {
+            amount = (long)age.TotalHours;
+            unit = "hour";
+        }
+        else if (age < TimeSpan.FromDays(365))
+        {
+            amount = (long)age.TotalDays;
+            unit = "day";
+        }
+        else
+        {
+            amount = (long)(age.TotalDays / 365);
+            unit = "year";
+        }
+
+        return $"Created {amount.ToString(CultureInfo.InvariantCulture)} " +
+               $"{unit}{(amount == 1 ? "" : "s")} ago";
+    }
 
     private static string FormatSelectionMode(RoleMenuSelectionMode selectionMode)
         => selectionMode == RoleMenuSelectionMode.Exclusive
@@ -266,7 +303,8 @@ internal static class RoleMenuComponents
 
     internal static string DescribeMenuForSelector(
         RoleMenuSettings menu,
-        Func<ulong, string?> getChannelName)
+        Func<ulong, string?> getChannelName,
+        DateTime? nowUtc = null)
     {
         var channelName = RoleMenuCustomIds.TryParseSnowflake(menu.ChannelId, out var channelId)
             ? getChannelName(channelId)
@@ -274,7 +312,7 @@ internal static class RoleMenuComponents
         var channel = string.IsNullOrWhiteSpace(channelName)
             ? "Unknown channel"
             : "#" + RoleMenuText.TruncateWithEllipsis(channelName, 40);
-        return $"{channel} • {FormatCreatedAt(menu.CreatedAtUtc)}";
+        return $"{channel} • {FormatCreatedAt(menu.CreatedAtUtc, nowUtc)}";
     }
 
     internal static string FormatChoosableRoleCount(int roleCount)
