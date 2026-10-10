@@ -179,5 +179,8 @@ public class ReactionRoleRepositoryTests
             string messageId,
             CancellationToken cancellationToken)
             => GetByMessageId(messageId, cancellationToken);
+
+        public Task<bool> DeleteBindingAsync(ReactionRoleSettings settings, CancellationToken cancellationToken)
+            => Task.FromResult(false);
     }
 }

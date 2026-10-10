@@ -14,6 +14,7 @@ internal interface IReactionRoleSettingsStore
         int limit,
         CancellationToken cancellationToken);
     Task<ReactionRoleSettings?> GetByMessageIdAsync(string messageId, CancellationToken cancellationToken);
+    Task<bool> DeleteBindingAsync(ReactionRoleSettings settings, CancellationToken cancellationToken);
 }
 
 internal sealed class MongoReactionRoleSettingsStore : IReactionRoleSettingsStore
@@ -50,6 +51,17 @@ internal sealed class MongoReactionRoleSettingsStore : IReactionRoleSettingsStor
         var filter = Builders<ReactionRoleSettings>.Filter.Where(
             document => document.MessageId == messageId);
         return await _roleSettings.Find(filter).FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<bool> DeleteBindingAsync(ReactionRoleSettings settings, CancellationToken cancellationToken)
+    {
+        var filters = Builders<ReactionRoleSettings>.Filter;
+        var filter = filters.And(
+            filters.Eq(document => document.Id, settings.Id),
+            filters.Eq(document => document.GuildId, settings.GuildId),
+            filters.Eq(document => document.ChannelId, settings.ChannelId),
+            filters.Eq(document => document.MessageId, settings.MessageId));
+        return (await _roleSettings.DeleteOneAsync(filter, cancellationToken)).DeletedCount == 1;
     }
 }
 
@@ -103,5 +115,23 @@ public sealed class ReactionRoleRepository
         return _reactionRoleSettingsStore.GetByMessageIdAsync(
             messageId.ToString(CultureInfo.InvariantCulture),
             cancellationToken);
+    }
+
+    public async Task<bool> DeleteBindingAsync(
+        ReactionRoleSettings settings,
+        string guildId,
+        string channelId,
+        string messageId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (settings.GuildId != guildId || settings.ChannelId != channelId
+            || settings.MessageId != messageId)
+        {
+            return false;
+        }
+
+        return await _reactionRoleSettingsStore.DeleteBindingAsync(settings, cancellationToken);
     }
 }

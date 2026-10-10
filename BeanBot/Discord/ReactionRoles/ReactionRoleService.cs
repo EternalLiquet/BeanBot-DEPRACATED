@@ -27,6 +27,7 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
     private readonly CancellationTokenSource _shutdownCancellation;
     private readonly CancellationToken _shutdownToken;
     private volatile bool _cacheLoaded;
+    private long _cacheGeneration;
     private bool _stopping;
     private int _disposeStarted;
 
@@ -271,13 +272,62 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
             return cached;
         }
 
+        var generation = Volatile.Read(ref _cacheGeneration);
         var roleSetting = await _reactionRoleRepository.GetRoleSetting(messageId, cancellationToken);
-        if (roleSetting != null && !string.IsNullOrWhiteSpace(roleSetting.MessageId))
+        await _cacheLock.WaitAsync(cancellationToken);
+        try
         {
-            _roleSettings.Set(roleSetting);
+            if (generation != _cacheGeneration)
+            {
+                return null;
+            }
+
+            if (roleSetting != null && !string.IsNullOrWhiteSpace(roleSetting.MessageId))
+            {
+                _roleSettings.Set(roleSetting);
+            }
+        }
+        finally
+        {
+            _cacheLock.Release();
         }
 
         return roleSetting;
+    }
+
+    internal async Task<bool> DeleteSavedPanelAsync(
+        ulong guildId,
+        ulong channelId,
+        ulong messageId,
+        CancellationToken cancellationToken)
+    {
+        await _cacheLock.WaitAsync(cancellationToken);
+        try
+        {
+            var settings = await _reactionRoleRepository.GetRoleSetting(messageId, cancellationToken);
+            if (settings is null)
+            {
+                return false;
+            }
+
+            var deleted = await _reactionRoleRepository.DeleteBindingAsync(
+                settings,
+                guildId.ToString(CultureInfo.InvariantCulture),
+                channelId.ToString(CultureInfo.InvariantCulture),
+                messageId.ToString(CultureInfo.InvariantCulture),
+                cancellationToken);
+            if (deleted)
+            {
+                _cacheGeneration++;
+                _roleSettings.Remove(settings.MessageId);
+            }
+
+            return deleted;
+        }
+        finally
+        {
+            _cacheLock.Release();
+        }
     }
 
     private async Task EnsureCacheLoadedAsync(CancellationToken cancellationToken)

@@ -439,5 +439,8 @@ public class ReactionRoleServiceTests
             GetByMessageIdCallCount++;
             return GetByMessageId(messageId, cancellationToken);
         }
+
+        public Task<bool> DeleteBindingAsync(ReactionRoleSettings settings, CancellationToken cancellationToken)
+            => Task.FromResult(false);
     }
 }

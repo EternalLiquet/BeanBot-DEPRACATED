@@ -9,6 +9,42 @@ namespace BeanBot.Tests.Discord.ReactionRoles;
 public class ReactionRoleServiceCacheConcurrencyTests
 {
     [Fact]
+    public async Task DeletedPanel_StopsInFlightFallbackFromRestoringStaleCache()
+    {
+        var setting = CreateRoleSettings("42");
+        var fallbackStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFallback = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        ReactionRoleSettings? current = setting;
+        var store = new CoordinatedReactionRoleSettingsStore
+        {
+            GetByMessageId = async (_, token) =>
+            {
+                if (Interlocked.Increment(ref reads) == 1)
+                {
+                    fallbackStarted.SetResult();
+                    await releaseFallback.Task.WaitAsync(token);
+                }
+                return current;
+            },
+            Delete = (_, _) =>
+            {
+                current = null;
+                return Task.FromResult(true);
+            }
+        };
+        await using var service = CreateService(store, cacheCapacity: 2);
+        var staleRead = service.GetCachedRoleSettingAsync(42, CancellationToken.None);
+        await fallbackStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.True(await service.DeleteSavedPanelAsync(1, 2, 42, CancellationToken.None));
+        releaseFallback.SetResult();
+
+        Assert.Null(await staleRead);
+        Assert.Null(await service.GetCachedRoleSettingAsync(42, CancellationToken.None));
+        Assert.Equal(0, service.CachedRoleSettingsCount);
+    }
+
+    [Fact]
     public async Task InitialPreload_DoesNotEvictSettingPersistedWhileQueryIsInFlight()
     {
         var preloadStarted = new TaskCompletionSource(
@@ -59,6 +95,10 @@ public class ReactionRoleServiceCacheConcurrencyTests
             = (_, _, _) => Task.FromResult(new List<ReactionRoleSettings>());
 
         public int GetByMessageIdCallCount { get; private set; }
+        public Func<string, CancellationToken, Task<ReactionRoleSettings?>> GetByMessageId { get; set; }
+            = (_, _) => Task.FromResult<ReactionRoleSettings?>(null);
+        public Func<ReactionRoleSettings, CancellationToken, Task<bool>> Delete { get; set; }
+            = (_, _) => Task.FromResult(false);
 
         public Task InsertAsync(ReactionRoleSettings roleSettings, CancellationToken cancellationToken)
             => Task.CompletedTask;
@@ -74,7 +114,10 @@ public class ReactionRoleServiceCacheConcurrencyTests
             CancellationToken cancellationToken)
         {
             GetByMessageIdCallCount++;
-            return Task.FromResult<ReactionRoleSettings?>(null);
+            return GetByMessageId(messageId, cancellationToken);
         }
+
+        public Task<bool> DeleteBindingAsync(ReactionRoleSettings settings, CancellationToken cancellationToken)
+            => Delete(settings, cancellationToken);
     }
 }
