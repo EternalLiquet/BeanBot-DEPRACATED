@@ -226,6 +226,47 @@ public sealed class MongoRoleMenuRepositoryIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task DeleteBinding_DoesNotDeleteRepairedPanelOrNewerRevision()
+    {
+        var databaseName = $"BeanBotRoleMenuDelete_{Guid.NewGuid():N}";
+        var client = new MongoClient(_fixture.ConnectionString);
+        var database = client.GetDatabase(databaseName);
+        try
+        {
+            using var cancellation = new CancellationTokenSource(OperationTimeout);
+            var repository = CreateRepository(database);
+            var original = CreateSettings("1", "Games");
+            await repository.UpsertAsync(original, cancellation.Token);
+            var stale = Assert.IsType<RoleMenuSettings>(await repository.GetAsync(
+                original.Id, "1", cancellation.Token));
+            Assert.False(await repository.DeleteBindingAsync(stale, "2", "20", "30", cancellation.Token));
+            Assert.False(await repository.DeleteBindingAsync(stale, "1", "21", "30", cancellation.Token));
+
+            await Task.Delay(15, cancellation.Token);
+            await repository.UpsertAsync(new RoleMenuSettings(original.Id, "1", "20", "30",
+                "Updated games", "", ["40"], RoleMenuSelectionMode.Multiple), cancellation.Token);
+            Assert.False(await repository.DeleteBindingAsync(stale, "1", "20", "30", cancellation.Token));
+            Assert.Equal("Updated games", (await repository.GetAsync(
+                original.Id, "1", cancellation.Token))?.Title);
+
+            var repaired = new RoleMenuSettings(original.Id, "1", "20", "31", "Games", "", ["40"],
+                RoleMenuSelectionMode.Multiple);
+            await repository.UpsertAsync(repaired, cancellation.Token);
+            Assert.False(await repository.DeleteBindingAsync(stale, "1", "20", "30", cancellation.Token));
+            var current = Assert.IsType<RoleMenuSettings>(await repository.GetAsync(
+                original.Id, "1", cancellation.Token));
+            Assert.Equal("31", current.MessageId);
+            Assert.True(await repository.DeleteBindingAsync(current, "1", "20", "31", cancellation.Token));
+            Assert.Null(await repository.GetAsync(original.Id, "1", cancellation.Token));
+        }
+        finally
+        {
+            using var cancellation = new CancellationTokenSource(OperationTimeout);
+            await client.DropDatabaseAsync(databaseName, cancellation.Token);
+        }
+    }
+
     private static RoleMenuRepository CreateRepository(IMongoDatabase database)
         => new(database, NullLogger<RoleMenuRepository>.Instance);
 

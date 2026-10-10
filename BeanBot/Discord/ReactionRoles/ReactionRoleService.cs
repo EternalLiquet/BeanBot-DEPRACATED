@@ -16,6 +16,7 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
     private readonly ReactionRoleRepository _reactionRoleRepository;
     private readonly DiscordSocketClient? _client;
     private readonly SemaphoreSlim _cacheLock = new(1, 1);
+    private readonly SemaphoreSlim _persistenceLock = new(1, 1);
     private readonly BoundedReactionRoleSettingsCache _roleSettings;
     private readonly object _operationSync = new();
     private readonly HashSet<Task> _inFlightOperations = [];
@@ -266,18 +267,79 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
     {
         await EnsureCacheLoadedAsync(cancellationToken);
         var messageIdText = messageId.ToString(CultureInfo.InvariantCulture);
-        if (_roleSettings.TryGet(messageIdText, out var cached))
+        await _cacheLock.WaitAsync(cancellationToken);
+        try
         {
-            return cached;
-        }
+            if (_roleSettings.TryGet(messageIdText, out var cached))
+            {
+                return cached;
+            }
 
-        var roleSetting = await _reactionRoleRepository.GetRoleSetting(messageId, cancellationToken);
-        if (roleSetting != null && !string.IsNullOrWhiteSpace(roleSetting.MessageId))
+            var roleSetting = await _reactionRoleRepository.GetRoleSetting(messageId, cancellationToken);
+            if (roleSetting != null && !string.IsNullOrWhiteSpace(roleSetting.MessageId))
+            {
+                _roleSettings.Set(roleSetting);
+            }
+
+            return roleSetting;
+        }
+        finally
         {
-            _roleSettings.Set(roleSetting);
+            _cacheLock.Release();
         }
+    }
 
-        return roleSetting;
+    internal async Task<bool> DeleteSavedPanelAsync(
+        ulong guildId,
+        ulong channelId,
+        ulong messageId,
+        CancellationToken cancellationToken)
+    {
+        await _persistenceLock.WaitAsync(cancellationToken);
+        try
+        {
+            await _cacheLock.WaitAsync(cancellationToken);
+            try
+            {
+                var settings = await _reactionRoleRepository.GetRoleSettingByBindingAsync(
+                    guildId.ToString(CultureInfo.InvariantCulture),
+                    channelId.ToString(CultureInfo.InvariantCulture),
+                    messageId.ToString(CultureInfo.InvariantCulture),
+                    cancellationToken);
+                if (settings is null)
+                {
+                    return false;
+                }
+
+                var deleted = await _reactionRoleRepository.DeleteBindingAsync(
+                    settings,
+                    guildId.ToString(CultureInfo.InvariantCulture),
+                    channelId.ToString(CultureInfo.InvariantCulture),
+                    messageId.ToString(CultureInfo.InvariantCulture),
+                    cancellationToken);
+                return deleted;
+            }
+            finally
+            {
+                InvalidateMatchingCachedPanel(guildId, channelId, messageId);
+                _cacheLock.Release();
+            }
+        }
+        finally
+        {
+            _persistenceLock.Release();
+        }
+    }
+
+    private void InvalidateMatchingCachedPanel(ulong guildId, ulong channelId, ulong messageId)
+    {
+        var message = messageId.ToString(CultureInfo.InvariantCulture);
+        if (_roleSettings.TryGet(message, out var cached)
+            && cached?.GuildId == guildId.ToString(CultureInfo.InvariantCulture)
+            && cached.ChannelId == channelId.ToString(CultureInfo.InvariantCulture))
+        {
+            _roleSettings.Remove(message);
+        }
     }
 
     private async Task EnsureCacheLoadedAsync(CancellationToken cancellationToken)
@@ -349,8 +411,16 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
         ReactionRoleSettings settings,
         CancellationToken cancellationToken)
     {
-        await _reactionRoleRepository.InsertNewRoleSettings(settings, cancellationToken);
-        _roleSettings.Set(settings);
+        await _persistenceLock.WaitAsync(cancellationToken);
+        try
+        {
+            await _reactionRoleRepository.InsertNewRoleSettings(settings, cancellationToken);
+            _roleSettings.Set(settings);
+        }
+        finally
+        {
+            _persistenceLock.Release();
+        }
     }
 
     public void Dispose()
@@ -399,6 +469,7 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
             }
 
             _cacheLock.Dispose();
+            _persistenceLock.Dispose();
             _shutdownCancellation.Dispose();
             GC.SuppressFinalize(this);
         }

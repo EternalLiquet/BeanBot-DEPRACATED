@@ -11,6 +11,77 @@ namespace BeanBot.Tests.Discord.RoleMenus;
 public class RoleMenuInteractionServiceTests
 {
     [Fact]
+    public async Task DiscordDeletion_CleansOnlyTheExactSavedMessage_AndDuplicatesAreHarmless()
+    {
+        var fixture = CreateFixture();
+        var settings = CreateSettings();
+        await fixture.Repository.UpsertAsync(settings);
+
+        Assert.Equal(0, await fixture.Service.DeleteSavedPanelsForMessageAsync(1, 2, 4, CancellationToken.None));
+        Assert.Equal(0, await fixture.Service.DeleteSavedPanelsForMessageAsync(1, 9, 3, CancellationToken.None));
+        Assert.NotNull(await fixture.Repository.GetAsync(settings.Id, "1"));
+
+        Assert.Equal(1, await fixture.Service.DeleteSavedPanelsForMessageAsync(1, 2, 3, CancellationToken.None));
+        Assert.Equal(0, await fixture.Service.DeleteSavedPanelsForMessageAsync(1, 2, 3, CancellationToken.None));
+        Assert.Null(await fixture.Repository.GetAsync(settings.Id, "1"));
+    }
+
+    [Fact]
+    public async Task DiscordDeletion_WaitingForRepair_CannotDeleteReplacementBinding()
+    {
+        var fixture = CreateFixture();
+        var original = CreateSettings();
+        await fixture.Repository.UpsertAsync(original);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var repair = fixture.Service.RunMenuMutationAsync(original.Id, async token =>
+        {
+            entered.SetResult();
+            await release.Task.WaitAsync(token);
+            await fixture.Repository.UpsertAsync(new RoleMenuSettings(
+                original.Id, "1", "2", "4", "Games", "", ["5"], RoleMenuSelectionMode.Multiple), token);
+            return true;
+        }, CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        var deletion = fixture.Service.DeleteSavedPanelsForMessageAsync(1, 2, 3, CancellationToken.None);
+        release.SetResult();
+        await repair;
+
+        Assert.Equal(0, await deletion);
+        Assert.Equal("4", (await fixture.Repository.GetAsync(original.Id, "1"))?.MessageId);
+    }
+
+    [Fact]
+    public async Task DiscordDeletion_WaitingForNewRevision_RemovesSameBinding()
+    {
+        var fixture = CreateFixture();
+        var original = CreateSettings();
+        await fixture.Repository.UpsertAsync(original);
+        var mutationEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowMutation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deletionReadOriginal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Store.OnGetByMessage = () => deletionReadOriginal.TrySetResult();
+
+        var mutation = fixture.Service.RunMenuMutationAsync(original.Id, async token =>
+        {
+            mutationEntered.SetResult();
+            await allowMutation.Task.WaitAsync(token);
+            await fixture.Repository.UpsertAsync(new RoleMenuSettings(
+                original.Id, "1", "2", "3", "Updated", "", ["5"],
+                RoleMenuSelectionMode.Exclusive), token);
+            return true;
+        }, CancellationToken.None);
+        await mutationEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var deletion = fixture.Service.DeleteSavedPanelsForMessageAsync(1, 2, 3, CancellationToken.None);
+        await deletionReadOriginal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        allowMutation.SetResult();
+
+        Assert.True(await mutation.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.Equal(1, await deletion.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.Null(await fixture.Repository.GetAsync(original.Id, "1"));
+    }
+
+    [Fact]
     public void ModuleConstructors_RequireFacadeAndLogger()
     {
         var fixture = CreateFixture();
@@ -280,7 +351,8 @@ public class RoleMenuInteractionServiceTests
             repository,
             drafts,
             coordinator,
-            executionContext);
+            executionContext,
+            store);
     }
 
     private static RoleMenuSettings CreateSettings()
@@ -299,11 +371,13 @@ public class RoleMenuInteractionServiceTests
         RoleMenuRepository Repository,
         RoleMenuDraftRegistry Drafts,
         RoleMenuMutationCoordinator Coordinator,
-        InteractionExecutionContext ExecutionContext);
+        InteractionExecutionContext ExecutionContext,
+        InMemoryStore Store);
 
     private sealed class InMemoryStore : IRoleMenuStore
     {
         private RoleMenuSettings? _settings;
+        internal Action? OnGetByMessage { get; set; }
 
         public Task UpsertAsync(
             RoleMenuSettings settings,
@@ -357,6 +431,7 @@ public class RoleMenuInteractionServiceTests
                 && _settings.MessageId == messageId
                 ? [_settings]
                 : [];
+            OnGetByMessage?.Invoke();
             return Task.FromResult(settings);
         }
 
@@ -384,6 +459,20 @@ public class RoleMenuInteractionServiceTests
             }
 
             return Task.FromResult(deleted);
+        }
+
+        public Task<bool> DeleteBindingAsync(RoleMenuSettings settings, CancellationToken cancellationToken)
+        {
+            var current = _settings;
+            if (current is null || current.Id != settings.Id || current.GuildId != settings.GuildId
+                || current.ChannelId != settings.ChannelId || current.MessageId != settings.MessageId
+                || current.UpdatedAtUtc != settings.UpdatedAtUtc)
+            {
+                return Task.FromResult(false);
+            }
+
+            _settings = null;
+            return Task.FromResult(true);
         }
     }
 }

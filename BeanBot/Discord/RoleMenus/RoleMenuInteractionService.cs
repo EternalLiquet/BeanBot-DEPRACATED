@@ -160,6 +160,45 @@ public sealed class RoleMenuInteractionService
             guildId.ToString(CultureInfo.InvariantCulture),
             cancellationToken);
 
+    internal async Task<int> DeleteSavedPanelsForMessageAsync(
+        ulong guildId,
+        ulong channelId,
+        ulong messageId,
+        CancellationToken cancellationToken)
+    {
+        const int maximumMatches = 25;
+        var guild = guildId.ToString(CultureInfo.InvariantCulture);
+        var channel = channelId.ToString(CultureInfo.InvariantCulture);
+        var message = messageId.ToString(CultureInfo.InvariantCulture);
+        var matches = await _repository.GetByMessageAsync(
+            guild, channel, message, maximumMatches + 1, cancellationToken);
+        if (matches.Count > maximumMatches)
+        {
+            throw new InvalidOperationException("Too many saved role menus match a deleted message.");
+        }
+        var deleted = 0;
+        foreach (var settings in matches)
+        {
+            if (await RunMenuMutationAsync(
+                    settings.Id,
+                    async token =>
+                    {
+                        // The message lookup yields candidates; a newer revision may exist
+                        // by the time this menu's mutation lock is acquired.
+                        var current = await _repository.GetAsync(settings.Id, guild, token);
+                        return current is not null
+                            && await _repository.DeleteBindingAsync(
+                                current, guild, channel, message, token);
+                    },
+                    cancellationToken))
+            {
+                deleted++;
+            }
+        }
+
+        return deleted;
+    }
+
     /// <summary>
     /// Claims one administrator's confirmed deletion of a menu so a repeated click can't start a
     /// second one. Each claim belongs to a live interaction and is released when it finishes.
