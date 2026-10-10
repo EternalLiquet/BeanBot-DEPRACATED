@@ -118,6 +118,30 @@ public class HealthCheckLifecycleReadinessTests
         Assert.True(payload.RootElement.GetProperty("mongoReachable").GetBoolean());
     }
 
+    [Fact]
+    public async Task ApplicationStopping_BeforeHostedStop_Returns503AndDrainsTerminally()
+    {
+        using var stopping = new CancellationTokenSource();
+        var readiness = new ApplicationReadinessState(stopping.Token);
+        readiness.MarkReady();
+        await using var server = CreateServer(readiness);
+        await server.StartAsync(CancellationToken.None);
+        using var client = CreateClient(server);
+
+        stopping.Cancel();
+
+        using var readinessResponse = await client.GetAsync("/healthz");
+        using var payload = JsonDocument.Parse(await readinessResponse.Content.ReadAsStringAsync());
+        using var livenessResponse = await client.GetAsync("/livez");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, readinessResponse.StatusCode);
+        Assert.False(payload.RootElement.GetProperty("applicationReady").GetBoolean());
+        Assert.Equal("draining", payload.RootElement.GetProperty("lifecycleState").GetString());
+        Assert.Equal(HttpStatusCode.OK, livenessResponse.StatusCode);
+        readiness.MarkReady();
+        Assert.Equal(ApplicationLifecycleState.Draining, readiness.CreateSnapshot().State);
+    }
+
     private static HealthCheckServer CreateServer(
         ApplicationReadinessState readiness,
         Func<CancellationToken, Task<MongoReadinessSnapshot>>? getMongoReadinessSnapshot = null)
