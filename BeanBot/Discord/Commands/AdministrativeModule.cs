@@ -27,6 +27,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
 
     private static readonly TimeSpan InteractionTimeout = TimeSpan.FromSeconds(60);
     private readonly ReactionRoleService _reactionRoleService;
+    private readonly LegacyReactionRoleSetupDiscordOperations _reactionRoleSetupDiscordOperations;
     private readonly DiscordMessageCleanupService _messageCleanupService;
     private readonly DiscordMessageWaiter _messageWaiter;
     private readonly LegacyCommandReplySender _replySender;
@@ -34,12 +35,15 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
 
     public AdministrativeModule(
         ReactionRoleService reactionRoleService,
+        LegacyReactionRoleSetupDiscordOperations reactionRoleSetupDiscordOperations,
         DiscordMessageCleanupService messageCleanupService,
         DiscordMessageWaiter messageWaiter,
         LegacyCommandReplySender replySender,
         ILogger<AdministrativeModule> logger)
     {
         _reactionRoleService = reactionRoleService ?? throw new ArgumentNullException(nameof(reactionRoleService));
+        _reactionRoleSetupDiscordOperations = reactionRoleSetupDiscordOperations
+            ?? throw new ArgumentNullException(nameof(reactionRoleSetupDiscordOperations));
         _messageCleanupService = messageCleanupService ?? throw new ArgumentNullException(nameof(messageCleanupService));
         _messageWaiter = messageWaiter ?? throw new ArgumentNullException(nameof(messageWaiter));
         _replySender = replySender ?? throw new ArgumentNullException(nameof(replySender));
@@ -116,7 +120,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
                     await AddRoleReactionsAsync(messageToListen, roleEmotePairs);
                     await _reactionRoleService.SaveRoleSettings(roleEmotePairs, messageToListen);
                 },
-                messageToListen => messageToListen.DeleteAsync(),
+                messageToListen => _reactionRoleSetupDiscordOperations.DeleteMessageAsync(messageToListen),
                 exception => BeanBotLog.IncompleteReactionRoleCleanupFailed(_logger, exception));
             var setupFailure = GetRoleValidationMessage(setupStatus);
             if (setupFailure is not null)
@@ -215,16 +219,14 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         return await _replySender.SendMessageAsync(Context, embed: roleEmbed.Build());
     }
 
-    private async Task AddRoleReactionsAsync(IUserMessage messageToListen, IEnumerable<RoleEmotePair> roleEmotePairs)
+    private Task AddRoleReactionsAsync(IUserMessage messageToListen, IEnumerable<RoleEmotePair> roleEmotePairs)
     {
-        var pairs = roleEmotePairs.ToList();
-        foreach (var pair in pairs)
-        {
-            var emote = Context.Guild.Emotes.First(candidate =>
-                candidate.Id.ToString(CultureInfo.InvariantCulture) == pair.EmojiId);
-            await messageToListen.AddReactionAsync(emote);
-            await Task.Delay(TimeSpan.FromMilliseconds(250));
-        }
+        var emotes = roleEmotePairs
+            .Select(pair => Context.Guild.Emotes.First(candidate =>
+                candidate.Id.ToString(CultureInfo.InvariantCulture) == pair.EmojiId))
+            .Cast<IEmote>()
+            .ToList();
+        return _reactionRoleSetupDiscordOperations.AddReactionsAsync(messageToListen, emotes);
     }
 
     private async Task<SocketRole?> GetRoleAsync(List<IMessage> messages, SocketMessage? response)
