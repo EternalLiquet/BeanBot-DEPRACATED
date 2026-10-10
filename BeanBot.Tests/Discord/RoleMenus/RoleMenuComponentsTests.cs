@@ -343,7 +343,8 @@ public class RoleMenuComponentsTests
             new DateTime(2026, 10, 10, 18, 30, 0, DateTimeKind.Utc)));
 
         Assert.All(select.Options, option => Assert.Equal("Games", option.Label));
-        Assert.NotEqual(select.Options[0].Description, select.Options[1].Description);
+        var descriptions = select.Options.Select(option => option.Description).ToArray();
+        Assert.NotEqual(descriptions[0], descriptions[1]);
         Assert.All(select.Options, option => Assert.StartsWith(
             "#roles • Created 9 days", option.Description, StringComparison.Ordinal));
     }
