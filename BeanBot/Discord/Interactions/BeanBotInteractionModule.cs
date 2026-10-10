@@ -1,4 +1,5 @@
 using BeanBot.Discord.Puns;
+using BeanBot.Hosting;
 using Discord;
 using Discord.Interactions;
 
@@ -27,13 +28,18 @@ public sealed class BeanBotInteractionModule : InteractionModuleBase<SocketInter
     public Task PunAsync()
         => RespondReliablyAsync(GetPunResponse(_punProvider), ephemeral: false);
 
+    [SlashCommand("version", "Show Bean Bot's version.", runMode: RunMode.Sync)]
+    public Task VersionAsync()
+        => RespondReliablyAsync(
+            FormatVersionResponse(BuildIdentity.Current.Version), ephemeral: true);
+
     [SlashCommand(
         "help",
         "Show Bean Bot's initial slash commands and legacy command syntax.",
         runMode: RunMode.Sync)]
     public Task HelpAsync()
         => RespondReliablyAsync(
-            "Slash commands currently available: `/ping`, `/pun`, `/help`, " +
+            "Slash commands currently available: `/ping`, `/pun`, `/version`, `/help`, " +
             "`/role-menu create`, and `/role-menu delete`. " +
             "Role-menu setup commands require Manage Roles in a server. " +
             "Legacy message commands still work with `%`, `succ `, or by mentioning Bean Bot. " +
@@ -84,5 +90,19 @@ public sealed class BeanBotInteractionModule : InteractionModuleBase<SocketInter
         return punProvider.TryGetRandomPun(out var pun)
             ? pun
             : PunFallback;
+    }
+
+    internal static string FormatVersionResponse(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version)
+            || string.Equals(version.Trim(), "unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            return "I can't tell which version I'm running.";
+        }
+
+        var buildVersion = version.Trim();
+        return buildVersion == "0.0.0-local"
+            ? "Development build"
+            : $"BeanBot v{buildVersion}";
     }
 }
