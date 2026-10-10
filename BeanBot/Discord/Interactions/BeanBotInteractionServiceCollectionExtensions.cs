@@ -1,4 +1,6 @@
+using BeanBot.Configuration;
 using BeanBot.Discord.RoleMenus;
+using BeanBot.Health;
 using BeanBot.Persistence.Repositories;
 using Discord;
 using Discord.Interactions;
@@ -21,6 +23,8 @@ internal static class BeanBotInteractionServiceCollectionExtensions
                 LogLevel = LogSeverity.Verbose,
                 UseCompiledLambda = true
             }));
+        services.AddSingleton(provider => InteractionCommandRegistrationTarget.FromGuildId(
+            provider.GetRequiredService<BeanBotOptions>().InteractionGuildId));
         services.AddSingleton(_ => new InteractionExecutionContext());
         services.AddSingleton(provider => new RoleMenuInteractionService(
             provider.GetRequiredService<RoleMenuRepository>(),
@@ -34,6 +38,9 @@ internal static class BeanBotInteractionServiceCollectionExtensions
         services.AddSingleton<BeanBotInteractionHostedService>();
         services.AddSingleton<IHostedService>(provider =>
             provider.GetRequiredService<BeanBotInteractionHostedService>());
+        services.AddSingleton<ApplicationReadinessHostedService>();
+        services.AddSingleton<IHostedService>(provider =>
+            provider.GetRequiredService<ApplicationReadinessHostedService>());
 
         return services;
     }

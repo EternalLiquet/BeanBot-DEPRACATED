@@ -42,6 +42,7 @@ public sealed class HealthCheckServer : IAsyncDisposable
     private readonly Func<CancellationToken, Task<MongoReadinessSnapshot>> _getMongoReadinessSnapshot;
     private readonly Func<DiscordMetricsSnapshot> _createDiscordMetricsSnapshot;
     private readonly Func<MongoReadinessMetricsSnapshot> _createMongoMetricsSnapshot;
+    private readonly Func<ApplicationReadinessSnapshot> _createApplicationReadinessSnapshot;
     private readonly TimeSpan _requestHeadersTimeout;
     private readonly TimeSpan _shutdownTimeout;
     private readonly int _maximumConcurrentClients;
@@ -61,6 +62,29 @@ public sealed class HealthCheckServer : IAsyncDisposable
             options,
             CreateSnapshotFactory(discordClient, discordConnectionHealth),
             CreateMongoReadinessFactory(mongoReadinessMonitor),
+            CreateAssumedApplicationReadinessSnapshot,
+            logger,
+            DefaultRequestHeadersTimeout,
+            DefaultMaximumConcurrentClients,
+            DefaultMaximumTrackedRateLimitClients,
+            DefaultShutdownTimeout,
+            CreateDiscordMetricsFactory(discordClient, discordConnectionHealth),
+            mongoReadinessMonitor.CreateMetricsSnapshot)
+    {
+    }
+
+    internal HealthCheckServer(
+        HealthCheckOptions options,
+        DiscordSocketClient discordClient,
+        DiscordConnectionHealth discordConnectionHealth,
+        MongoReadinessMonitor mongoReadinessMonitor,
+        ApplicationReadinessState applicationReadinessState,
+        ILogger<HealthCheckServer> logger)
+        : this(
+            options,
+            CreateSnapshotFactory(discordClient, discordConnectionHealth),
+            CreateMongoReadinessFactory(mongoReadinessMonitor),
+            CreateApplicationReadinessFactory(applicationReadinessState),
             logger,
             DefaultRequestHeadersTimeout,
             DefaultMaximumConcurrentClients,
@@ -85,6 +109,7 @@ public sealed class HealthCheckServer : IAsyncDisposable
             options,
             createHealthSnapshot,
             CreateAssumedMongoReadinessSnapshotAsync,
+            CreateAssumedApplicationReadinessSnapshot,
             logger,
             requestHeadersTimeout,
             maximumConcurrentClients,
@@ -106,10 +131,38 @@ public sealed class HealthCheckServer : IAsyncDisposable
         TimeSpan? shutdownTimeout = null,
         Func<DiscordMetricsSnapshot>? createDiscordMetricsSnapshot = null,
         Func<MongoReadinessMetricsSnapshot>? createMongoMetricsSnapshot = null)
+        : this(
+            options,
+            createHealthSnapshot,
+            getMongoReadinessSnapshot,
+            CreateAssumedApplicationReadinessSnapshot,
+            logger,
+            requestHeadersTimeout,
+            maximumConcurrentClients,
+            maximumTrackedRateLimitClients,
+            shutdownTimeout,
+            createDiscordMetricsSnapshot,
+            createMongoMetricsSnapshot)
+    {
+    }
+
+    internal HealthCheckServer(
+        HealthCheckOptions options,
+        Func<DiscordHealthSnapshot> createHealthSnapshot,
+        Func<CancellationToken, Task<MongoReadinessSnapshot>> getMongoReadinessSnapshot,
+        Func<ApplicationReadinessSnapshot> createApplicationReadinessSnapshot,
+        ILogger<HealthCheckServer> logger,
+        TimeSpan? requestHeadersTimeout = null,
+        int maximumConcurrentClients = DefaultMaximumConcurrentClients,
+        int maximumTrackedRateLimitClients = DefaultMaximumTrackedRateLimitClients,
+        TimeSpan? shutdownTimeout = null,
+        Func<DiscordMetricsSnapshot>? createDiscordMetricsSnapshot = null,
+        Func<MongoReadinessMetricsSnapshot>? createMongoMetricsSnapshot = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(createHealthSnapshot);
         ArgumentNullException.ThrowIfNull(getMongoReadinessSnapshot);
+        ArgumentNullException.ThrowIfNull(createApplicationReadinessSnapshot);
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumConcurrentClients);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maximumTrackedRateLimitClients);
@@ -124,6 +177,7 @@ public sealed class HealthCheckServer : IAsyncDisposable
         _getMongoReadinessSnapshot = getMongoReadinessSnapshot;
         _createDiscordMetricsSnapshot = createDiscordMetricsSnapshot ?? CreateEmptyDiscordMetricsSnapshot;
         _createMongoMetricsSnapshot = createMongoMetricsSnapshot ?? CreateEmptyMongoMetricsSnapshot;
+        _createApplicationReadinessSnapshot = createApplicationReadinessSnapshot;
         _logger = logger;
         _requestHeadersTimeout = effectiveRequestHeadersTimeout;
         _shutdownTimeout = effectiveShutdownTimeout;
@@ -282,6 +336,13 @@ public sealed class HealthCheckServer : IAsyncDisposable
         return mongoReadinessMonitor.GetSnapshotAsync;
     }
 
+    private static Func<ApplicationReadinessSnapshot> CreateApplicationReadinessFactory(
+        ApplicationReadinessState applicationReadinessState)
+    {
+        ArgumentNullException.ThrowIfNull(applicationReadinessState);
+        return applicationReadinessState.CreateSnapshot;
+    }
+
     private static Task<MongoReadinessSnapshot> CreateAssumedMongoReadinessSnapshotAsync(
         CancellationToken cancellationToken)
     {
@@ -294,6 +355,9 @@ public sealed class HealthCheckServer : IAsyncDisposable
 
     private static MongoReadinessMetricsSnapshot CreateEmptyMongoMetricsSnapshot()
         => new(false, false, false, null, 0, 0, 0);
+
+    private static ApplicationReadinessSnapshot CreateAssumedApplicationReadinessSnapshot()
+        => new(ApplicationLifecycleState.Ready);
 
     private WebApplication CreateApplication()
     {
@@ -520,7 +584,10 @@ public sealed class HealthCheckServer : IAsyncDisposable
 
         var discordSnapshot = _createHealthSnapshot();
         var mongoSnapshot = await _getMongoReadinessSnapshot(context.RequestAborted);
-        var isHealthy = discordSnapshot.IsHealthy && mongoSnapshot.IsReachable;
+        var applicationSnapshot = _createApplicationReadinessSnapshot();
+        var isHealthy = applicationSnapshot.IsReady &&
+            discordSnapshot.IsHealthy &&
+            mongoSnapshot.IsReachable;
         await WriteJsonResponseAsync(
             context,
             isHealthy
@@ -531,10 +598,12 @@ public sealed class HealthCheckServer : IAsyncDisposable
                 status = isHealthy ? "ok" : "unhealthy",
                 version = BuildIdentity.Current.Version,
                 commitSha = BuildIdentity.Current.CommitSha,
+                applicationReady = applicationSnapshot.IsReady,
+                lifecycleState = applicationSnapshot.StateName,
                 discordConnected = discordSnapshot.IsHealthy,
                 mongoReachable = mongoSnapshot.IsReachable,
                 mongoLastCheckedAtUtc = mongoSnapshot.LastCheckedAtUtc,
-                message = GetStatusMessage(discordSnapshot, mongoSnapshot),
+                message = GetStatusMessage(applicationSnapshot, discordSnapshot, mongoSnapshot),
                 loginState = discordSnapshot.LoginState,
                 connectionState = discordSnapshot.ConnectionState,
                 lastReadyAtUtc = discordSnapshot.LastReadyAtUtc,
@@ -645,9 +714,15 @@ public sealed class HealthCheckServer : IAsyncDisposable
         => value?.ToUnixTimeSeconds() ?? 0;
 
     private static string GetStatusMessage(
+        ApplicationReadinessSnapshot applicationSnapshot,
         DiscordHealthSnapshot discordSnapshot,
         MongoReadinessSnapshot mongoSnapshot)
     {
+        if (!applicationSnapshot.IsReady)
+        {
+            return applicationSnapshot.StatusMessage;
+        }
+
         if (!discordSnapshot.IsHealthy)
         {
             return discordSnapshot.StatusMessage;

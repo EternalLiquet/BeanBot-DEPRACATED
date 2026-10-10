@@ -9,6 +9,7 @@ internal sealed class BeanBotSettings
     public string? GeneralChannelId { get; set; }
     public string? HatoeteUrl { get; set; }
     public string? YoshimaruUrl { get; set; }
+    public string? InteractionGuildId { get; set; }
     public BeanBotDailyPunSettings DailyPun { get; set; } = new BeanBotDailyPunSettings();
     public BeanBotHealthCheckSettings HealthCheck { get; set; } = new BeanBotHealthCheckSettings();
     public BeanBotNewMemberWelcomeSettings NewMemberWelcome { get; set; } = new BeanBotNewMemberWelcomeSettings();
