@@ -54,6 +54,23 @@ public class RoleMenuInteractionServiceTests
     }
 
     [Fact]
+    public void TryBeginDeletion_IgnoresRepeatedClicksFromTheSameAdministrator()
+    {
+        var fixture = CreateFixture();
+        var menuId = ObjectId.GenerateNewId();
+        var otherMenuId = ObjectId.GenerateNewId();
+
+        Assert.True(fixture.Service.TryBeginDeletion(menuId, 3UL));
+        Assert.False(fixture.Service.TryBeginDeletion(menuId, 3UL));
+        Assert.True(fixture.Service.TryBeginDeletion(otherMenuId, 3UL));
+        Assert.True(fixture.Service.TryBeginDeletion(menuId, 4UL));
+
+        fixture.Service.EndDeletion(menuId, 3UL);
+
+        Assert.True(fixture.Service.TryBeginDeletion(menuId, 3UL));
+    }
+
+    [Fact]
     public void Constructor_RejectsEveryMissingDependency()
     {
         var fixture = CreateFixture();
@@ -325,6 +342,30 @@ public class RoleMenuInteractionServiceTests
                 : [];
             return Task.FromResult(settings.Take(maximumResults).ToList());
         }
+
+        public Task<List<RoleMenuSettings>> GetByMessageAsync(
+            string guildId,
+            string channelId,
+            string messageId,
+            int maximumResults,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            List<RoleMenuSettings> settings = _settings is not null
+                && _settings.GuildId == guildId
+                && _settings.ChannelId == channelId
+                && _settings.MessageId == messageId
+                ? [_settings]
+                : [];
+            return Task.FromResult(settings);
+        }
+
+        public Task<List<RoleMenuSettings>> GetPageAsync(
+            string guildId,
+            RoleMenuPageCursor? cursor,
+            int maximumResults,
+            CancellationToken cancellationToken)
+            => GetByGuildAsync(guildId, maximumResults, cancellationToken);
 
         public Task<bool> DeleteAsync(
             ObjectId id,

@@ -158,6 +158,16 @@ internal static class RoleMenuPresentation
             _ => result.ConfigurationIssue.ToString()
         };
 
+    internal static string FormatConfirmedDeletion(RoleMenuConfirmedDeletion deletion)
+        => deletion switch
+        {
+            { Status: RoleMenuConfirmedDeletionStatus.Attempted, Result: { } result } =>
+                FormatDeletion(result),
+            { Status: RoleMenuConfirmedDeletionStatus.Changed } =>
+                "That role menu changed. Run `/role-menu delete` to see it again.",
+            _ => "That role menu was already deleted."
+        };
+
     internal static string FormatDeletion(RoleMenuDeletionResult result)
         => result switch
         {
