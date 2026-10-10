@@ -6,24 +6,27 @@ internal sealed class FileLogDropMonitor : IAsyncLogEventSinkMonitor, IDisposabl
 {
     private readonly object _sync = new();
     private readonly TimeSpan _reportInterval;
-    private readonly Action<string> _writeDiagnostic;
+    private readonly FileLogDiagnosticWriter _diagnostics;
     private IAsyncLogEventSinkInspector? _inspector;
     private Timer? _timer;
     private long _lastReportedDroppedMessagesCount;
     private bool _disposed;
 
     internal FileLogDropMonitor()
-        : this(
-            FileLogPolicy.DropReportInterval,
-            static message => Console.Error.WriteLine(message))
+        : this(FileLogPolicy.DropReportInterval, FileLogDiagnosticWriter.ConsoleError)
     {
     }
 
     internal FileLogDropMonitor(TimeSpan reportInterval, Action<string> writeDiagnostic)
+        : this(reportInterval, new FileLogDiagnosticWriter(writeDiagnostic))
+    {
+    }
+
+    private FileLogDropMonitor(TimeSpan reportInterval, FileLogDiagnosticWriter diagnostics)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(reportInterval, TimeSpan.Zero);
         _reportInterval = reportInterval;
-        _writeDiagnostic = writeDiagnostic ?? throw new ArgumentNullException(nameof(writeDiagnostic));
+        _diagnostics = diagnostics;
     }
 
     public void StartMonitoring(IAsyncLogEventSinkInspector inspector)
@@ -131,20 +134,6 @@ internal sealed class FileLogDropMonitor : IAsyncLogEventSinkMonitor, IDisposabl
         }
 
         var newlyDropped = droppedMessagesCount - previouslyReported;
-        var message = FormattableString.Invariant(
-            $"BeanBot persistent file logging dropped {newlyDropped} log event(s) because the bounded async buffer was full ({droppedMessagesCount} total dropped since startup).");
-
-        try
-        {
-            _writeDiagnostic(message);
-        }
-        catch (IOException)
-        {
-            // File-log loss diagnostics must never recurse back into Serilog or disrupt application work.
-        }
-        catch (ObjectDisposedException)
-        {
-            // Console.Error can be unavailable during process teardown; there is no safer fallback here.
-        }
+        _diagnostics.ReportDrops(newlyDropped, droppedMessagesCount);
     }
 }

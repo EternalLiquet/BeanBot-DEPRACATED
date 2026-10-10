@@ -72,7 +72,15 @@ public sealed class FileLogPolicyTests
     {
         const string sensitivePayload = "never-copy-this-payload";
         var diagnostics = new List<string>();
-        var monitor = new FileLogDropMonitor(TimeSpan.FromHours(1), diagnostics.Add);
+        var diagnosticWritten = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var monitor = new FileLogDropMonitor(
+            TimeSpan.FromHours(1),
+            message =>
+            {
+                diagnostics.Add(message);
+                diagnosticWritten.TrySetResult();
+            });
         var blockingSink = new BlockingSink();
         var options = new FileLogSinkOptions(
             FileSizeLimitBytes: 512,
@@ -104,6 +112,7 @@ public sealed class FileLogPolicyTests
 
             var droppedMessages = monitor.CheckNow();
             monitor.CheckNow();
+            await diagnosticWritten.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
             Assert.True(droppedMessages > 0);
             var diagnostic = Assert.Single(diagnostics);
@@ -123,12 +132,19 @@ public sealed class FileLogPolicyTests
         var flushCompletion = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var diagnostics = new List<string>();
+        var diagnosticWritten = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
 
         await FileLogShutdown.FlushAsync(
                 () => flushCompletion.Task,
                 TimeSpan.FromMilliseconds(25),
-                diagnostics.Add)
+                message =>
+                {
+                    diagnostics.Add(message);
+                    diagnosticWritten.TrySetResult();
+                })
             .WaitAsync(TimeSpan.FromSeconds(2));
+        await diagnosticWritten.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         var diagnostic = Assert.Single(diagnostics);
         Assert.Contains("shutdown budget", diagnostic, StringComparison.Ordinal);
@@ -144,6 +160,8 @@ public sealed class FileLogPolicyTests
         var completed = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var diagnostics = new List<string>();
+        var diagnosticWritten = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
 
         try
         {
@@ -155,8 +173,13 @@ public sealed class FileLogPolicyTests
                         return Task.CompletedTask;
                     },
                     TimeSpan.FromMilliseconds(25),
-                    diagnostics.Add)
+                    message =>
+                    {
+                        diagnostics.Add(message);
+                        diagnosticWritten.TrySetResult();
+                    })
                 .WaitAsync(TimeSpan.FromSeconds(2));
+            await diagnosticWritten.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
             var diagnostic = Assert.Single(diagnostics);
             Assert.Contains("shutdown budget", diagnostic, StringComparison.Ordinal);
@@ -172,15 +195,122 @@ public sealed class FileLogPolicyTests
     public async Task FlushAsync_WhenStorageFails_ReportsFailureWithoutRecursiveLogging()
     {
         var diagnostics = new List<string>();
+        var diagnosticWritten = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
 
         await FileLogShutdown.FlushAsync(
             static () => Task.FromException(new IOException("disk unavailable")),
             TimeSpan.FromSeconds(1),
-            diagnostics.Add);
+            message =>
+            {
+                diagnostics.Add(message);
+                diagnosticWritten.TrySetResult();
+            });
+        await diagnosticWritten.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         var diagnostic = Assert.Single(diagnostics);
         Assert.Contains(nameof(IOException), diagnostic, StringComparison.Ordinal);
         Assert.DoesNotContain("disk unavailable", diagnostic, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FlushAsync_WhenDiagnosticWriterBlocks_StillReturnsAfterFlushTimeout()
+    {
+        var flushCompletion = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var diagnosticEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseDiagnostic = new ManualResetEventSlim(initialState: false);
+        var shutdown = FileLogShutdown.FlushAsync(
+            () => flushCompletion.Task,
+            TimeSpan.FromMilliseconds(25),
+            _ =>
+            {
+                diagnosticEntered.TrySetResult();
+                releaseDiagnostic.Wait();
+            });
+
+        try
+        {
+            await diagnosticEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await shutdown.WaitAsync(TimeSpan.FromMilliseconds(500));
+        }
+        finally
+        {
+            flushCompletion.TrySetException(new IOException("late file-system failure"));
+            releaseDiagnostic.Set();
+            await shutdown.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
+    [Fact]
+    public async Task DropMonitor_WhenDiagnosticWriterBlocks_DoesNotStackWriters()
+    {
+        var diagnosticEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondDiagnostic = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseDiagnostic = new ManualResetEventSlim(initialState: false);
+        var writes = 0;
+        var monitor = new FileLogDropMonitor(
+            TimeSpan.FromHours(1),
+            message =>
+            {
+                if (Interlocked.Increment(ref writes) == 1)
+                {
+                    diagnosticEntered.TrySetResult();
+                }
+                else
+                {
+                    secondDiagnostic.TrySetResult(message);
+                }
+
+                releaseDiagnostic.Wait();
+            });
+        var blockingSink = new BlockingSink();
+        var configuration = new LoggerConfiguration().MinimumLevel.Verbose();
+        FileLogPolicy.ConfigureAsyncSink(
+            configuration.WriteTo,
+            sink => sink.Sink(blockingSink),
+            new FileLogSinkOptions(512, 2, 2, BlockWhenFull: false),
+            monitor);
+        var logger = configuration.CreateLogger();
+        Task<long>? firstCheck = null;
+
+        try
+        {
+            logger.Information("Occupy the async worker");
+            await blockingSink.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            for (var index = 0; index < 100; index++)
+            {
+                logger.Information("First overflow {Index}", index);
+            }
+
+            firstCheck = Task.Run(monitor.CheckNow);
+            await diagnosticEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+            for (var index = 0; index < 100; index++)
+            {
+                logger.Information("Second overflow {Index}", index);
+            }
+
+            await Task.Run(monitor.CheckNow).WaitAsync(TimeSpan.FromMilliseconds(500));
+            Assert.Equal(1, Volatile.Read(ref writes));
+        }
+        finally
+        {
+            releaseDiagnostic.Set();
+            blockingSink.Release();
+            if (firstCheck is not null)
+            {
+                await firstCheck.WaitAsync(TimeSpan.FromSeconds(2));
+            }
+
+            logger.Dispose();
+        }
+
+        var coalesced = await secondDiagnostic.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Contains("dropped 100 log event(s)", coalesced, StringComparison.Ordinal);
     }
 
     private sealed class BlockingSink : ILogEventSink, IDisposable

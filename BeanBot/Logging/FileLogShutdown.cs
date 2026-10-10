@@ -8,15 +8,20 @@ internal static class FileLogShutdown
         => FlushAsync(
             static () => Log.CloseAndFlushAsync().AsTask(),
             FileLogPolicy.ShutdownFlushTimeout,
-            static message => Console.Error.WriteLine(message));
+            FileLogDiagnosticWriter.ConsoleError);
 
-    internal static async Task FlushAsync(
+    internal static Task FlushAsync(
         Func<Task> flushAsync,
         TimeSpan timeout,
         Action<string> writeDiagnostic)
+        => FlushAsync(flushAsync, timeout, new FileLogDiagnosticWriter(writeDiagnostic));
+
+    private static async Task FlushAsync(
+        Func<Task> flushAsync,
+        TimeSpan timeout,
+        FileLogDiagnosticWriter diagnostics)
     {
         ArgumentNullException.ThrowIfNull(flushAsync);
-        ArgumentNullException.ThrowIfNull(writeDiagnostic);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
 
         var flushTask = Task.Run(flushAsync);
@@ -26,22 +31,19 @@ internal static class FileLogShutdown
         }
         catch (TimeoutException)
         {
-            WriteDiagnosticSafely(
-                writeDiagnostic,
+            ObserveLateFault(flushTask);
+            diagnostics.ReportShutdown(
                 FormattableString.Invariant(
                     $"BeanBot file-log flush exceeded the {timeout.TotalSeconds:0.###}-second shutdown budget; shutdown will continue."));
-            ObserveLateFault(flushTask);
         }
         catch (IOException exception)
         {
-            WriteDiagnosticSafely(
-                writeDiagnostic,
+            diagnostics.ReportShutdown(
                 $"BeanBot file-log flush failed during shutdown: {exception.GetType().Name}.");
         }
         catch (ObjectDisposedException exception)
         {
-            WriteDiagnosticSafely(
-                writeDiagnostic,
+            diagnostics.ReportShutdown(
                 $"BeanBot file-log flush failed during shutdown: {exception.GetType().Name}.");
         }
     }
@@ -52,18 +54,4 @@ internal static class FileLogShutdown
             CancellationToken.None,
             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
-
-    private static void WriteDiagnosticSafely(Action<string> writeDiagnostic, string message)
-    {
-        try
-        {
-            writeDiagnostic(message);
-        }
-        catch (IOException)
-        {
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-    }
 }
