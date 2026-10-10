@@ -81,7 +81,7 @@ internal static class Program
             }
             finally
             {
-                await Log.CloseAndFlushAsync();
+                await FileLogShutdown.CloseAndFlushAsync();
             }
         }
     }
