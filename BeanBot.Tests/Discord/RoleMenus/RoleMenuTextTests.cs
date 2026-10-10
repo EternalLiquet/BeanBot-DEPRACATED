@@ -41,6 +41,7 @@ public class RoleMenuTextTests
     [InlineData("\u3164")]
     [InlineData("\u2800 \u115F")]
     [InlineData("\u0301")]
+    [InlineData("\U000E0100")]
     public void HasVisibleText_RejectsBlankAndVisuallyEmptyTitles(string? value)
     {
         Assert.False(RoleMenuText.HasVisibleText(value));
@@ -50,6 +51,7 @@ public class RoleMenuTextTests
     [InlineData("Games")]
     [InlineData(" Région ")]
     [InlineData("🎮")]
+    [InlineData("🎮\U000E0100")]
     [InlineData("\u200BA")]
     public void HasVisibleText_AcceptsLegitimateTitles(string value)
     {

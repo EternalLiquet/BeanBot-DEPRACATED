@@ -384,6 +384,7 @@ public class RoleMenuServiceIntegrationTests
     [InlineData(null, "Give the menu a title.")]
     [InlineData("   ", "Give the menu a title.")]
     [InlineData("​ㅤ", "Give the menu a title.")]
+    [InlineData("\U000E0100", "Give the menu a title.")]
     public async Task CreatePreview_RejectsMissingOrVisuallyEmptyTitles(string? title, string expected)
     {
         var fixture = new Fixture();
