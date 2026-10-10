@@ -84,6 +84,36 @@ public sealed class RolePanelDeletionHandlerTests
         Assert.False(service.HasPendingOperations);
     }
 
+    [Fact]
+    public async Task Shutdown_KeepsCancellationIgnoringCleanupTrackedUntilItSettles()
+    {
+        var readStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var legacy = new LegacyStore
+        {
+            Read = async _ =>
+            {
+                readStarted.SetResult();
+                await releaseRead.Task;
+                return null;
+            }
+        };
+        var service = CreateLegacyService(legacy);
+        using var client = new DiscordSocketClient();
+        var handler = CreateHandler(client, service, new MenuStore());
+        var eventTask = handler.HandleDeletedMessageIdsAsync(1, 2, [10]);
+        await readStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var shutdown = service.DisposeAsync().AsTask();
+        Assert.True(service.HasPendingOperations);
+        Assert.False(shutdown.IsCompleted);
+        releaseRead.SetResult();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => eventTask);
+        await shutdown.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(service.HasPendingOperations);
+    }
+
     private static ReactionRoleHandler CreateHandler(
         DiscordSocketClient client, ReactionRoleService service, MenuStore menus)
     {
