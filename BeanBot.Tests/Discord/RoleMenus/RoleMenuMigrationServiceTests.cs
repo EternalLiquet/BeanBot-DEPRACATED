@@ -162,7 +162,7 @@ public class RoleMenuMigrationServiceTests
             CancellationToken.None);
 
         Assert.Null(result.Draft);
-        Assert.Contains("visible title", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("visible `title`", result.Content, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

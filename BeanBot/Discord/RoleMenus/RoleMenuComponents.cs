@@ -488,6 +488,7 @@ internal static class RoleMenuComponents
         var roleMentions = string.Join(
             " ",
             roles.Select(role => $"<@&{role.Id.ToString(CultureInfo.InvariantCulture)}>"));
-        return roleMentions.Length == 0 ? "No valid roles remain." : roleMentions;
+        return roleMentions.Length == 0
+            ? "None of these roles can be used anymore." : roleMentions;
     }
 }
