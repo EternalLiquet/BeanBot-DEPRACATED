@@ -140,6 +140,30 @@ public sealed class MongoReactionRoleRepositoryIntegrationTests
     }
 
     [Fact]
+    public async Task DeleteBinding_RemovesExactlyMatchingSavedMappings()
+    {
+        var databaseName = CreateDatabaseName();
+        var client = new MongoClient(_fixture.ConnectionString);
+        var repository = CreateRepository(client.GetDatabase(databaseName));
+        try
+        {
+            using var cancellation = new CancellationTokenSource(OperationTimeout);
+            await repository.InsertNewRoleSettings(new ReactionRoleSettings(
+                [new("4", "5")], "1", "2", "42"), cancellation.Token);
+            var saved = Assert.IsType<ReactionRoleSettings>(
+                await repository.GetRoleSetting(42, cancellation.Token));
+
+            Assert.True(await repository.DeleteBindingAsync(saved, "1", "2", "42",
+                cancellation.Token));
+            Assert.Null(await repository.GetRoleSetting(42, cancellation.Token));
+        }
+        finally
+        {
+            await DropDatabaseAsync(client, databaseName);
+        }
+    }
+
+    [Fact]
     public async Task GetGuildPage_TraversesBeyondTwentyFiveWithoutCrossGuildRecords()
     {
         var databaseName = CreateDatabaseName();
