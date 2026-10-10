@@ -210,7 +210,7 @@ public class BeanBotStartupReportTests
     }
 
     [Fact]
-    public async Task StopAsync_CancelsPendingRetryAndAllowsFallbackAlert()
+    public async Task StopAsync_CancelsPendingRetryWithoutReleasingFallbackAlert()
     {
         var delivery = new ScriptedDelivery { FailuresBeforeSuccess = int.MaxValue };
         var outcomes = new OutcomeRecorder();
@@ -221,7 +221,7 @@ public class BeanBotStartupReportTests
         await clock.TimerCreated.Task.WaitAsync(TestTimeout);
         await reporter.StopAsync().WaitAsync(TestTimeout);
 
-        Assert.Equal([false], outcomes.Values);
+        Assert.Empty(outcomes.Values);
         Assert.Equal(1, delivery.CallCount);
         Assert.False(reporter.HasActiveDiscordOperation);
     }
@@ -237,11 +237,36 @@ public class BeanBotStartupReportTests
         await delivery.FirstSendStarted.Task.WaitAsync(TestTimeout);
         await reporter.StopAsync().WaitAsync(TestTimeout);
 
-        Assert.Equal([false], outcomes.Values);
+        Assert.Empty(outcomes.Values);
         Assert.True(reporter.HasActiveDiscordOperation);
         delivery.ReleaseFirstSend();
         Assert.False(reporter.HasActiveDiscordOperation);
         Assert.Equal(1, delivery.CallCount);
+    }
+
+    [Fact]
+    public async Task StopAsync_DuringChannelCheckSendsNothingAndKeepsFallbackSuppressed()
+    {
+        var delivery = new ScriptedDelivery();
+        var outcomes = new OutcomeRecorder();
+        Task? stop = null;
+        BeanBotStartupReport? reporter = null;
+        reporter = CreateReporter(
+            delivery,
+            outcomes,
+            new AutoAdvancingClock(),
+            () =>
+            {
+                stop = reporter!.StopAsync();
+                return PunChannelStartupStatus.NotFound;
+            });
+
+        reporter.QueueOnFirstReady();
+        await stop!.WaitAsync(TestTimeout);
+
+        Assert.Equal(0, delivery.CallCount);
+        Assert.Empty(outcomes.Values);
+        Assert.False(reporter.HasActiveDiscordOperation);
     }
 
     [Fact]

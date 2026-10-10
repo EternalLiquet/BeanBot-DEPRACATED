@@ -88,8 +88,10 @@ internal sealed class BeanBotStartupReport : IAsyncDisposable
     }
 
     /// <param name="recordDeliveryOutcome">
-    /// Called exactly once when the report settles. True means the owner received a report
-    /// that already said the daily pun channel is unavailable, so the scheduled alert is handled.
+    /// Called at most once, when delivery succeeds, fails, or expires. True means the owner
+    /// received a report that already said the daily pun channel is unavailable, so the scheduled
+    /// alert is handled. Never called once shutdown has stopped the report, so the pun alert
+    /// stays suppressed while the pun service is stopping.
     /// </param>
     internal BeanBotStartupReport(
         Func<PunChannelStartupStatus> checkChannel,
@@ -152,15 +154,13 @@ internal sealed class BeanBotStartupReport : IAsyncDisposable
             PunChannelStartupState.NotFound or PunChannelStartupState.MissingPermission;
         lock (_lifecycleSync)
         {
+            // Shutdown that began during the channel check leaves the pun alert suppressed.
             if (!_stopped)
             {
                 _deliveryLoop = Task.Run(
                     () => DeliverAndRecordOutcomeAsync(report, reportsUnavailableChannel, _shutdown.Token));
-                return;
             }
         }
-
-        _recordDeliveryOutcome(false);
     }
 
     internal async Task StopAsync()
@@ -201,22 +201,35 @@ internal sealed class BeanBotStartupReport : IAsyncDisposable
         bool reportsUnavailableChannel,
         CancellationToken cancellationToken)
     {
-        var delivered = false;
+        bool missingChannelAlertHandled;
         try
         {
-            delivered = await DeliverWithinWindowAsync(report, cancellationToken);
+            var delivered = await DeliverWithinWindowAsync(report, cancellationToken);
+            missingChannelAlertHandled = delivered && reportsUnavailableChannel;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Shutdown stopped the retries; the outcome below still settles the pun alert.
+            // Shutdown is not a delivery failure: keep the pun alert suppressed.
+            return;
         }
         catch (Exception exception)
         {
             BeanBotLog.StartupReportFailed(_logger, exception);
+            missingChannelAlertHandled = false;
         }
-        finally
+
+        RecordOutcomeUnlessStopped(missingChannelAlertHandled);
+    }
+
+    private void RecordOutcomeUnlessStopped(bool missingChannelAlertHandled)
+    {
+        // Holding the lock means StopAsync cannot slip in between the check and the record.
+        lock (_lifecycleSync)
         {
-            _recordDeliveryOutcome(delivered && reportsUnavailableChannel);
+            if (!_stopped)
+            {
+                _recordDeliveryOutcome(missingChannelAlertHandled);
+            }
         }
     }
 

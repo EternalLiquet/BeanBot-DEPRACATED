@@ -449,6 +449,47 @@ public class DailyPunServiceTests
     }
 
     [Fact]
+    public async Task RunOccurrenceAsync_MissingChannelAfterStartupReportCancellationStaysQuiet()
+    {
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
+        var start = new DateTimeOffset(2026, 9, 7, 21, 20, 0, TimeSpan.Zero);
+        var logger = new RecordingLogger();
+        var options = CreateSchedulerOptions(
+            catchUpGraceWindow: TimeSpan.FromSeconds(61),
+            preflightRetryDelay: TimeSpan.FromSeconds(30));
+        await using var handler = CreateHandler(
+            new InMemoryClaimStore(),
+            new AdvancingPunClock(start),
+            () => null,
+            options,
+            logger: logger,
+            waitForStartupReport: true);
+        var reporterClock = new BlockingPunClock(start);
+        var reporter = new BeanBotStartupReport(
+            () => PunChannelStartupStatus.NotFound,
+            "2.18.3",
+            null,
+            null,
+            handler.RecordStartupReportOutcome,
+            new FixedOwnerAlertDelivery(succeeds: false),
+            reporterClock);
+        reporter.QueueOnFirstReady();
+        await reporterClock.DelayStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Shutdown stops the startup report first; the pun service is still running here.
+        await reporter.StopAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        var window = DailyPunService.CreateScheduleWindow(
+            timezone,
+            new DateOnly(2026, 9, 7),
+            ScheduledLocalTime,
+            options.CatchUpGraceWindow);
+        var result = await handler.RunOccurrenceAsync(window, timezone, CancellationToken.None);
+
+        Assert.Equal(PunOccurrenceResult.GraceExpired, result);
+        Assert.DoesNotContain(LogLevel.Error, logger.Levels);
+    }
+
+    [Fact]
     public async Task RunOccurrenceAsync_OtherPostingErrorIsStillLoggedAfterChannelAlert()
     {
         var timezone = DailyPunSchedule.CreateDefault().TimeZone;
