@@ -69,6 +69,21 @@ public sealed class RoleMenuCommandRegistrationTests
     }
 
     [Fact]
+    public async Task GlobalRegistration_MigrationDoesNotRequireCopiedMessageId()
+    {
+        await using var registration = await RegistrationFixture.CreateAsync();
+        var roleMenu = Assert.IsType<SlashCommandProperties>(Assert.Single(
+            registration.GetRegisteredProperties(),
+            candidate => candidate is SlashCommandProperties
+                         && candidate.Name.GetValueOrDefault() == "role-menu"));
+        var migrate = Assert.Single(roleMenu.Options.GetValueOrDefault()!,
+            option => option.Name == "migrate");
+        var source = Assert.Single(migrate.Options!,
+            option => option.Name == "legacy-message-id");
+        Assert.False(source.IsRequired);
+    }
+
+    [Fact]
     public async Task GlobalRegistration_RepairUsesPickerWithOptionalTargetChannel()
     {
         await using var registration = await RegistrationFixture.CreateAsync();
@@ -125,20 +140,25 @@ public sealed class RoleMenuCommandRegistrationTests
             var discord = new DiscordRoleMenuClient(
                 (_, _, _) => Task.FromResult<IGuildUser?>(null),
                 (_, _) => Task.FromResult<IChannel?>(null));
+            var reactionRepository = new ReactionRoleRepository(
+                new MongoClient("mongodb://127.0.0.1:1").GetDatabase("registration_test"),
+                NullLogger<ReactionRoleRepository>.Instance);
+            var administration = new RoleMenuAdministrationService(
+                roleMenus, discord, NullLogger<RoleMenuAdministrationService>.Instance);
             var services = new ServiceCollection()
                 .AddSingleton(roleMenus)
                 .AddSingleton(discord)
                 .AddSingleton(new ReactionRoleService(
-                    new ReactionRoleRepository(
-                        new MongoClient("mongodb://127.0.0.1:1").GetDatabase("registration_test"),
-                        NullLogger<ReactionRoleRepository>.Instance),
+                    reactionRepository,
                     client: null, TimeSpan.FromSeconds(1),
                     NullLogger<ReactionRoleService>.Instance, 8, CancellationToken.None))
                 .AddSingleton(new RoleMenuAuditService(roleMenus, discord))
-                .AddSingleton(new RoleMenuAdministrationService(
-                    roleMenus,
-                    discord,
-                    NullLogger<RoleMenuAdministrationService>.Instance))
+                .AddSingleton(administration)
+                .AddSingleton(new RoleMenuMigrationService(
+                    reactionRepository, roleMenus, discord,
+                    new LegacyReactionRoleMigrationClient(
+                        (_, _) => Task.FromResult<IChannel?>(null)),
+                    administration))
                 .AddSingleton(typeof(ILogger<>), typeof(NullLogger<>))
                 .BuildServiceProvider();
             var interactions = new InteractionService(client, new InteractionServiceConfig());

@@ -97,6 +97,7 @@ public sealed class RoleMenuInteractionService
         IReadOnlyCollection<ulong> roleIds,
         ObjectId menuId,
         ulong legacyReactionRoleMessageId,
+        string legacySourceFingerprint,
         out RoleMenuDraft? draft)
         => _draftRegistry.CreateMigration(
             guildId,
@@ -107,6 +108,7 @@ public sealed class RoleMenuInteractionService
             roleIds,
             menuId,
             legacyReactionRoleMessageId,
+            legacySourceFingerprint,
             out draft);
 
     internal RoleMenuDraftAccessStatus TryBeginPublish(

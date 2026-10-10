@@ -123,6 +123,49 @@ public class RoleMenuMigrationServiceTests
     }
 
     [Fact]
+    public async Task ConfirmAsync_RejectsReplacementSourceWithSameRoleIds()
+    {
+        var original = CreateLegacySettings(GuildId, ChannelId, LegacyMessageId, 4, 5);
+        var fixture = CreateFixture(original);
+        var preview = await fixture.Service.CreatePreviewAsync(
+            new RoleMenuMigrationRequest(LegacyMessageId, null, null, null, null, null),
+            GuildId, AdministratorId, BotUserId, CancellationToken.None);
+        var draft = Assert.IsType<RoleMenuDraft>(preview.Draft);
+
+        var replacement = new ReactionRoleSettings(
+            [new RoleEmotePair("4", "emoji-0"),
+                new RoleEmotePair("5", "emoji-1")],
+            GuildId.ToString(CultureInfo.InvariantCulture),
+            ChannelId.ToString(CultureInfo.InvariantCulture),
+            LegacyMessageId.ToString(CultureInfo.InvariantCulture))
+        { Id = ObjectId.GenerateNewId() };
+        fixture.ReactionStore.Settings = replacement;
+
+        var result = await fixture.Service.ConfirmAsync(
+            draft, AdministratorId, BotUserId, CancellationToken.None);
+
+        Assert.False(result.Completed);
+        Assert.Contains("changed after this preview", result.Content,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, fixture.RoleMenuStore.UpsertCalls);
+    }
+
+    [Fact]
+    public async Task CreatePreviewAsync_RejectsInvisibleExplicitTitle()
+    {
+        var fixture = CreateFixture(CreateLegacySettings(GuildId, ChannelId,
+            LegacyMessageId, 4, 5));
+
+        var result = await fixture.Service.CreatePreviewAsync(
+            new RoleMenuMigrationRequest(LegacyMessageId, null, null, null,
+                "\u2800", null), GuildId, AdministratorId, BotUserId,
+            CancellationToken.None);
+
+        Assert.Null(result.Draft);
+        Assert.Contains("visible title", result.Content, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task CreatePreviewAsync_WhenMigrationAlreadyPersisted_ReturnsExistingWithoutTouchingSource()
     {
         var fixture = CreateFixture(settings: null);

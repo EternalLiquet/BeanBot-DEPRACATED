@@ -31,13 +31,13 @@ Each public panel contains a stable **Choose your roles** button. The footer sho
 
 ## Migrate a legacy reaction-role panel
 
-Use `/role-menu migrate legacy-message-id:<id>` to prepare one saved legacy reaction-role panel for migration. This is intentionally one panel at a time; BeanBot does not scan or bulk-convert legacy configuration.
+Run `/role-menu migrate` to choose a saved legacy panel from a private list of up to 25 per page. The list uses readable channel and role names and relative posting ages. If you already have the message ID, `/role-menu migrate legacy-message-id:<id>` opens that panel directly, including older panels. This is one panel at a time; BeanBot does not bulk-convert legacy settings.
 
-The command looks up the exact saved reaction-role record for that message ID and positively identifies the current Discord message as a BeanBot legacy `Role Group:` panel before offering a private preview. When the legacy footer contains a usable role-group label, BeanBot suggests it as the new menu title. You may supply a replacement `title`, optional `description`, and optional `target-channel` directly on the command. If no target is supplied, the replacement defaults to the legacy panel's channel.
+After you choose a panel, BeanBot looks up its exact saved reaction-role record and positively identifies the current Discord message as a BeanBot legacy `Role Group:` panel before offering a private preview. When the legacy footer contains a usable role-group label, BeanBot suggests it as the new menu title. You may supply a replacement `title`, optional `description`, and optional `target-channel` directly on the command. If no target is supplied, the replacement defaults to the legacy panel's channel.
 
 Legacy reaction-role behavior maps to a **multiple-selection** role menu: the persisted role allowlist is preserved, while the old emoji IDs are intentionally discarded because dropdown role menus no longer use reaction emoji as controls. The preview shows the exact legacy source message, roles, target channel, and retirement warning before anything is published.
 
-Selecting **Publish migration** performs the safety checks again from current state. BeanBot reloads the persisted legacy configuration and source message, revalidates administrator and bot hierarchy, verifies the roles have not changed since the preview, and checks target-channel permissions before using the normal role-menu publication workflow. If any of that state changed, publication stops and the administrator is asked to create a fresh preview.
+Selecting **Publish migration** performs the safety checks again from current state. BeanBot reloads the persisted legacy configuration and source message, revalidates administrator and bot hierarchy, verifies the exact saved source binding has not changed since the preview, and checks target-channel permissions before using the normal role-menu publication workflow. If any of that state changed, publication stops and the administrator is asked to create a fresh preview.
 
 Migration uses a deterministic role-menu ID derived from the server and legacy source message and stores the source message ID with the new menu. This provenance makes rerunning the same migration idempotent across restarts and serializes concurrent confirmations through the normal per-menu lifecycle lock. If Discord or MongoDB returns an ambiguous publication result, BeanBot does not blindly retry the write; inspect the target channel and persisted role-menu state, then rerun the migration for the same source so the stable identity can reconcile the result rather than creating a second saved replacement.
 
@@ -54,7 +54,7 @@ BeanBot first shows the menu's current title, description, roles, and selection 
 - 1–25 self-assignable roles; and
 - multiple- or single-selection mode.
 
-Editing is intentionally in place. BeanBot keeps the same saved menu ID, server, channel, public message, and original creation timestamp. Moving a panel to another channel is not supported by edit; delete and recreate the panel when its location must change.
+Editing is intentionally in place. BeanBot keeps the same saved menu ID, server, channel, public message, original creation timestamp, and migration provenance when present. Moving a panel to another channel is not supported by edit; delete and recreate the panel when its location must change.
 
 When the form is submitted, BeanBot reloads the saved menu, confirms it still matches the values shown in the preview, and rechecks the administrator permission, current role existence and hierarchy, BeanBot's role permissions, channel permissions, and the exact public message identity. The edit runs under the same exclusive per-menu write coordination used by publication and deletion, so it cannot race a member role mutation or another menu-level write. Member submissions also reload persisted settings before any role change, so a selector opened before an edit cannot grant a role that the edited menu no longer allows.
 
@@ -133,9 +133,10 @@ Use a test server with BeanBot's role below one test role and above two other te
 10. Delete one panel through **Apps → Delete Role Menu** and another through `/role-menu delete`, then confirm their old controls cannot mutate roles. Confirm neither panel nor the publication and deletion replies show an internal ID.
 11. Temporarily remove BeanBot's hierarchy or permissions and confirm operations fail privately without exposing exception details or changing unrelated roles; audit reports **Broken** for a positively verified permission failure.
 12. Use an existing legacy reaction-role panel and confirm its reactions still add and remove roles exactly as before.
-13. Run `/role-menu retire-legacy`, page past 25 panels if available, review the private preview, and cancel once. Confirm nothing changes.
-14. Confirm retirement removes only the selected panel and saved settings while members keep their roles. Repeat with a missing panel and confirm stale settings are removed.
-15. Change the saved panel or remove **Manage Roles** between preview and confirmation; verify deletion stops.
+13. Run `/role-menu migrate`, choose a saved legacy panel, and review the private multiple-selection preview. Publish it in a test server and verify the source panel and existing member roles remain unchanged. Repeat migration and verify it reports the existing menu.
+14. Run `/role-menu retire-legacy`, page past 25 panels if available, review the private preview, and cancel once. Confirm nothing changes.
+15. Confirm retirement removes only the selected panel and saved settings while members keep their roles. Repeat with a missing panel and confirm stale settings are removed.
+16. Change the saved panel or remove **Manage Roles** between preview and confirmation; verify deletion stops.
 
 ## Wording
 

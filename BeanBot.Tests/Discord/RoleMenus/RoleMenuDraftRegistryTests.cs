@@ -61,12 +61,14 @@ public class RoleMenuDraftRegistryTests
             [4UL, 5UL],
             menuId,
             777UL,
+            "source-binding",
             out var created);
 
         var draft = Assert.IsType<RoleMenuDraft>(created);
         Assert.Equal(RoleMenuDraftCreateStatus.Created, status);
         Assert.Equal(menuId, draft.MenuId);
         Assert.Equal(777UL, draft.LegacyReactionRoleMessageId);
+        Assert.Equal("source-binding", draft.LegacySourceFingerprint);
         Assert.Equal(RoleMenuSelectionMode.Multiple, draft.SelectionMode);
         Assert.Equal([4UL, 5UL], draft.RoleIds);
     }

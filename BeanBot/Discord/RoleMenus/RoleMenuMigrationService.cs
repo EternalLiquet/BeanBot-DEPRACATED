@@ -107,11 +107,10 @@ public sealed class RoleMenuMigrationService
             title = validation.SuggestedTitle;
         }
 
-        if (string.IsNullOrWhiteSpace(title))
+        if (title is null || !RoleMenuText.HasVisibleText(title))
         {
             return new RoleMenuMigrationPreviewResult(
-                "Bean Bot recognized the legacy panel, but it has no usable `Role Group:` label. " +
-                "Run the command again with an explicit `title` before migrating it.");
+                "That panel has no readable title. Run `/role-menu migrate` with its message ID and a visible `title` before publishing it.");
         }
 
         if (title.Length > RoleMenuConstants.MaximumTitleLength)
@@ -136,6 +135,7 @@ public sealed class RoleMenuMigrationService
             validation.RoleIds!,
             menuId,
             request.LegacyMessageId,
+            validation.Fingerprint!,
             out var draft);
         if (createStatus != RoleMenuDraftCreateStatus.Created || draft is null)
         {
@@ -191,11 +191,13 @@ public sealed class RoleMenuMigrationService
                 Completed: false);
         }
 
-        if (!validation.RoleIds!.SequenceEqual(draft.RoleIds))
+        if (!string.Equals(validation.Fingerprint, draft.LegacySourceFingerprint,
+                StringComparison.Ordinal)
+            || !validation.RoleIds!.SequenceEqual(draft.RoleIds))
         {
             return new RoleMenuMigrationConfirmationResult(
-                "The legacy role configuration changed after this preview was created. Nothing was " +
-                "published; run `/role-menu migrate` again to review the current roles.",
+                "The saved legacy panel changed after this preview. I didn't publish a new menu. " +
+                "Run `/role-menu migrate` again to review it.",
                 Completed: false);
         }
 
@@ -229,9 +231,8 @@ public sealed class RoleMenuMigrationService
                 draft.TargetChannelId,
                 publishedMessageId);
             return new RoleMenuMigrationConfirmationResult(
-                $"Migration published as role menu `{draft.MenuId}`: {link}\n" +
-                "The legacy reaction-role panel and configuration were left unchanged. After you " +
-                "verify the new menu, retire the legacy panel deliberately to avoid offering two active controls.",
+                $"I published the new role menu: {link}\n" +
+                "The legacy panel is still active. After you check the new menu, run `/role-menu retire-legacy` to retire the old one. Members keep the roles they already have.",
                 Completed: true,
                 publication);
         }
@@ -323,7 +324,8 @@ public sealed class RoleMenuMigrationService
                 roleIds,
                 roleValidation,
                 bot,
-                panel.SuggestedTitle);
+                panel.SuggestedTitle,
+                LegacyReactionRoleRetirementBinding.Fingerprint(settings));
     }
 
     private static bool TryParseLegacyRoleIds(
@@ -376,10 +378,10 @@ public sealed class RoleMenuMigrationService
             ? RoleMenuMigrationIdentity.BuildMessageLink(guildId, channelId, messageId)
             : null;
         var suffix = link is null
-            ? "Its saved channel/message identity is malformed, so Bean Bot cannot build a message link."
+            ? "I couldn't show its message link. Run `/role-menu audit` to check it."
             : link;
         return new RoleMenuMigrationPreviewResult(
-            $"That legacy panel was already migrated as role menu `{existing.Id}`. {suffix}",
+            $"I already migrated that legacy panel. {suffix}",
             ExistingMenu: existing);
     }
 
@@ -400,9 +402,8 @@ public sealed class RoleMenuMigrationService
                 "Bean Bot confirmed the migration settings were not saved but could not remove the " +
                 "new panel. Automatic retry is disabled; remove the orphaned panel before retrying.",
             _ =>
-                "Bean Bot could not confirm whether MongoDB saved the migrated role menu. The panel " +
-                "was left in place and automatic retry is disabled. Inspect the target channel and " +
-                "saved role-menu state before retrying."
+                "I couldn't confirm whether the new menu was saved. The panel was left in place. " +
+                "Check the target channel and run `/role-menu audit` before trying again."
         };
 
     private sealed record ValidatedLegacySource(
@@ -412,17 +413,19 @@ public sealed class RoleMenuMigrationService
         IReadOnlyList<ulong>? RoleIds,
         RoleMenuRoleValidationResult? RoleValidation,
         IGuildUser? Bot,
-        string? SuggestedTitle)
+        string? SuggestedTitle,
+        string? Fingerprint)
     {
         internal static ValidatedLegacySource Invalid(string errorMessage)
-            => new(false, errorMessage, 0, null, null, null, null);
+            => new(false, errorMessage, 0, null, null, null, null, null);
 
         internal static ValidatedLegacySource Valid(
             ulong sourceChannelId,
             IReadOnlyList<ulong> roleIds,
             RoleMenuRoleValidationResult roleValidation,
             IGuildUser bot,
-            string? suggestedTitle)
+            string? suggestedTitle,
+            string fingerprint)
             => new(
                 true,
                 string.Empty,
@@ -430,6 +433,7 @@ public sealed class RoleMenuMigrationService
                 roleIds,
                 roleValidation,
                 bot,
-                suggestedTitle);
+                suggestedTitle,
+                fingerprint);
     }
 }

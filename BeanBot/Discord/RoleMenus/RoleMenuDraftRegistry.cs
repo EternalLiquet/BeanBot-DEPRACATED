@@ -29,7 +29,8 @@ internal sealed record RoleMenuDraft(
     IReadOnlyList<ulong> RoleIds,
     RoleMenuSelectionMode SelectionMode,
     DateTimeOffset ExpiresAtUtc,
-    ulong? LegacyReactionRoleMessageId = null);
+    ulong? LegacyReactionRoleMessageId = null,
+    string? LegacySourceFingerprint = null);
 
 internal sealed class RoleMenuDraftRegistry
 {
@@ -87,6 +88,7 @@ internal sealed class RoleMenuDraftRegistry
             selectionMode,
             ObjectId.GenerateNewId(),
             legacyReactionRoleMessageId: null,
+            legacySourceFingerprint: null,
             out draft);
 
     internal RoleMenuDraftCreateStatus CreateMigration(
@@ -98,6 +100,7 @@ internal sealed class RoleMenuDraftRegistry
         IReadOnlyCollection<ulong> roleIds,
         ObjectId menuId,
         ulong legacyReactionRoleMessageId,
+        string legacySourceFingerprint,
         out RoleMenuDraft? draft)
     {
         if (menuId == ObjectId.Empty)
@@ -106,6 +109,7 @@ internal sealed class RoleMenuDraftRegistry
         }
 
         ArgumentOutOfRangeException.ThrowIfZero(legacyReactionRoleMessageId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(legacySourceFingerprint);
         return CreateCore(
             guildId,
             userId,
@@ -116,6 +120,7 @@ internal sealed class RoleMenuDraftRegistry
             RoleMenuSelectionMode.Multiple,
             menuId,
             legacyReactionRoleMessageId,
+            legacySourceFingerprint,
             out draft);
     }
 
@@ -129,6 +134,7 @@ internal sealed class RoleMenuDraftRegistry
         RoleMenuSelectionMode selectionMode,
         ObjectId menuId,
         ulong? legacyReactionRoleMessageId,
+        string? legacySourceFingerprint,
         out RoleMenuDraft? draft)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
@@ -170,7 +176,8 @@ internal sealed class RoleMenuDraftRegistry
                 [.. roleIds],
                 selectionMode,
                 now.Add(_lifetime),
-                legacyReactionRoleMessageId);
+                legacyReactionRoleMessageId,
+                legacySourceFingerprint);
             _drafts[draft.Id] = new DraftEntry { Draft = draft };
             _draftByOwner[owner] = draft.Id;
             return RoleMenuDraftCreateStatus.Created;
