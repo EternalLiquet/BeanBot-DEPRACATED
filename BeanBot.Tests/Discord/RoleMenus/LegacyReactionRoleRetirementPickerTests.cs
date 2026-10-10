@@ -111,6 +111,7 @@ public class LegacyReactionRoleRetirementPickerTests
     [Fact]
     public void Build_CanReuseReadableOptionsForMigrationControls()
     {
+        var selectionId = Guid.NewGuid();
         var settings = Enumerable.Range(1, 26)
             .Select(index => new ReactionRoleSettings(
                 [new RoleEmotePair("4", "5")], "1", "2",
@@ -119,21 +120,22 @@ public class LegacyReactionRoleRetirementPickerTests
             .Reverse().ToArray();
         var components = LegacyReactionRoleRetirementPicker.Build(9, settings, null,
             newer: false, _ => "general", _ => "Gamer",
-            selectId: LegacyReactionRoleMigrationPicker.Select(9),
-            pageId: LegacyReactionRoleMigrationPicker.Page);
+            selectId: LegacyReactionRoleMigrationPicker.Select(9, selectionId),
+            pageId: (userId, newer, cursor) =>
+                LegacyReactionRoleMigrationPicker.Page(userId, selectionId, newer, cursor));
         var controls = components.Components.OfType<ActionRowComponent>()
             .SelectMany(row => row.Components).ToArray();
         var selector = Assert.Single(controls.OfType<SelectMenuComponent>());
         var next = Assert.Single(controls.OfType<ButtonComponent>());
 
-        Assert.Equal(LegacyReactionRoleMigrationPicker.Select(9), selector.CustomId);
+        Assert.Equal(LegacyReactionRoleMigrationPicker.Select(9, selectionId), selector.CustomId);
         Assert.Equal(25, selector.Options.Count);
         Assert.Equal(settings[0].MessageId, selector.Options.First().Value);
         Assert.Contains("Gamer", selector.Options.First().Description,
             StringComparison.Ordinal);
-        Assert.Equal(LegacyReactionRoleMigrationPicker.Page(9, false,
+        Assert.Equal(LegacyReactionRoleMigrationPicker.Page(9, selectionId, false,
             settings[24].Id), next.CustomId);
-        Assert.Equal($"rm:mp:9:n:{settings[24].Id}",
-            LegacyReactionRoleMigrationPicker.Page(9, true, settings[24].Id));
+        Assert.Equal($"rm:mp:9:{selectionId:N}:n:{settings[24].Id}",
+            LegacyReactionRoleMigrationPicker.Page(9, selectionId, true, settings[24].Id));
     }
 }

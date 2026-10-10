@@ -93,7 +93,7 @@ internal static class RoleMenuComponents
             .WithDescription(string.IsNullOrWhiteSpace(draft.Description)
                 ? DefaultDescription
                 : draft.Description)
-            .AddField("Legacy source", sourceMessageLink)
+            .AddField("Legacy source", $"[Open legacy panel]({sourceMessageLink})")
             .AddField("Roles", FormatRoleMentions(roles))
             .AddField("Mode", "Multiple selection", inline: true)
             .AddField(

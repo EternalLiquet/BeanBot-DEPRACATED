@@ -15,8 +15,6 @@ public sealed partial class RoleMenuAdminModule
         "Preview migration of one legacy reaction-role panel.",
         runMode: RunMode.Sync)]
     public async Task MigrateAsync(
-        [Summary("legacy-message-id", "Optional message ID if you already have it")]
-        string? legacyMessageId = null,
         [Summary("target-channel", "Optional text channel for the new role menu")]
         ITextChannel? targetChannel = null,
         [Summary("title", "Optional replacement title for the new role menu")]
@@ -35,7 +33,7 @@ public sealed partial class RoleMenuAdminModule
                 operationToken),
             cancellation.Token);
 
-        if (!TryGetGuildActors(out var guild, out var administrator, out var bot))
+        if (!TryGetGuildActors(out var guild, out var administrator, out _))
         {
             await ReplaceResponseAsync(
                 "You can only migrate legacy panels in a server.",
@@ -43,44 +41,32 @@ public sealed partial class RoleMenuAdminModule
             return;
         }
 
-        if (legacyMessageId is null)
-        {
-            if (targetChannel is not null || title is not null || description is not null)
-            {
-                await ReplaceResponseAsync(
-                    "Choose a legacy panel first. To customize its new title, description, or channel, rerun `/role-menu migrate` with that panel's message ID.",
-                    cancellation.Token);
-                return;
-            }
-            await ShowMigrationPageAsync(null, newer: false, cancellation.Token);
-            return;
-        }
-
-        if (!RoleMenuCustomIds.TryParseSnowflake(legacyMessageId, out var parsedMessageId))
+        if (!RoleMenus.CreateMigrationSelection(
+                guild.Id, administrator.Id, targetChannel?.Id,
+                targetChannel?.GuildId, targetChannel?.ChannelType,
+                title, description, out var selection) || selection is null)
         {
             await ReplaceResponseAsync(
-                "That legacy message ID isn't valid. Run `/role-menu migrate` to choose a saved panel.",
+                "I have too many migration previews open. Try `/role-menu migrate` again shortly.",
                 cancellation.Token);
             return;
         }
-
-        await ShowMigrationPreviewAsync(parsedMessageId, guild.Id, administrator.Id, bot.Id,
-            targetChannel, title, description, cancellation.Token);
+        await ShowMigrationPageAsync(selection, null, newer: false, cancellation.Token);
     }
 
     private async Task ShowMigrationPreviewAsync(
         ulong parsedMessageId, ulong guildId, ulong administratorId, ulong botId,
-        ITextChannel? targetChannel, string? title, string? description,
+        RoleMenuMigrationSelection selection,
         CancellationToken cancellationToken)
     {
         var preview = await _migration.CreatePreviewAsync(
             new RoleMenuMigrationRequest(
                 parsedMessageId,
-                targetChannel?.Id,
-                targetChannel?.GuildId,
-                targetChannel?.ChannelType,
-                title,
-                description),
+                selection.TargetChannelId,
+                selection.TargetChannelGuildId,
+                selection.TargetChannelType,
+                selection.Title,
+                selection.Description),
             guildId,
             administratorId,
             botId,
@@ -105,18 +91,23 @@ public sealed partial class RoleMenuAdminModule
     [ComponentInteraction(LegacyReactionRoleMigrationPicker.PagePattern,
         ignoreGroupNames: true, runMode: RunMode.Sync)]
     public async Task ChangeMigrationPageAsync(
-        string userIdValue, string directionValue, string cursorValue)
+        string userIdValue, string selectionIdValue,
+        string directionValue, string cursorValue)
     {
         using var cancellation = RoleMenus.CreateOperationCancellation();
         if (!RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var userId)
             || userId != Context.User.Id
+            || !RoleMenuCustomIds.TryParseDraftId(selectionIdValue, out var selectionId)
             || !LegacyReactionRoleRetirementPicker.TryParseCursor(
                 directionValue, cursorValue, out var newer, out var cursor)
             || Context.Guild is null
+            || !RoleMenus.TryGetMigrationSelection(
+                selectionId, Context.Guild.Id, userId, out var selection)
+            || selection is null
             || Context.Interaction is not SocketMessageComponent component
             || !IsValidManagementComponent(component, Context.Guild,
                 ComponentType.Button,
-                LegacyReactionRoleMigrationPicker.Page(userId, newer, cursor)))
+                LegacyReactionRoleMigrationPicker.Page(userId, selectionId, newer, cursor)))
         {
             await RespondToInvalidComponentAsync(
                 "This list has expired or belongs to someone else. Run `/role-menu migrate` again.",
@@ -128,24 +119,28 @@ public sealed partial class RoleMenuAdminModule
         {
             return;
         }
-        await ShowMigrationPageAsync(cursor, newer, cancellation.Token);
+        await ShowMigrationPageAsync(selection, cursor, newer, cancellation.Token);
     }
 
     [ComponentInteraction(LegacyReactionRoleMigrationPicker.SelectPattern,
         ignoreGroupNames: true, runMode: RunMode.Sync)]
     public async Task SelectMigrationPanelAsync(
-        string userIdValue, string[] selectedMessageIds)
+        string userIdValue, string selectionIdValue, string[] selectedMessageIds)
     {
         using var cancellation = RoleMenus.CreateOperationCancellation();
         if (!RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var userId)
             || userId != Context.User.Id
+            || !RoleMenuCustomIds.TryParseDraftId(selectionIdValue, out var selectionId)
             || selectedMessageIds is not { Length: 1 }
             || !RoleMenuCustomIds.TryParseSnowflake(selectedMessageIds[0], out var messageId)
             || !TryGetGuildActors(out var guild, out var administrator, out var bot)
+            || !RoleMenus.TryGetMigrationSelection(
+                selectionId, guild.Id, userId, out var selection)
+            || selection is null
             || Context.Interaction is not SocketMessageComponent component
             || !IsValidManagementComponent(component, guild,
                 ComponentType.SelectMenu,
-                LegacyReactionRoleMigrationPicker.Select(userId), selectedMessageIds[0]))
+                LegacyReactionRoleMigrationPicker.Select(userId, selectionId), selectedMessageIds[0]))
         {
             await RespondToInvalidComponentAsync(
                 "This list has expired or belongs to someone else. Run `/role-menu migrate` again.",
@@ -158,10 +153,11 @@ public sealed partial class RoleMenuAdminModule
             return;
         }
         await ShowMigrationPreviewAsync(messageId, guild.Id, administrator.Id, bot.Id,
-            null, null, null, cancellation.Token);
+            selection, cancellation.Token);
     }
 
-    private async Task ShowMigrationPageAsync(ObjectId? cursor, bool newer,
+    private async Task ShowMigrationPageAsync(
+        RoleMenuMigrationSelection selection, ObjectId? cursor, bool newer,
         CancellationToken cancellationToken)
     {
         var guild = Context.Guild!;
@@ -176,8 +172,11 @@ public sealed partial class RoleMenuAdminModule
                 Context.User.Id, settings, cursor, newer,
                 channelId => guild.GetChannel(channelId)?.Name,
                 roleId => guild.GetRole(roleId)?.Name,
-                selectId: LegacyReactionRoleMigrationPicker.Select(Context.User.Id),
-                pageId: LegacyReactionRoleMigrationPicker.Page));
+                selectId: LegacyReactionRoleMigrationPicker.Select(
+                    Context.User.Id, selection.Id),
+                pageId: (userId, direction, pageCursor) =>
+                    LegacyReactionRoleMigrationPicker.Page(
+                        userId, selection.Id, direction, pageCursor)));
     }
 
     [ComponentInteraction(
@@ -258,7 +257,7 @@ public sealed partial class RoleMenuAdminModule
             await SendFreshFeedbackAsync(
                 mutationStarted
                     ? "Bean Bot ran out of time and could not confirm the migration result. Inspect " +
-                      "the target channel, then rerun `/role-menu migrate` for the same legacy message. " +
+                      "the target channel, then rerun `/role-menu migrate` and choose the same legacy panel. " +
                       "The stable migration ID prevents a second saved role menu from being published."
                     : "Bean Bot was busy and did not begin this migration. Run `/role-menu migrate` again.");
         }
@@ -271,7 +270,7 @@ public sealed partial class RoleMenuAdminModule
             BeanBotLog.RoleMenuPublicationFailed(_logger, draft.MenuId.ToString(), exception);
             await SendFreshFeedbackAsync(
                 "Bean Bot couldn't confirm the migration result. Inspect the target channel, then " +
-                "rerun `/role-menu migrate` for the same legacy message. Automatic publication retry was not attempted.");
+                "rerun `/role-menu migrate` and choose the same legacy panel. Automatic publication retry was not attempted.");
         }
         finally
         {

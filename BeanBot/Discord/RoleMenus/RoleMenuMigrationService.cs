@@ -110,7 +110,7 @@ public sealed class RoleMenuMigrationService
         if (title is null || !RoleMenuText.HasVisibleText(title))
         {
             return new RoleMenuMigrationPreviewResult(
-                "That panel has no readable title. Run `/role-menu migrate` with its message ID and a visible `title` before publishing it.");
+                "That panel has no readable title. Run `/role-menu migrate` again with a visible `title`, then choose the panel.");
         }
 
         if (title.Length > RoleMenuConstants.MaximumTitleLength)
@@ -231,7 +231,7 @@ public sealed class RoleMenuMigrationService
                 draft.TargetChannelId,
                 publishedMessageId);
             return new RoleMenuMigrationConfirmationResult(
-                $"I published the new role menu: {link}\n" +
+                $"I published the new role menu: [View menu]({link})\n" +
                 "The legacy panel is still active. After you check the new menu, run `/role-menu retire-legacy` to retire the old one. Members keep the roles they already have.",
                 Completed: true,
                 publication);
@@ -379,7 +379,7 @@ public sealed class RoleMenuMigrationService
             : null;
         var suffix = link is null
             ? "I couldn't show its message link. Run `/role-menu audit` to check it."
-            : link;
+            : $"[View menu]({link})";
         return new RoleMenuMigrationPreviewResult(
             $"I already migrated that legacy panel. {suffix}",
             ExistingMenu: existing);

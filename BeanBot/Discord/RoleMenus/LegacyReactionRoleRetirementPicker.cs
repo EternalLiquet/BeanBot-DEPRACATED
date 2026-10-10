@@ -105,11 +105,12 @@ internal static class LegacyReactionRoleRetirementPicker
 
 internal static class LegacyReactionRoleMigrationPicker
 {
-    internal const string SelectPattern = "rm:ms:*";
-    internal const string PagePattern = "rm:mp:*:*:*";
+    internal const string SelectPattern = "rm:ms:*:*";
+    internal const string PagePattern = "rm:mp:*:*:*:*";
 
-    internal static string Select(ulong userId) => $"rm:ms:{userId}";
+    internal static string Select(ulong userId, Guid selectionId)
+        => $"rm:ms:{userId}:{selectionId:N}";
 
-    internal static string Page(ulong userId, bool newer, ObjectId cursor)
-        => $"rm:mp:{userId}:{(newer ? "n" : "o")}:{cursor}";
+    internal static string Page(ulong userId, Guid selectionId, bool newer, ObjectId cursor)
+        => $"rm:mp:{userId}:{selectionId:N}:{(newer ? "n" : "o")}:{cursor}";
 }

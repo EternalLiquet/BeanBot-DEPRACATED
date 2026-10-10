@@ -52,6 +52,7 @@ internal static class RoleMenuRepairWorkflow
             settings.Description,
             settings.RoleIds,
             settings.SelectionMode,
+            settings.MigratedFromReactionRoleMessageId,
             settings.CreatedAtUtc,
             settings.UpdatedAtUtc
         });
@@ -164,7 +165,11 @@ internal static class RoleMenuRepairWorkflow
             settings.Description,
             [.. parsed.RoleIds],
             settings.SelectionMode,
-            DateTimeOffset.UtcNow.Add(RoleMenuConstants.DraftLifetime));
+            DateTimeOffset.UtcNow.Add(RoleMenuConstants.DraftLifetime),
+            string.IsNullOrEmpty(settings.MigratedFromReactionRoleMessageId)
+                ? null
+                : ulong.Parse(settings.MigratedFromReactionRoleMessageId,
+                    System.Globalization.CultureInfo.InvariantCulture));
     }
 
     internal static bool HasSameSavedConfiguration(
@@ -180,6 +185,8 @@ internal static class RoleMenuRepairWorkflow
                && string.Equals(first.Title, second.Title, StringComparison.Ordinal)
                && string.Equals(first.Description, second.Description, StringComparison.Ordinal)
                && first.SelectionMode == second.SelectionMode
+               && string.Equals(first.MigratedFromReactionRoleMessageId,
+                   second.MigratedFromReactionRoleMessageId, StringComparison.Ordinal)
                && first.RoleIds.SequenceEqual(second.RoleIds, StringComparer.Ordinal);
     }
 

@@ -56,6 +56,19 @@ public class RoleMenuSettingsParserTests
     }
 
     [Fact]
+    public void TryParse_MalformedMigrationSource_IsRejectedBeforeRepairCanPublish()
+    {
+        var original = CreateSettings();
+        var settings = new RoleMenuSettings(original.Id, original.GuildId,
+            original.ChannelId, original.MessageId, original.Title,
+            original.Description, original.RoleIds, original.SelectionMode,
+            "not-a-message-id");
+
+        Assert.False(RoleMenuSettingsParser.TryParse(settings, out _, out var issue));
+        Assert.Equal(RoleMenuSettingsIssue.InvalidMigrationSource, issue);
+    }
+
+    [Fact]
     public void TryParse_InvalidSelectionMode_IsRejected()
     {
         var settings = CreateSettings(selectionMode: (RoleMenuSelectionMode)999);

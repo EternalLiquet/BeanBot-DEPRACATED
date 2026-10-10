@@ -78,9 +78,11 @@ public sealed class RoleMenuCommandRegistrationTests
                          && candidate.Name.GetValueOrDefault() == "role-menu"));
         var migrate = Assert.Single(roleMenu.Options.GetValueOrDefault()!,
             option => option.Name == "migrate");
-        var source = Assert.Single(migrate.Options!,
+        Assert.DoesNotContain(migrate.Options!,
             option => option.Name == "legacy-message-id");
-        Assert.False(source.IsRequired);
+        Assert.Contains(migrate.Options!, option => option.Name == "target-channel");
+        Assert.Contains(migrate.Options!, option => option.Name == "title");
+        Assert.Contains(migrate.Options!, option => option.Name == "description");
     }
 
     [Fact]

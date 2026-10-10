@@ -31,7 +31,7 @@ Each public panel contains a stable **Choose your roles** button. The footer sho
 
 ## Migrate a legacy reaction-role panel
 
-Run `/role-menu migrate` to choose a saved legacy panel from a private list of up to 25 per page. The list uses readable channel and role names and relative posting ages. If you already have the message ID, `/role-menu migrate legacy-message-id:<id>` opens that panel directly, including older panels. This is one panel at a time; BeanBot does not bulk-convert legacy settings.
+Run `/role-menu migrate` to choose a saved legacy panel from a private list of up to 25 per page. The list uses readable channel and role names and relative posting ages. Optional `target-channel`, `title`, and `description` values follow your selection through the preview. If a panel has no readable title, rerun the command with a visible `title` and choose the panel again. This is one panel at a time; BeanBot does not bulk-convert legacy settings.
 
 After you choose a panel, BeanBot looks up its exact saved reaction-role record and positively identifies the current Discord message as a BeanBot legacy `Role Group:` panel before offering a private preview. When the legacy footer contains a usable role-group label, BeanBot suggests it as the new menu title. You may supply a replacement `title`, optional `description`, and optional `target-channel` directly on the command. If no target is supplied, the replacement defaults to the legacy panel's channel.
 

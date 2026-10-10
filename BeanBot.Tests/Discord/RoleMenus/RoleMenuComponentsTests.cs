@@ -30,7 +30,8 @@ public class RoleMenuComponentsTests
             .SelectMany(row => row.Components).OfType<ButtonComponent>().ToArray();
 
         Assert.Equal("Games", embed.Title);
-        Assert.Equal("https://discord.com/channels/1/3/5", fields["Legacy source"]);
+        Assert.Equal("[Open legacy panel](https://discord.com/channels/1/3/5)",
+            fields["Legacy source"]);
         Assert.Contains("<@&4>", fields["Roles"], StringComparison.Ordinal);
         Assert.Equal("Multiple selection", fields["Mode"]);
         Assert.Contains("stay unchanged", fields["Retirement"], StringComparison.Ordinal);

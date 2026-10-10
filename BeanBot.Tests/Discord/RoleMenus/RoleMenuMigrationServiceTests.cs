@@ -189,6 +189,52 @@ public class RoleMenuMigrationServiceTests
 
         Assert.Null(result.Draft);
         Assert.Contains("visible `title`", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("message ID", result.Content, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PickerSelection_CarriesCustomTitleDescriptionAndTargetIntoPreview()
+    {
+        var fixture = CreateFixture(CreateLegacySettings(
+            GuildId, ChannelId, LegacyMessageId, 4, 5));
+        Assert.True(fixture.RoleMenus.CreateMigrationSelection(
+            GuildId, AdministratorId, ChannelId, GuildId, ChannelType.Text,
+            "Custom games", "Choose your favorites", out var created));
+        var selection = Assert.IsType<RoleMenuMigrationSelection>(created);
+        Assert.True(fixture.RoleMenus.TryGetMigrationSelection(
+            selection.Id, GuildId, AdministratorId, out var chosen));
+
+        var preview = await PreviewAsync(fixture, new RoleMenuMigrationRequest(
+            LegacyMessageId, chosen!.TargetChannelId,
+            chosen.TargetChannelGuildId, chosen.TargetChannelType,
+            chosen.Title, chosen.Description));
+
+        var draft = Assert.IsType<RoleMenuDraft>(preview.Draft);
+        Assert.Equal(ChannelId, draft.TargetChannelId);
+        Assert.Equal("Custom games", draft.Title);
+        Assert.Equal("Choose your favorites", draft.Description);
+    }
+
+    [Fact]
+    public async Task InvalidTitle_CanBeRecoveredThroughNewPickerSelectionWithoutMessageIdEntry()
+    {
+        var fixture = CreateFixture(CreateLegacySettings(
+            GuildId, ChannelId, LegacyMessageId, 4, 5));
+        var bad = await PreviewAsync(fixture, new RoleMenuMigrationRequest(
+            LegacyMessageId, null, null, null, "\u2800", null));
+        Assert.Null(bad.Draft);
+        Assert.Contains("Run `/role-menu migrate` again", bad.Content);
+
+        Assert.True(fixture.RoleMenus.CreateMigrationSelection(
+            GuildId, AdministratorId, null, null, null,
+            "Visible title", null, out var created));
+        var selection = Assert.IsType<RoleMenuMigrationSelection>(created);
+        var retry = await PreviewAsync(fixture, new RoleMenuMigrationRequest(
+            LegacyMessageId, selection.TargetChannelId,
+            selection.TargetChannelGuildId, selection.TargetChannelType,
+            selection.Title, selection.Description));
+
+        Assert.Equal("Visible title", Assert.IsType<RoleMenuDraft>(retry.Draft).Title);
     }
 
     [Fact]
@@ -224,6 +270,8 @@ public class RoleMenuMigrationServiceTests
         Assert.Same(existing, result.ExistingMenu);
         Assert.Null(result.Draft);
         Assert.Contains("already migrated", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("[View menu](https://discord.com/channels/",
+            result.Content, StringComparison.Ordinal);
         Assert.Equal(0, fixture.ReactionStore.GetCalls);
         Assert.Equal(0, fixture.ReactionStore.InsertCalls);
         Assert.Equal(0, fixture.RoleMenuStore.UpsertCalls);
@@ -420,6 +468,8 @@ public class RoleMenuMigrationServiceTests
 
         Assert.True(result.Completed);
         Assert.Equal(RoleMenuPublicationStatus.Published, result.Publication?.Status);
+        Assert.Contains("[View menu](https://discord.com/channels/",
+            result.Content, StringComparison.Ordinal);
         Assert.Equal(1, fixture.SourceChannel.SentCount);
         Assert.Equal(1, fixture.RoleMenuStore.UpsertCalls);
         Assert.Equal("20", fixture.RoleMenuStore.Settings?.MigratedFromReactionRoleMessageId);
@@ -433,6 +483,33 @@ public class RoleMenuMigrationServiceTests
             AdministratorId, BotUserId, CancellationToken.None);
         Assert.True(repeat.Completed);
         Assert.Contains("already migrated", repeat.Content,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, fixture.SourceChannel.SentCount);
+    }
+
+    [Fact]
+    public async Task MigratedMenu_AfterRepairStillResolvesToSameSourceWithoutAnotherPublication()
+    {
+        var fixture = CreateFixture(CreateLegacySettings(
+            GuildId, ChannelId, LegacyMessageId, 4, 5));
+        var migration = Assert.IsType<RoleMenuDraft>((await PreviewAsync(fixture)).Draft);
+        fixture.SourceChannel.PublishedMenuId = migration.MenuId;
+        var published = await fixture.Service.ConfirmAsync(
+            migration, AdministratorId, BotUserId, CancellationToken.None);
+        Assert.True(published.Completed);
+
+        var saved = Assert.IsType<RoleMenuSettings>(fixture.RoleMenuStore.Settings);
+        Assert.True(RoleMenuSettingsParser.TryParse(saved, out var parsed, out _));
+        var repair = RoleMenuRepairWorkflow.CreateRepairDraft(
+            saved, parsed, AdministratorId, ChannelId);
+        fixture.RoleMenuStore.Settings = RoleMenuPublicationSettings.Create(
+            repair, messageId: 88);
+
+        var rerun = await PreviewAsync(fixture);
+
+        Assert.Null(rerun.Draft);
+        Assert.Same(fixture.RoleMenuStore.Settings, rerun.ExistingMenu);
+        Assert.Contains("already migrated", rerun.Content,
             StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, fixture.SourceChannel.SentCount);
     }

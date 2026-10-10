@@ -10,6 +10,7 @@ internal enum RoleMenuSettingsIssue
     InvalidGuild,
     InvalidChannel,
     InvalidMessage,
+    InvalidMigrationSource,
     InvalidTitle,
     InvalidDescription,
     InvalidSelectionMode,
@@ -49,6 +50,17 @@ internal static class RoleMenuSettingsParser
         if (!TryParseSnowflake(settings.MessageId, out var messageId))
         {
             issue = RoleMenuSettingsIssue.InvalidMessage;
+            return false;
+        }
+
+        if (settings.MigratedFromReactionRoleMessageId.Length > 0
+            && (!TryParseSnowflake(settings.MigratedFromReactionRoleMessageId,
+                    out var migrationSourceId)
+                || !string.Equals(settings.MigratedFromReactionRoleMessageId,
+                    migrationSourceId.ToString(CultureInfo.InvariantCulture),
+                    StringComparison.Ordinal)))
+        {
+            issue = RoleMenuSettingsIssue.InvalidMigrationSource;
             return false;
         }
 

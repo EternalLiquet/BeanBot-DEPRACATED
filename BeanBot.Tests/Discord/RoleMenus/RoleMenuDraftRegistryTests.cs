@@ -1,5 +1,6 @@
 using BeanBot.Discord.RoleMenus;
 using BeanBot.Persistence.Models;
+using Discord;
 using MongoDB.Bson;
 using Xunit;
 
@@ -7,6 +8,30 @@ namespace BeanBot.Tests.Discord.RoleMenus;
 
 public class RoleMenuDraftRegistryTests
 {
+    [Fact]
+    public void MigrationSelection_CarriesCustomizationsAndRejectsStaleOrForeignControls()
+    {
+        var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
+        var registry = new RoleMenuDraftRegistry(clock, 1, TimeSpan.FromMinutes(10));
+        Assert.True(registry.CreateMigrationSelection(1, 2, 3, 1,
+            ChannelType.Text, "New title", "New description", out var first));
+        var selected = Assert.IsType<RoleMenuMigrationSelection>(first);
+        Assert.False(registry.TryGetMigrationSelection(selected.Id, 1, 9, out _));
+        Assert.False(registry.CreateMigrationSelection(1, 9, null, null, null,
+            null, null, out _));
+
+        Assert.True(registry.CreateMigrationSelection(1, 2, 4, 1,
+            ChannelType.Text, "Replacement", "Updated", out var second));
+        Assert.False(registry.TryGetMigrationSelection(selected.Id, 1, 2, out _));
+        Assert.True(registry.TryGetMigrationSelection(
+            Assert.IsType<RoleMenuMigrationSelection>(second).Id, 1, 2, out var current));
+        Assert.Equal(4UL, current?.TargetChannelId);
+        Assert.Equal("Replacement", current?.Title);
+        Assert.Equal("Updated", current?.Description);
+
+        clock.Advance(TimeSpan.FromMinutes(11));
+        Assert.False(registry.TryGetMigrationSelection(current!.Id, 1, 2, out _));
+    }
     [Fact]
     public void Create_ReplacesPriorDraftForSameGuildAndOwner()
     {

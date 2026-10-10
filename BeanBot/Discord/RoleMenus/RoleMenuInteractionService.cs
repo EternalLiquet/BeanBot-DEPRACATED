@@ -3,6 +3,7 @@ using System.Globalization;
 using BeanBot.Discord.Interactions;
 using BeanBot.Persistence.Models;
 using BeanBot.Persistence.Repositories;
+using Discord;
 using MongoDB.Bson;
 
 namespace BeanBot.Discord.RoleMenus;
@@ -37,6 +38,20 @@ public sealed class RoleMenuInteractionService
 
     internal bool IsShuttingDown
         => _executionContext.CancellationToken.IsCancellationRequested;
+
+    internal bool CreateMigrationSelection(
+        ulong guildId, ulong userId, ulong? targetChannelId,
+        ulong? targetChannelGuildId, ChannelType? targetChannelType,
+        string? title, string? description,
+        out RoleMenuMigrationSelection? selection)
+        => _draftRegistry.CreateMigrationSelection(
+            guildId, userId, targetChannelId, targetChannelGuildId,
+            targetChannelType, title, description, out selection);
+
+    internal bool TryGetMigrationSelection(
+        Guid id, ulong guildId, ulong userId,
+        out RoleMenuMigrationSelection? selection)
+        => _draftRegistry.TryGetMigrationSelection(id, guildId, userId, out selection);
 
     internal CancellationTokenSource CreateFeedbackCancellation()
     {
