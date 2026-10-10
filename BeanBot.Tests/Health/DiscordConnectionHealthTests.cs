@@ -1,7 +1,5 @@
 using BeanBot.Health;
-
 using Discord.WebSocket;
-
 using Xunit;
 
 namespace BeanBot.Tests.Health;
@@ -16,6 +14,19 @@ public class DiscordConnectionHealthTests
 
         Assert.Null(snapshot.MostRecentDisconnectReason);
         Assert.False(snapshot.IsHealthy);
+    }
+
+    [Fact]
+    public void InitialMetricsSnapshot_HasNoTransitions()
+    {
+        using var discordClient = new DiscordSocketClient();
+        var snapshot = new DiscordConnectionHealth().CreateMetricsSnapshot(discordClient);
+
+        Assert.False(snapshot.IsReady);
+        Assert.Equal(0, snapshot.ReadyTransitionCount);
+        Assert.Equal(0, snapshot.DisconnectTransitionCount);
+        Assert.Null(snapshot.LastReadyAtUtc);
+        Assert.Null(snapshot.LastDisconnectedAtUtc);
     }
 
     [Fact]
@@ -55,5 +66,55 @@ public class DiscordConnectionHealthTests
         var snapshot = health.CreateSnapshot(discordClient);
 
         Assert.Equal("Latest failure", snapshot.MostRecentDisconnectReason);
+    }
+
+    [Fact]
+    public void RepeatedGatewayCallbacks_CountOnlyStateTransitions()
+    {
+        using var discordClient = new DiscordSocketClient();
+        var health = new DiscordConnectionHealth();
+
+        health.MarkReady();
+        health.MarkReady();
+        health.MarkDisconnected(new InvalidOperationException("private failure text"));
+        health.MarkDisconnected(new InvalidOperationException("new private failure text"));
+        health.MarkReady();
+
+        var snapshot = health.CreateMetricsSnapshot(discordClient);
+
+        Assert.Equal(2, snapshot.ReadyTransitionCount);
+        Assert.Equal(1, snapshot.DisconnectTransitionCount);
+        Assert.NotNull(snapshot.LastReadyAtUtc);
+        Assert.NotNull(snapshot.LastDisconnectedAtUtc);
+    }
+
+    [Fact]
+    public async Task ConcurrentMetricsReads_DoNotLoseGatewayTransitionAccounting()
+    {
+        using var discordClient = new DiscordSocketClient();
+        var health = new DiscordConnectionHealth();
+        const int transitionCycles = 100;
+
+        var readers = Enumerable.Range(0, 4)
+            .Select(_ => Task.Run(() =>
+            {
+                for (var attempt = 0; attempt < 500; attempt++)
+                {
+                    health.CreateMetricsSnapshot(discordClient);
+                }
+            }))
+            .ToArray();
+
+        for (var cycle = 0; cycle < transitionCycles; cycle++)
+        {
+            health.MarkReady();
+            health.MarkDisconnected(null);
+        }
+
+        await Task.WhenAll(readers);
+        var snapshot = health.CreateMetricsSnapshot(discordClient);
+
+        Assert.Equal(transitionCycles, snapshot.ReadyTransitionCount);
+        Assert.Equal(transitionCycles, snapshot.DisconnectTransitionCount);
     }
 }

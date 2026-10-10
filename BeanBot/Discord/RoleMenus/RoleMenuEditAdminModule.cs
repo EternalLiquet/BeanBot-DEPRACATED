@@ -1,5 +1,6 @@
 using BeanBot.Logging;
 using BeanBot.Persistence.Models;
+using BeanBot.Persistence.Repositories;
 using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
@@ -13,75 +14,71 @@ public sealed partial class RoleMenuAdminModule
         "edit",
         "Edit a published role menu in place.",
         runMode: RunMode.Sync)]
-    public async Task EditAsync(
-        [Summary("menu-id", "Optional ID shown in the role panel footer")]
-        string? menuId = null)
+    public async Task EditAsync()
     {
         using var cancellation = RoleMenus.CreateOperationCancellation();
         await RoleMenus.ExecuteInitialResponseAsync(
             supportsOriginalResponse: true,
-            operationToken => DeferAsync(
-                ephemeral: true,
-                CreateRequestOptions(operationToken)),
-            operationToken => ReplaceResponseAsync(
-                "Loading role menus…",
-                operationToken),
+            operationToken => DeferAsync(ephemeral: true, CreateRequestOptions(operationToken)),
+            operationToken => ReplaceResponseAsync("Loading role menus…", operationToken),
             cancellation.Token);
         if (Context.Guild is null)
         {
-            await ReplaceResponseAsync(
-                "Role menus can only be edited inside a server.",
-                cancellation.Token);
+            await ReplaceResponseAsync("Role menus can only be edited inside a server.", cancellation.Token);
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(menuId))
+        await ShowEditPageAsync(Context.Guild, null, cancellation.Token);
+    }
+
+    [ComponentInteraction(
+        RoleMenuCustomIds.EditPagePattern,
+        ignoreGroupNames: true,
+        runMode: RunMode.Sync)]
+    public async Task ChangeEditPageAsync(
+        string userIdValue,
+        string directionValue,
+        string createdAtTicksValue,
+        string menuIdValue)
+    {
+        using var cancellation = RoleMenus.CreateOperationCancellation();
+        if (!RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var boundUserId)
+            || boundUserId != Context.User.Id
+            || !RoleMenuCustomIds.TryParsePageCursor(
+                directionValue, createdAtTicksValue, menuIdValue, out var cursor)
+            || Context.Guild is null
+            || Context.Interaction is not SocketMessageComponent component
+            || !IsValidManagementComponent(
+                component, Context.Guild, ComponentType.Button,
+                RoleMenuCustomIds.EditPage(boundUserId, cursor)))
         {
-            if (!RoleMenuCustomIds.TryParseMenuId(menuId.Trim(), out var parsedMenuId))
-            {
-                await ReplaceResponseAsync(
-                    "That menu ID is invalid. Copy the ID from the role panel footer.",
-                    cancellation.Token);
-                return;
-            }
-
-            var settings = await RoleMenus.GetAsync(
-                parsedMenuId,
-                Context.Guild.Id,
+            await RespondToInvalidComponentAsync(
+                "This list has expired or belongs to someone else. Run `/role-menu edit` again.",
                 cancellation.Token);
-            if (settings is null)
-            {
-                await ReplaceResponseAsync(
-                    "No saved role menu with that ID exists in this server.",
-                    cancellation.Token);
-                return;
-            }
-
-            await ShowEditPreviewAsync(settings, cancellation.Token);
             return;
         }
 
-        var menus = await RoleMenus.GetByGuildAsync(
-            Context.Guild.Id,
-            RoleMenuConstants.MaximumListedMenus + 1,
-            cancellation.Token);
-        if (menus.Count == 0)
+        if (await AcknowledgeEphemeralComponentAsync("Loading role menus…", cancellation.Token))
+            await ShowEditPageAsync(Context.Guild, cursor, cancellation.Token);
+    }
+
+    private async Task ShowEditPageAsync(
+        SocketGuild guild,
+        RoleMenuPageCursor? cursor,
+        CancellationToken cancellationToken)
+    {
+        var page = await _administration.LoadDeletionPageAsync(guild.Id, cursor, cancellationToken);
+        if (page.Menus.Count == 0)
         {
-            await ReplaceResponseAsync(
-                "This server has no saved dropdown role menus.",
-                cancellation.Token);
+            await ReplaceResponseAsync("This server has no saved dropdown role menus.", cancellationToken);
             return;
         }
 
-        var hasMore = menus.Count > RoleMenuConstants.MaximumListedMenus;
-        var listedMenus = menus.Take(RoleMenuConstants.MaximumListedMenus).ToList();
         await ReplaceResponseAsync(
-            hasMore
-                ? "Choose one of the 25 newest menus. For an older panel, rerun `/role-menu edit` " +
-                  "with the ID shown in its footer."
-                : "Choose the role menu you want to edit.",
-            cancellation.Token,
-            components: RoleMenuComponents.BuildEditSelector(Context.User.Id, listedMenus));
+            "Which role menu do you want to edit?",
+            cancellationToken,
+            components: RoleMenuComponents.BuildEditSelector(
+                Context.User.Id, page, channelId => guild.GetChannel(channelId)?.Name));
     }
 
     [ComponentInteraction(
@@ -97,7 +94,7 @@ public sealed partial class RoleMenuAdminModule
             || !RoleMenuCustomIds.TryParseMenuId(selectedMenuIds[0], out var menuId)
             || Context.Guild is null
             || Context.Interaction is not SocketMessageComponent component
-            || !IsValidPrivateComponent(
+            || !IsValidManagementComponent(
                 component,
                 Context.Guild,
                 ComponentType.SelectMenu,
@@ -226,6 +223,7 @@ public sealed partial class RoleMenuAdminModule
         }
 
         var completed = false;
+        Task<RoleMenuEditResult>? mutationTask = null;
         try
         {
             await RoleMenus.ExecuteInitialResponseAsync(
@@ -248,44 +246,35 @@ public sealed partial class RoleMenuAdminModule
             }
 
             var mutationStarted = false;
-            RoleMenuEditResult result;
-            try
-            {
-                result = await RoleMenus.RunMenuMutationAsync(
-                    draft.MenuId,
-                    operationToken =>
-                    {
-                        mutationStarted = true;
-                        return _administration.EditAsync(
-                            draft.MenuId,
-                            new RoleMenuEditRequest(
-                                modal.PanelTitle,
-                                modal.Description,
-                                modal.SelectionMode,
-                                modal.Roles?.Select(role => role.Id).ToArray()),
-                            Context.Guild.Id,
-                            Context.User.Id,
-                            bot.Id,
-                            operationToken);
-                    },
-                    cancellation.Token);
-            }
-            catch (OperationCanceledException)
-                when (cancellation.IsCancellationRequested && !RoleMenus.IsShuttingDown)
-            {
-                await SendFreshFeedbackAsync(
-                    mutationStarted
-                        ? "Bean Bot ran out of time while editing this menu and could not confirm the final state. Inspect the saved menu and existing panel before retrying; no replacement panel was published."
-                        : "Bean Bot was busy and did not begin editing this role menu. Try again.");
-                return;
-            }
-
-            await ReplaceResponseAsync(result.Content, cancellation.Token);
-            if (result.Status == RoleMenuEditStatus.Updated)
-            {
-                RoleMenus.CompleteEdit(draft.Id, draft.GuildId, draft.UserId);
-                completed = true;
-            }
+            mutationTask = RoleMenus.RunMenuMutationAsync(
+                draft.MenuId,
+                operationToken =>
+                {
+                    mutationStarted = true;
+                    return _administration.EditAsync(
+                        draft,
+                        new RoleMenuEditRequest(
+                            modal.PanelTitle,
+                            modal.Description,
+                            modal.SelectionMode,
+                            modal.Roles?.Select(role => role.Id).ToArray()),
+                        Context.Guild.Id,
+                        Context.User.Id,
+                        bot.Id,
+                        operationToken);
+                },
+                cancellation.Token);
+            var result = await RoleMenuEditMutationWaiter.WaitAsync(
+                mutationTask,
+                () => RoleMenus.IsShuttingDown
+                    ? Task.CompletedTask
+                    : SendFreshFeedbackAsync(
+                        mutationStarted
+                            ? "I ran out of time while editing this menu and couldn't confirm the result. Check the saved menu and existing panel before retrying."
+                            : "I was busy and didn't start editing this menu. Try again."),
+                cancellation.Token);
+            if (result is not null)
+                await ReplaceResponseAsync(result.Content, cancellation.Token);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -302,10 +291,27 @@ public sealed partial class RoleMenuAdminModule
         }
         finally
         {
-            if (!completed)
+            // Wait for the real mutation, including a Discord or Mongo call that ignored
+            // cancellation. The interaction tracker and instance lease keep ownership until then.
+            if (mutationTask is not null)
             {
-                RoleMenus.ReleaseEdit(draft.Id, draft.GuildId, draft.UserId);
+                try
+                {
+                    var settled = await mutationTask;
+                    if (settled.Status == RoleMenuEditStatus.Updated)
+                    {
+                        RoleMenus.CompleteEdit(draft.Id, draft.GuildId, draft.UserId);
+                        completed = true;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    BeanBotLog.RoleMenuEditOperationFailed(
+                        _logger, draft.MenuId.ToString(), exception);
+                }
             }
+            if (!completed)
+                RoleMenus.ReleaseEdit(draft.Id, draft.GuildId, draft.UserId);
         }
     }
 
@@ -329,7 +335,8 @@ public sealed partial class RoleMenuAdminModule
             settings.Description,
             parsed.RoleIds,
             settings.SelectionMode,
-            out var draft);
+            out var draft,
+            RoleMenuEditSnapshot.From(settings));
         if (createStatus != RoleMenuEditDraftCreateStatus.Created || draft is null)
         {
             await ReplaceResponseAsync(

@@ -96,6 +96,17 @@ internal sealed class BoundedReactionRoleSettingsCache
         }
     }
 
+    public void Remove(string messageId)
+    {
+        lock (_sync)
+        {
+            if (_entries.Remove(messageId, out var entry))
+            {
+                _recency.Remove(entry.Node);
+            }
+        }
+    }
+
     private void Touch(CacheEntry entry)
     {
         _recency.Remove(entry.Node);

@@ -11,6 +11,47 @@ namespace BeanBot.Tests.Discord.RoleMenus;
 public class RoleMenuInteractionServiceTests
 {
     [Fact]
+    public async Task DiscordDeletion_CleansOnlyTheExactSavedMessage_AndDuplicatesAreHarmless()
+    {
+        var fixture = CreateFixture();
+        var settings = CreateSettings();
+        await fixture.Repository.UpsertAsync(settings);
+
+        Assert.Equal(0, await fixture.Service.DeleteSavedPanelsForMessageAsync(1, 2, 4, CancellationToken.None));
+        Assert.Equal(0, await fixture.Service.DeleteSavedPanelsForMessageAsync(1, 9, 3, CancellationToken.None));
+        Assert.NotNull(await fixture.Repository.GetAsync(settings.Id, "1"));
+
+        Assert.Equal(1, await fixture.Service.DeleteSavedPanelsForMessageAsync(1, 2, 3, CancellationToken.None));
+        Assert.Equal(0, await fixture.Service.DeleteSavedPanelsForMessageAsync(1, 2, 3, CancellationToken.None));
+        Assert.Null(await fixture.Repository.GetAsync(settings.Id, "1"));
+    }
+
+    [Fact]
+    public async Task DiscordDeletion_WaitingForRepair_CannotDeleteReplacementBinding()
+    {
+        var fixture = CreateFixture();
+        var original = CreateSettings();
+        await fixture.Repository.UpsertAsync(original);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var repair = fixture.Service.RunMenuMutationAsync(original.Id, async token =>
+        {
+            entered.SetResult();
+            await release.Task.WaitAsync(token);
+            await fixture.Repository.UpsertAsync(new RoleMenuSettings(
+                original.Id, "1", "2", "4", "Games", "", ["5"], RoleMenuSelectionMode.Multiple), token);
+            return true;
+        }, CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        var deletion = fixture.Service.DeleteSavedPanelsForMessageAsync(1, 2, 3, CancellationToken.None);
+        release.SetResult();
+        await repair;
+
+        Assert.Equal(0, await deletion);
+        Assert.Equal("4", (await fixture.Repository.GetAsync(original.Id, "1"))?.MessageId);
+    }
+
+    [Fact]
     public void ModuleConstructors_RequireFacadeAndLogger()
     {
         var fixture = CreateFixture();
@@ -20,6 +61,7 @@ public class RoleMenuInteractionServiceTests
 
         var administration = new RoleMenuAdministrationService(
             fixture.Service, discord, NullLogger<RoleMenuAdministrationService>.Instance);
+        var audit = new RoleMenuAuditService(fixture.Service, discord);
         var members = new RoleMenuMemberService(
             fixture.Service, discord, NullLogger<RoleMenuMemberService>.Instance);
 
@@ -27,16 +69,25 @@ public class RoleMenuInteractionServiceTests
             null!,
             discord,
             administration,
+            audit,
             NullLogger<RoleMenuAdminModule>.Instance));
         Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
             fixture.Service,
             discord,
             administration,
+            null!,
+            NullLogger<RoleMenuAdminModule>.Instance));
+        Assert.Throws<ArgumentNullException>(() => new RoleMenuAdminModule(
+            fixture.Service,
+            discord,
+            administration,
+            audit,
             null!));
         _ = new RoleMenuAdminModule(
             fixture.Service,
             discord,
             administration,
+            audit,
             NullLogger<RoleMenuAdminModule>.Instance);
 
         Assert.Throws<ArgumentNullException>(() => new RoleMenuMemberModule(
@@ -51,6 +102,23 @@ public class RoleMenuInteractionServiceTests
             fixture.Service,
             members,
             NullLogger<RoleMenuMemberModule>.Instance);
+    }
+
+    [Fact]
+    public void TryBeginDeletion_IgnoresRepeatedClicksFromTheSameAdministrator()
+    {
+        var fixture = CreateFixture();
+        var menuId = ObjectId.GenerateNewId();
+        var otherMenuId = ObjectId.GenerateNewId();
+
+        Assert.True(fixture.Service.TryBeginDeletion(menuId, 3UL));
+        Assert.False(fixture.Service.TryBeginDeletion(menuId, 3UL));
+        Assert.True(fixture.Service.TryBeginDeletion(otherMenuId, 3UL));
+        Assert.True(fixture.Service.TryBeginDeletion(menuId, 4UL));
+
+        fixture.Service.EndDeletion(menuId, 3UL);
+
+        Assert.True(fixture.Service.TryBeginDeletion(menuId, 3UL));
     }
 
     [Fact]
@@ -326,6 +394,30 @@ public class RoleMenuInteractionServiceTests
             return Task.FromResult(settings.Take(maximumResults).ToList());
         }
 
+        public Task<List<RoleMenuSettings>> GetByMessageAsync(
+            string guildId,
+            string channelId,
+            string messageId,
+            int maximumResults,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            List<RoleMenuSettings> settings = _settings is not null
+                && _settings.GuildId == guildId
+                && _settings.ChannelId == channelId
+                && _settings.MessageId == messageId
+                ? [_settings]
+                : [];
+            return Task.FromResult(settings);
+        }
+
+        public Task<List<RoleMenuSettings>> GetPageAsync(
+            string guildId,
+            RoleMenuPageCursor? cursor,
+            int maximumResults,
+            CancellationToken cancellationToken)
+            => GetByGuildAsync(guildId, maximumResults, cancellationToken);
+
         public Task<bool> DeleteAsync(
             ObjectId id,
             string guildId,
@@ -343,6 +435,20 @@ public class RoleMenuInteractionServiceTests
             }
 
             return Task.FromResult(deleted);
+        }
+
+        public Task<bool> DeleteBindingAsync(RoleMenuSettings settings, CancellationToken cancellationToken)
+        {
+            var current = _settings;
+            if (current is null || current.Id != settings.Id || current.GuildId != settings.GuildId
+                || current.ChannelId != settings.ChannelId || current.MessageId != settings.MessageId
+                || current.UpdatedAtUtc != settings.UpdatedAtUtc)
+            {
+                return Task.FromResult(false);
+            }
+
+            _settings = null;
+            return Task.FromResult(true);
         }
     }
 }

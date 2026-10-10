@@ -135,7 +135,6 @@ public sealed class DiscordRoleMenuClient
     {
         var message = await targetChannel.SendMessageAsync(
             embed: RoleMenuComponents.BuildPublicEmbed(
-                draft.MenuId,
                 draft.Title,
                 draft.Description,
                 draft.SelectionMode),
@@ -354,7 +353,6 @@ public sealed class DiscordRoleMenuClient
                     Embed[] embeds =
                     [
                         RoleMenuComponents.BuildPublicEmbed(
-                            menuId,
                             replacement.Title,
                             replacement.Description,
                             replacement.SelectionMode)

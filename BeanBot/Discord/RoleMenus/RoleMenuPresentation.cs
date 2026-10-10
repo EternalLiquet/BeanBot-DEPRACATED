@@ -19,28 +19,30 @@ internal static class RoleMenuPresentation
         RoleMenuRoleValidationResult validation)
     {
         var issue = validation.Issues[0];
-        var roleName = string.IsNullOrWhiteSpace(issue.RoleName)
-            ? "A selected role"
-            : $"The role **{issue.RoleName}**";
+        var role = string.IsNullOrWhiteSpace(issue.RoleName)
+            ? "one of those roles"
+            : $"**{issue.RoleName}**";
         return issue.Kind switch
         {
             RoleMenuRoleIssueKind.BotMissingManageRoles =>
-                "Bean Bot needs the **Manage Roles** permission before it can publish this menu.",
+                "I need the **Manage Roles** permission to publish this menu.",
             RoleMenuRoleIssueKind.AdministratorMissingManageRoles =>
-                "You no longer have the **Manage Roles** permission required to publish this menu.",
+                "You no longer have the **Manage Roles** permission, so you can't publish this menu.",
             RoleMenuRoleIssueKind.Duplicate =>
-                $"{roleName} was selected more than once. Reopen the setup modal.",
+                $"You picked {role} more than once. Run `/role-menu create` again and pick each role once.",
             RoleMenuRoleIssueKind.Missing =>
-                "A selected role was deleted or does not belong to this server.",
+                "One of the roles you picked was deleted or isn't from this server. " +
+                "Run `/role-menu create` again.",
             RoleMenuRoleIssueKind.Everyone =>
-                "The `@everyone` role cannot be self-assigned.",
+                "`@everyone` can't be added to a role menu.",
             RoleMenuRoleIssueKind.Managed =>
-                $"{roleName} is managed by Discord or an integration and cannot be assigned.",
+                $"I can't assign {role} because Discord or an integration manages it.",
             RoleMenuRoleIssueKind.BotHierarchy =>
-                $"{roleName} is at or above Bean Bot's highest role. Move Bean Bot above it first.",
+                $"I can't assign {role} because it's at or above my highest role. " +
+                "Move my role above it, then try again.",
             RoleMenuRoleIssueKind.AdministratorHierarchy =>
-                $"{roleName} is at or above your highest role and cannot be configured by you.",
-            _ => "One or more selected roles cannot be assigned safely."
+                $"You can't add {role} because it's at or above your highest role.",
+            _ => "I can't assign one of the roles you picked."
         };
     }
 
@@ -56,34 +58,37 @@ internal static class RoleMenuPresentation
         RoleMenuSelectionReconciliation reconciliation,
         IReadOnlyDictionary<ulong, string> roleNames)
     {
-        var lines = new List<string>();
-        AddRoleList(lines, "Added", reconciliation.AddedRoleIds, roleNames);
-        AddRoleList(lines, "Removed", reconciliation.RemovedRoleIds, roleNames);
-        AddRoleList(
-            lines,
-            "Still missing",
+        var sentences = new List<string>();
+        AddRoleSentence(sentences, "Added", reconciliation.AddedRoleIds, roleNames);
+        AddRoleSentence(sentences, "Removed", reconciliation.RemovedRoleIds, roleNames);
+        AddRoleSentence(
+            sentences,
+            "I couldn't add",
             reconciliation.MissingSelectedRoleIds,
             roleNames);
-        AddRoleList(
-            lines,
-            "Still assigned",
+        AddRoleSentence(
+            sentences,
+            "I couldn't remove",
             reconciliation.StillAssignedUnselectedRoleIds,
             roleNames);
-        if (lines.Count == 0)
+        if (sentences.Count == 0)
         {
-            lines.Add("Discord's current role state already matches your selection.");
+            sentences.Add(reconciliation.UnchangedSelectedRoleIds.Count == 0
+                ? "You don't have any roles from this menu."
+                : $"You already have {JoinRoleNames(reconciliation.UnchangedSelectedRoleIds, roleNames)}.");
         }
 
-        lines.Add(reconciliation.IsComplete
-            ? "Bean Bot rechecked Discord's current role state. No roles outside this menu were changed."
-            : "Bean Bot rechecked Discord's current role state, but some requested changes are still " +
-              "not applied. No roles outside this menu were changed.");
-        return BoundResponseContent(string.Join('\n', lines));
+        if (!reconciliation.IsComplete)
+        {
+            sentences.Add("Open the menu again to check your roles before trying again.");
+        }
+
+        return BoundResponseContent(string.Join(' ', sentences));
     }
 
-    internal static void AddRoleList(
-        List<string> lines,
-        string label,
+    internal static void AddRoleSentence(
+        List<string> sentences,
+        string lead,
         IReadOnlyCollection<ulong> roleIds,
         IReadOnlyDictionary<ulong, string> roleNames)
     {
@@ -92,8 +97,21 @@ internal static class RoleMenuPresentation
             return;
         }
 
-        var names = roleIds.Select(roleId => GetRoleName(roleNames, roleId));
-        lines.Add($"**{label} ({roleIds.Count}):** {string.Join(", ", names)}");
+        sentences.Add($"{lead} {JoinRoleNames(roleIds, roleNames)}.");
+    }
+
+    internal static string JoinRoleNames(
+        IReadOnlyCollection<ulong> roleIds,
+        IReadOnlyDictionary<ulong, string> roleNames)
+    {
+        var names = roleIds.Select(roleId => GetRoleName(roleNames, roleId)).ToList();
+        return names.Count switch
+        {
+            0 => string.Empty,
+            1 => names[0],
+            2 => $"{names[0]} and {names[1]}",
+            _ => $"{string.Join(", ", names.Take(names.Count - 1))}, and {names[^1]}"
+        };
     }
 
     internal static string BoundResponseContent(string content)
@@ -104,7 +122,7 @@ internal static class RoleMenuPresentation
         }
 
         const string suffix =
-            "…\nSome role details were omitted. Open the menu again to verify the current state.";
+            "…\nThat list was too long to show in full. Open the menu again to see your roles.";
         var cutoff = RoleMenuConstants.MaximumResponseContentLength - suffix.Length;
         if (cutoff > 0 && char.IsHighSurrogate(content[cutoff - 1]))
         {
@@ -120,7 +138,7 @@ internal static class RoleMenuPresentation
     {
         var name = roleNames.TryGetValue(roleId, out var resolvedName)
             ? resolvedName
-            : "unknown role";
+            : "an unknown role";
         var normalized = string.Join(' ', name.Split(
             (char[]?)null,
             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
@@ -140,60 +158,68 @@ internal static class RoleMenuPresentation
             _ => result.ConfigurationIssue.ToString()
         };
 
+    internal static string FormatConfirmedDeletion(RoleMenuConfirmedDeletion deletion)
+        => deletion switch
+        {
+            { Status: RoleMenuConfirmedDeletionStatus.Attempted, Result: { } result } =>
+                FormatDeletion(result),
+            { Status: RoleMenuConfirmedDeletionStatus.Changed } =>
+                "That role menu changed. Run `/role-menu delete` to see it again.",
+            _ => "That role menu was already deleted."
+        };
+
     internal static string FormatDeletion(RoleMenuDeletionResult result)
         => result switch
         {
             { AuthorizationDenied: true } =>
-                "You no longer have the **Manage Roles** permission required to delete role menus.",
+                "You no longer have the **Manage Roles** permission, so you can't delete role menus.",
             { PanelStatus: RoleMenuPanelDeletionStatus.Failed } =>
-                "The published panel is still present, so its saved configuration was kept. Fix " +
-                "the channel permissions and retry.",
+                "I couldn't delete the menu message, so the menu is still set up. Check my " +
+                "permissions in that channel, then run `/role-menu delete` again.",
             { PanelStatus: RoleMenuPanelDeletionStatus.OutcomeUnknown } =>
-                "Bean Bot couldn't confirm whether the published panel was deleted, so its saved " +
-                "configuration was kept. Retry this command to finish cleanup safely.",
+                "I couldn't tell whether the menu message was deleted, so I kept the menu's " +
+                "saved settings. Run `/role-menu delete` again to finish.",
             {
                 PanelStatus: RoleMenuPanelDeletionStatus.UnexpectedMessage,
                 ConfigurationStatus: RoleMenuConfigurationDeletionStatus.Kept
             } =>
-                "The referenced message no longer looked like Bean Bot's panel and was left " +
-                "untouched, but the saved configuration could not be deleted. Retry to finish cleanup.",
+                "The message this menu points to doesn't look like a role menu anymore, so I left " +
+                "it alone. I also couldn't remove the menu's saved settings. Run `/role-menu delete` " +
+                "again to finish.",
             {
                 PanelStatus: RoleMenuPanelDeletionStatus.UnexpectedMessage,
                 ConfigurationStatus: RoleMenuConfigurationDeletionStatus.OutcomeUnknown
             } =>
-                "The referenced message no longer looked like Bean Bot's panel and was left " +
-                "untouched. Bean Bot couldn't confirm whether the saved configuration was deleted; " +
-                "run this command again to check.",
+                "The message this menu points to doesn't look like a role menu anymore, so I left " +
+                "it alone. I couldn't tell whether the menu's saved settings were removed. Run " +
+                "`/role-menu delete` again to check.",
             { PanelStatus: RoleMenuPanelDeletionStatus.UnexpectedMessage } =>
-                "The saved configuration was deleted, but the referenced message no longer looked like " +
-                "Bean Bot's panel and was left untouched.",
+                "I removed the menu's saved settings. The message it pointed to doesn't look like a " +
+                "role menu anymore, so I left it alone.",
             { ConfigurationStatus: RoleMenuConfigurationDeletionStatus.Kept } =>
-                "The published panel is gone, but Bean Bot couldn't delete the saved configuration. " +
-                "Retry this command to finish cleanup.",
+                "The menu message is gone, but I couldn't remove its saved settings. Run " +
+                "`/role-menu delete` again to finish.",
             { ConfigurationStatus: RoleMenuConfigurationDeletionStatus.OutcomeUnknown } =>
-                "The published panel is gone, but Bean Bot couldn't confirm whether its saved " +
-                "configuration was deleted. Run this command again to check.",
+                "The menu message is gone, but I couldn't tell whether its saved settings were " +
+                "removed. Run `/role-menu delete` again to check.",
             { ConfigurationStatus: RoleMenuConfigurationDeletionStatus.AlreadyMissing } =>
                 "That role menu was already deleted.",
-            _ => "Role menu and saved configuration deleted."
+            _ => "Role menu deleted."
         };
 
     internal static string FormatTerminalPublication(RoleMenuPublicationStatus status)
         => status switch
         {
             RoleMenuPublicationStatus.PanelOutcomeUnknown =>
-                "Discord reported an error while publishing, and Bean Bot could not confirm " +
-                "whether a panel was created. Automatic retry was disabled to prevent a duplicate. " +
-                "Check the target channel and remove any orphaned panel before running " +
-                "`/role-menu create` again.",
+                "Discord returned an error while I was posting your menu, and I couldn't tell " +
+                "whether it went through. Check the channel before you run `/role-menu create` " +
+                "again. If the menu is there, delete that message first so you don't end up with two.",
             RoleMenuPublicationStatus.PersistenceAbsentRollbackFailed =>
-                "Bean Bot confirmed the settings were not saved but could not remove the panel. " +
-                "Automatic retry was disabled to prevent a duplicate. Delete that orphaned panel " +
-                "manually before running `/role-menu create` again.",
+                "I posted your menu but couldn't save it, and I couldn't take the message back down. " +
+                "Delete that menu message yourself before you run `/role-menu create` again.",
             _ =>
-                "Bean Bot could not confirm whether MongoDB saved this panel. The public panel was " +
-                "left in place to avoid deleting a possibly committed menu, and automatic retry " +
-                "was disabled to prevent a duplicate. Inspect the target channel before running " +
-                "`/role-menu create` again."
+                "I posted your menu, but I couldn't confirm it was saved, so I left it in place. " +
+                "Check the channel before you run `/role-menu create` again so you don't end up " +
+                "with two menus."
         };
 }

@@ -1,14 +1,14 @@
-using System.Net;
-using System.Net.Sockets;
 using BeanBot.Persistence.Models;
 using BeanBot.Persistence.Repositories;
+using DotNet.Testcontainers.Builders;
+using DotNet.Testcontainers.Containers;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
-using Testcontainers.MongoDb;
 using Xunit;
 
 namespace BeanBot.Tests.Integration;
 
+[Trait("Category", "MongoIntegration")]
 public sealed class MongoReactionRoleRepositoryIntegrationTests
     : IClassFixture<MongoDbIntegrationFixture>
 {
@@ -111,24 +111,32 @@ public sealed class MongoReactionRoleRepositoryIntegrationTests
     }
 
     [Fact]
-    public async Task GetRoleSetting_PropagatesBoundedMongoInfrastructureFailure()
+    public async Task DeleteBinding_RequiresCurrentGuildChannelMessageAndDocumentId()
     {
-        using var nonMongoEndpoint = new TcpListener(IPAddress.Loopback, 0);
-        nonMongoEndpoint.Start();
-        var endpoint = (IPEndPoint)nonMongoEndpoint.LocalEndpoint;
-        var settings = MongoClientSettings.FromConnectionString(
-            $"mongodb://127.0.0.1:{endpoint.Port}");
-        settings.ConnectTimeout = TimeSpan.FromMilliseconds(250);
-        settings.SocketTimeout = TimeSpan.FromMilliseconds(250);
-        settings.ServerSelectionTimeout = TimeSpan.FromSeconds(1);
-        var repository = CreateRepository(
-            new MongoClient(settings).GetDatabase(CreateDatabaseName()));
+        var databaseName = CreateDatabaseName();
+        var client = new MongoClient(_fixture.ConnectionString);
+        var repository = CreateRepository(client.GetDatabase(databaseName));
+        try
+        {
+            using var cancellation = new CancellationTokenSource(OperationTimeout);
+            await repository.InsertNewRoleSettings(new ReactionRoleSettings([], "1", "2", "42"), cancellation.Token);
+            var saved = Assert.IsType<ReactionRoleSettings>(await repository.GetRoleSetting(42, cancellation.Token));
+            Assert.False(await repository.DeleteBindingAsync(saved, "9", "2", "42", cancellation.Token));
+            Assert.False(await repository.DeleteBindingAsync(saved, "1", "9", "42", cancellation.Token));
 
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var exception = await Assert.ThrowsAsync<TimeoutException>(
-            () => repository.GetRoleSetting(42UL, cancellation.Token));
-
-        Assert.Contains("selecting a server", exception.Message, StringComparison.Ordinal);
+            var collection = client.GetDatabase(databaseName).GetCollection<ReactionRoleSettings>("roleSettings");
+            await collection.ReplaceOneAsync(
+                candidate => candidate.Id == saved.Id,
+                new ReactionRoleSettings([], "1", "2", "99") { Id = saved.Id },
+                cancellationToken: cancellation.Token);
+            Assert.False(await repository.DeleteBindingAsync(saved, "1", "2", "42", cancellation.Token));
+            Assert.Equal("99", (await collection.Find(candidate => candidate.Id == saved.Id)
+                .FirstOrDefaultAsync(cancellation.Token))?.MessageId);
+        }
+        finally
+        {
+            await DropDatabaseAsync(client, databaseName);
+        }
     }
 
     private static ReactionRoleRepository CreateRepository(IMongoDatabase database)
@@ -157,11 +165,16 @@ public sealed class MongoDbIntegrationFixture : IAsyncLifetime
 {
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(30);
+    private const ushort MongoPort = 27017;
     private const string MongoImage =
         "mongo:8.2.12-noble@sha256:dc23b0dde2221277b581dd76933f39f8a765fee9dbd99b9deb19184c063c061f";
-    private readonly MongoDbContainer _container = new MongoDbBuilder(MongoImage).Build();
+    private readonly IContainer _container = new ContainerBuilder(MongoImage)
+        .WithPortBinding(MongoPort, true)
+        .WithWaitStrategy(Wait.ForUnixContainer().UntilMessageIsLogged("Waiting for connections"))
+        .Build();
 
-    public string ConnectionString => _container.GetConnectionString();
+    public string ConnectionString
+        => $"mongodb://{_container.Hostname}:{_container.GetMappedPublicPort(MongoPort)}";
 
     public async Task InitializeAsync()
     {

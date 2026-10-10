@@ -215,7 +215,8 @@ internal sealed class RoleMenuDraftRegistry
         string description,
         IReadOnlyCollection<ulong> roleIds,
         RoleMenuSelectionMode selectionMode,
-        out RoleMenuEditDraft? draft)
+        out RoleMenuEditDraft? draft,
+        RoleMenuEditSnapshot? snapshot = null)
         => _editDraftRegistry.Create(
             menuId,
             guildId,
@@ -224,7 +225,8 @@ internal sealed class RoleMenuDraftRegistry
             description,
             roleIds,
             selectionMode,
-            out draft);
+            out draft,
+            snapshot);
 
     internal RoleMenuEditDraftAccessStatus TryGetEdit(
         Guid draftId,

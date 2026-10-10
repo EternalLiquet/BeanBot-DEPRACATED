@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using BeanBot.Logging;
 using BeanBot.Persistence.Models;
+using BeanBot.Persistence.Repositories;
 using Discord;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
@@ -42,7 +43,7 @@ public sealed class RoleMenuAdministrationService
         var currentBot = await _discord.GetGuildUserAsync(guildId, botUserId, requestOptions);
         if (currentAdministrator is null || currentBot is null)
         {
-            return new RoleMenuPreviewResult("Bean Bot couldn't refresh the current server role hierarchy. Try again in a moment.");
+            return new RoleMenuPreviewResult("I couldn't check the server's roles just now. Try again in a moment.");
         }
 
         var title = request.Title?.Trim() ?? string.Empty;
@@ -68,7 +69,7 @@ public sealed class RoleMenuAdministrationService
             requestOptions);
         if (targetChannel is null)
         {
-            return new RoleMenuPreviewResult("That target channel no longer exists in this server.");
+            return new RoleMenuPreviewResult("The channel you picked was deleted. Run `/role-menu create` again and pick another channel.");
         }
 
         var channelPermissionFailure = GetChannelPermissionFailure(currentBot, targetChannel);
@@ -89,14 +90,12 @@ public sealed class RoleMenuAdministrationService
         if (createStatus != RoleMenuDraftCreateStatus.Created || draft is null)
         {
             return new RoleMenuPreviewResult(createStatus == RoleMenuDraftCreateStatus.AlreadyPublishing
-                    ? "Your previous role menu is still publishing. Wait for it to finish before " +
-                      "starting another preview."
-                    : "Bean Bot is already holding the maximum number of role-menu previews. " +
-                      "Try again after another preview expires.");
+                    ? "Your last menu is still being published. Wait for it to finish, then try again."
+                    : "Too many role menu previews are open right now. Try again in a few minutes.");
         }
 
         return new RoleMenuPreviewResult(
-            "Review this private preview, then publish it when it looks right.", draft, roleValidation.Roles);
+            "Here's a preview of your menu. It isn't posted yet.", draft, roleValidation.Roles);
     }
 
     internal async Task<RoleMenuPublicationResult> PublishAsync(
@@ -187,14 +186,16 @@ public sealed class RoleMenuAdministrationService
                 cancellationToken));
 
     internal async Task<RoleMenuEditResult> EditAsync(
-        ObjectId menuId,
+        RoleMenuEditDraft draft,
         RoleMenuEditRequest request,
         ulong guildId,
         ulong administratorId,
         ulong botUserId,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(draft);
         ArgumentNullException.ThrowIfNull(request);
+        var menuId = draft.MenuId;
         var settings = await _roleMenuService.GetAsync(menuId, guildId, cancellationToken);
         if (settings is null)
         {
@@ -212,6 +213,13 @@ public sealed class RoleMenuAdministrationService
                 "That saved role menu is invalid and cannot be edited safely. Use `/role-menu delete` to clean it up.");
         }
 
+        if (draft.Snapshot is null || !draft.Snapshot.Matches(settings))
+        {
+            return new RoleMenuEditResult(
+                RoleMenuEditStatus.ValidationFailed,
+                "This menu changed since you opened the edit form. Run `/role-menu edit` again to review its current values.");
+        }
+
         var requestOptions = CreateRequestOptions(cancellationToken);
         var currentAdministrator = await _discord.GetGuildUserAsync(
             guildId,
@@ -222,7 +230,13 @@ public sealed class RoleMenuAdministrationService
         {
             return new RoleMenuEditResult(
                 RoleMenuEditStatus.ValidationFailed,
-                "Bean Bot couldn't refresh the current server role hierarchy. Try again in a moment.");
+                "I couldn't check the server's roles just now. Try again in a moment.");
+        }
+        if (!currentAdministrator.GuildPermissions.ManageRoles)
+        {
+            return new RoleMenuEditResult(
+                RoleMenuEditStatus.AuthorizationDenied,
+                "You need Manage Roles to edit this menu. Ask a server administrator for access.");
         }
 
         var title = request.Title?.Trim() ?? string.Empty;
@@ -308,7 +322,7 @@ public sealed class RoleMenuAdministrationService
         {
             RoleMenuEditCommitStatus.Updated => new RoleMenuEditResult(
                 RoleMenuEditStatus.Updated,
-                "Role menu updated in place. The stable menu ID, channel, and message were preserved."),
+                "I updated the role menu."),
             RoleMenuEditCommitStatus.PersistenceOutcomeUnknown => new RoleMenuEditResult(
                 RoleMenuEditStatus.PersistenceOutcomeUnknown,
                 "Bean Bot couldn't confirm whether MongoDB saved the edit, so it left the public panel untouched. Reopen `/role-menu edit` to inspect persisted truth before retrying."),
@@ -398,6 +412,125 @@ public sealed class RoleMenuAdministrationService
         return result;
     }
 
+    /// <summary>
+    /// Deletes the exact menu version an administrator confirmed. If the menu is gone or changed
+    /// since the confirmation was shown, nothing is touched.
+    /// </summary>
+    internal async Task<RoleMenuConfirmedDeletion> DeleteConfirmedAsync(
+        ObjectId menuId,
+        long confirmedVersion,
+        ulong guildId,
+        ulong botUserId,
+        ulong administratorId,
+        CancellationToken cancellationToken)
+    {
+        var current = await _roleMenuService.GetAsync(menuId, guildId, cancellationToken);
+        if (current is null)
+        {
+            return new RoleMenuConfirmedDeletion(RoleMenuConfirmedDeletionStatus.AlreadyDeleted);
+        }
+
+        if (RoleMenuDeletionTargets.GetVersion(current) != confirmedVersion)
+        {
+            return new RoleMenuConfirmedDeletion(RoleMenuConfirmedDeletionStatus.Changed);
+        }
+
+        var result = await DeleteAsync(
+            menuId,
+            guildId,
+            botUserId,
+            administratorId,
+            cancellationToken);
+        return new RoleMenuConfirmedDeletion(RoleMenuConfirmedDeletionStatus.Attempted, result);
+    }
+
+    internal async Task<RoleMenuDeletionPage> LoadDeletionPageAsync(
+        ulong guildId,
+        RoleMenuPageCursor? cursor,
+        CancellationToken cancellationToken)
+    {
+        var fetched = await _roleMenuService.GetPageAsync(
+            guildId,
+            cursor,
+            RoleMenuConstants.MaximumListedMenus + 1,
+            cancellationToken);
+        if (fetched.Count == 0 && cursor is not null)
+        {
+            // Every menu past this page edge was deleted meanwhile, so start over from the newest.
+            cursor = null;
+            fetched = await _roleMenuService.GetPageAsync(
+                guildId,
+                cursor,
+                RoleMenuConstants.MaximumListedMenus + 1,
+                cancellationToken);
+        }
+
+        return RoleMenuDeletionTargets.BuildPage(
+            fetched,
+            cursor,
+            RoleMenuConstants.MaximumListedMenus);
+    }
+
+    internal async Task<RoleMenuSettings?> FindMenuForMessageAsync(
+        ulong guildId,
+        ulong channelId,
+        ulong messageId,
+        IReadOnlyCollection<ObjectId> manageButtonMenuIds,
+        CancellationToken cancellationToken)
+    {
+        var savedMenus = await _roleMenuService.GetByMessageAsync(
+            guildId,
+            channelId,
+            messageId,
+            RoleMenuDeletionTargets.MaximumMessageMatches,
+            cancellationToken);
+        return RoleMenuDeletionTargets.MatchSavedMenu(
+            savedMenus,
+            manageButtonMenuIds,
+            guildId,
+            channelId,
+            messageId);
+    }
+
+    internal async Task<RoleMenuPanelState> InspectPanelAsync(
+        RoleMenuSettings settings,
+        ulong guildId,
+        ulong botUserId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (!RoleMenuCustomIds.TryParseSnowflake(settings.ChannelId, out var channelId)
+            || !RoleMenuCustomIds.TryParseSnowflake(settings.MessageId, out var messageId))
+        {
+            return RoleMenuPanelState.NotAPanel;
+        }
+
+        try
+        {
+            var lookup = await _discord.ReadDeletionPanelAsync(
+                guildId,
+                settings.Id,
+                channelId,
+                messageId,
+                cancellationToken);
+            return RoleMenuDeletionTargets.ClassifyPanel(lookup, settings, guildId, botUserId);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            var state = RoleMenuDeletionTargets.ClassifyPanelFailure(exception);
+            if (state == RoleMenuPanelState.Unavailable)
+            {
+                BeanBotLog.RoleMenuPanelInspectionFailed(_logger, settings.Id.ToString(), exception);
+            }
+
+            return state;
+        }
+    }
+
     private void LogDeletionFailures(
         ObjectId menuId,
         IReadOnlyCollection<RoleMenuDeletionFailure> failures)
@@ -470,6 +603,17 @@ internal sealed record RoleMenuCreateRequest(
     ulong? TargetChannelGuildId,
     ChannelType? TargetChannelType,
     IReadOnlyCollection<ulong>? RoleIds);
+
+internal enum RoleMenuConfirmedDeletionStatus
+{
+    Attempted,
+    AlreadyDeleted,
+    Changed
+}
+
+internal sealed record RoleMenuConfirmedDeletion(
+    RoleMenuConfirmedDeletionStatus Status,
+    RoleMenuDeletionResult? Result = null);
 
 internal sealed record RoleMenuPreviewResult(
     string Content,

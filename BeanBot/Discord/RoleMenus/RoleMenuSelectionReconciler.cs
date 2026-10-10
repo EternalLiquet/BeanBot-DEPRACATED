@@ -4,7 +4,8 @@ internal sealed record RoleMenuSelectionReconciliation(
     IReadOnlyList<ulong> AddedRoleIds,
     IReadOnlyList<ulong> RemovedRoleIds,
     IReadOnlyList<ulong> MissingSelectedRoleIds,
-    IReadOnlyList<ulong> StillAssignedUnselectedRoleIds)
+    IReadOnlyList<ulong> StillAssignedUnselectedRoleIds,
+    IReadOnlyList<ulong> UnchangedSelectedRoleIds)
 {
     internal bool IsComplete => MissingSelectedRoleIds.Count == 0
                                 && StillAssignedUnselectedRoleIds.Count == 0;
@@ -34,6 +35,9 @@ internal static class RoleMenuSelectionReconciler
                 .ToList(),
             selectedRoleIds.Where(roleId => !after.Contains(roleId)).ToList(),
             configuredRoleIds.Where(roleId => !selected.Contains(roleId) && after.Contains(roleId))
+                .ToList(),
+            configuredRoleIds.Where(roleId =>
+                    selected.Contains(roleId) && before.Contains(roleId) && after.Contains(roleId))
                 .ToList());
     }
 }

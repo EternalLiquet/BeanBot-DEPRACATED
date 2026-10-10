@@ -48,7 +48,7 @@ internal static class RoleMenuSetupValidation
             || request.TargetChannelGuildId != guildId
             || request.TargetChannelType != ChannelType.Text)
         {
-            validationMessage = "Choose a normal text channel from this server.";
+            validationMessage = "Choose a text channel in this server.";
             return false;
         }
 
@@ -89,24 +89,29 @@ internal static class RoleMenuSetupValidation
     {
         selectionMode = default;
         roleValidation = null;
-        if (string.IsNullOrWhiteSpace(title)
-            || title.Length > RoleMenuConstants.MaximumTitleLength)
+        if (!RoleMenuText.HasVisibleText(title))
+        {
+            validationMessage = "Give the menu a title.";
+            return false;
+        }
+
+        if (title.Length > RoleMenuConstants.MaximumTitleLength)
         {
             validationMessage =
-                $"The panel title must be 1–{RoleMenuConstants.MaximumTitleLength} characters.";
+                $"The title can't be longer than {RoleMenuConstants.MaximumTitleLength} characters.";
             return false;
         }
 
         if (description.Length > RoleMenuConstants.MaximumDescriptionLength)
         {
             validationMessage =
-                $"The description cannot exceed {RoleMenuConstants.MaximumDescriptionLength} characters.";
+                $"The description can't be longer than {RoleMenuConstants.MaximumDescriptionLength} characters.";
             return false;
         }
 
         if (!TryParseSelectionMode(rawSelectionMode, out selectionMode))
         {
-            validationMessage = "Choose either single-selection or multiple-selection mode.";
+            validationMessage = "Choose how many roles members can pick.";
             return false;
         }
 

@@ -22,7 +22,7 @@ public abstract class RoleMenuModuleBase : InteractionModuleBase<SocketInteracti
             || !IsEphemeral(component))
         {
             await RespondToInvalidComponentAsync(
-                "That private role-menu control is invalid or expired.",
+                "These controls have expired. Run the command again.",
                 cancellationToken);
             return false;
         }
@@ -88,7 +88,9 @@ public abstract class RoleMenuModuleBase : InteractionModuleBase<SocketInteracti
             cancellationToken);
     }
 
-    protected async Task SendFreshFeedbackAsync(string content)
+    protected async Task SendFreshFeedbackAsync(
+        string content,
+        MessageComponent? components = null)
     {
         if (RoleMenus.IsShuttingDown)
         {
@@ -96,7 +98,8 @@ public abstract class RoleMenuModuleBase : InteractionModuleBase<SocketInteracti
         }
 
         using var feedbackCancellation = RoleMenus.CreateFeedbackCancellation();
-        await ReplaceResponseAsync(content, feedbackCancellation.Token);
+        await ReplaceResponseAsync(
+            content, feedbackCancellation.Token, components: components);
     }
 
     protected Task<IUserMessage> ReplaceResponseAsync(

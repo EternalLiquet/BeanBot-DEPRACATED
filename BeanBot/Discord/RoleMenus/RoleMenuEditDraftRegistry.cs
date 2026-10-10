@@ -27,7 +27,8 @@ internal sealed record RoleMenuEditDraft(
     string Description,
     IReadOnlyList<ulong> RoleIds,
     RoleMenuSelectionMode SelectionMode,
-    DateTimeOffset ExpiresAtUtc);
+    DateTimeOffset ExpiresAtUtc,
+    RoleMenuEditSnapshot? Snapshot);
 
 internal sealed class RoleMenuEditDraftRegistry
 {
@@ -72,7 +73,8 @@ internal sealed class RoleMenuEditDraftRegistry
         string description,
         IReadOnlyCollection<ulong> roleIds,
         RoleMenuSelectionMode selectionMode,
-        out RoleMenuEditDraft? draft)
+        out RoleMenuEditDraft? draft,
+        RoleMenuEditSnapshot? snapshot = null)
     {
         if (menuId == ObjectId.Empty)
         {
@@ -116,7 +118,8 @@ internal sealed class RoleMenuEditDraftRegistry
                 description,
                 [.. roleIds],
                 selectionMode,
-                now.Add(_lifetime));
+                now.Add(_lifetime),
+                snapshot);
             _drafts[draft.Id] = new DraftEntry { Draft = draft };
             _draftByOwner[owner] = draft.Id;
             return RoleMenuEditDraftCreateStatus.Created;

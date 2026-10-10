@@ -7,7 +7,7 @@ public sealed class RoleMenuCreateModal : IModal
 {
     public string Title => "Create a role menu";
 
-    [InputLabel("Panel title")]
+    [InputLabel("Title")]
     [ModalTextInput(
         "title",
         TextInputStyle.Short,
@@ -26,7 +26,7 @@ public sealed class RoleMenuCreateModal : IModal
         RoleMenuConstants.MaximumDescriptionLength)]
     public string Description { get; set; } = string.Empty;
 
-    [InputLabel("Self-assignable roles", "Choose 1–25 existing roles")]
+    [InputLabel("Roles members can choose", "Pick up to 25 roles")]
     [ModalRoleSelect(
         "roles",
         1,
@@ -34,20 +34,20 @@ public sealed class RoleMenuCreateModal : IModal
         Placeholder = "Choose roles")]
     public IRole[] Roles { get; set; } = [];
 
-    [InputLabel("Selection mode")]
+    [InputLabel("How many roles can members choose?")]
     [ModalRadioGroup("selection-mode")]
     [ModalRadioGroupOption(
-        "Multiple",
+        "Any number",
         "multiple",
-        "Members may choose any combination.",
+        "Members can choose as many as they like.",
         true)]
     [ModalRadioGroupOption(
-        "Single",
+        "One role",
         "single",
-        "Choosing one role replaces another from this menu.")]
+        "Choosing a new role replaces their current one from this menu.")]
     public string SelectionMode { get; set; } = "multiple";
 
-    [InputLabel("Target channel")]
+    [InputLabel("Where should this menu appear?")]
     [ModalChannelSelect("target-channel", 1, 1, Placeholder = "Choose a text channel")]
     [ChannelTypes(ChannelType.Text)]
     public ITextChannel? TargetChannel { get; set; }
