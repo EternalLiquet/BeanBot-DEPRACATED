@@ -15,7 +15,7 @@ public sealed partial class RoleMenuAdminModule
 {
     [SlashCommand(
         "repair",
-        "Restore a missing role-menu panel without losing its saved configuration.",
+        "Restore a missing role menu message with its saved roles.",
         runMode: RunMode.Sync)]
     public async Task RepairAsync(
         [Summary("menu-id", "ID shown in the role panel footer")]
@@ -30,14 +30,14 @@ public sealed partial class RoleMenuAdminModule
                 ephemeral: true,
                 CreateRequestOptions(operationToken)),
             operationToken => ReplaceResponseAsync(
-                "Inspecting the saved role menu…",
+                "Checking the role menu…",
                 operationToken),
             cancellation.Token);
 
         if (!TryGetGuildActors(out var guild, out var administrator, out var bot))
         {
             await ReplaceResponseAsync(
-                "Role menus can only be repaired inside a server.",
+                "I can repair role menus only inside a server.",
                 cancellation.Token);
             return;
         }
@@ -45,7 +45,7 @@ public sealed partial class RoleMenuAdminModule
         if (!RoleMenuCustomIds.TryParseMenuId(menuId.Trim(), out var parsedMenuId))
         {
             await ReplaceResponseAsync(
-                "That menu ID is invalid. Copy the ID from the role panel footer or saved configuration.",
+                "That menu ID isn't valid. Check the ID and run `/role-menu repair` again.",
                 cancellation.Token);
             return;
         }
@@ -54,7 +54,7 @@ public sealed partial class RoleMenuAdminModule
             && (targetChannel.GuildId != guild.Id || targetChannel.ChannelType != ChannelType.Text))
         {
             await ReplaceResponseAsync(
-                "Choose a normal text channel from this server as the replacement target.",
+                "Choose a text channel in this server and run `/role-menu repair` again.",
                 cancellation.Token);
             return;
         }
@@ -76,7 +76,7 @@ public sealed partial class RoleMenuAdminModule
         {
             BeanBotLog.RoleMenuPublicationFailed(_logger, parsedMenuId.ToString(), exception);
             await ReplaceResponseAsync(
-                "Bean Bot couldn't confirm the saved panel state. No replacement was posted. Try again after Discord is reachable.",
+                "I couldn't check whether the menu message is missing. Try again when Discord is reachable.",
                 cancellation.Token);
             return;
         }
@@ -97,7 +97,7 @@ public sealed partial class RoleMenuAdminModule
             && targetChannel is null)
         {
             await ReplaceResponseAsync(
-                "The saved panel's channel no longer exists. Rerun `/role-menu repair` and choose a replacement `target-channel`.",
+                "The menu's channel is gone. Run `/role-menu repair` again and choose a `target-channel`.",
                 cancellation.Token);
             return;
         }
@@ -112,7 +112,7 @@ public sealed partial class RoleMenuAdminModule
         if (currentAdministrator is null || currentBot is null)
         {
             await ReplaceResponseAsync(
-                "Bean Bot couldn't refresh the current server role hierarchy. No replacement was posted.",
+                "I couldn't check the current server roles. Try again before repairing this menu.",
                 cancellation.Token);
             return;
         }
@@ -120,7 +120,7 @@ public sealed partial class RoleMenuAdminModule
         if (!currentAdministrator.GuildPermissions.ManageRoles)
         {
             await ReplaceResponseAsync(
-                "You need the current **Manage Roles** permission to repair this menu.",
+                "You need **Manage Roles** permission to repair this menu.",
                 cancellation.Token);
             return;
         }
@@ -141,7 +141,7 @@ public sealed partial class RoleMenuAdminModule
         if (currentTarget is null)
         {
             await ReplaceResponseAsync(
-                "The replacement target channel no longer exists or is not a normal text channel. Choose another target and retry.",
+                "That channel is gone or isn't a text channel. Choose another `target-channel` and try again.",
                 cancellation.Token);
             return;
         }
@@ -154,7 +154,7 @@ public sealed partial class RoleMenuAdminModule
         }
 
         await ReplaceResponseAsync(
-            "The saved configuration is intact and the original panel is confirmed missing. Confirm the repair below.",
+            "The menu message is missing. Review the details below, then confirm to post a replacement.",
             cancellation.Token,
             RoleMenuRepairUi.BuildConfirmationEmbed(
                 settings,
@@ -190,7 +190,7 @@ public sealed partial class RoleMenuAdminModule
                 RoleMenuRepairUi.Confirm(boundUserId, menuId, targetChannelId)))
         {
             await RespondToInvalidComponentAsync(
-                "That repair confirmation is invalid or belongs to another administrator.",
+                "This confirmation has expired or belongs to someone else. Run `/role-menu repair` again.",
                 cancellation.Token);
             return;
         }
@@ -226,8 +226,8 @@ public sealed partial class RoleMenuAdminModule
         {
             await SendFreshFeedbackAsync(
                 mutationStarted
-                    ? "Bean Bot ran out of time and couldn't confirm the final repair state. Inspect the target channel, then rerun the same repair; the stable menu ID is used to reconcile a prior replacement before posting another one."
-                    : "Bean Bot was busy and did not begin this repair. Try again.");
+                    ? "I ran out of time before I could confirm the result. Check the target channel, then run the same repair again."
+                    : "I was busy and couldn't start the repair. Try again.");
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -237,7 +237,7 @@ public sealed partial class RoleMenuAdminModule
         {
             BeanBotLog.RoleMenuPublicationFailed(_logger, menuId.ToString(), exception);
             await SendFreshFeedbackAsync(
-                "Bean Bot couldn't confirm the repair result. The saved configuration was not intentionally deleted. Inspect the target channel and rerun the same repair to reconcile safely.");
+                "I couldn't confirm the repair result. Check the target channel, then run the same repair again.");
         }
     }
 
@@ -260,7 +260,7 @@ public sealed partial class RoleMenuAdminModule
         if (!isOwner)
         {
             await RespondToInvalidComponentAsync(
-                "That repair confirmation belongs to another administrator.",
+                "This confirmation has expired or belongs to someone else. Run `/role-menu repair` again.",
                 cancellation.Token);
             return;
         }
@@ -272,19 +272,19 @@ public sealed partial class RoleMenuAdminModule
                 operationToken => validComponent.UpdateAsync(
                     properties => SetMessage(
                         properties,
-                        "Role-menu repair cancelled.",
+                        "Repair cancelled.",
                         null,
                         MessageComponent.Empty),
                     CreateRequestOptions(operationToken)),
                 operationToken => ReplaceResponseAsync(
-                    "Role-menu repair cancelled.",
+                    "Repair cancelled.",
                     operationToken),
                 cancellation.Token);
             return;
         }
 
         await RespondToInvalidComponentAsync(
-            "Role-menu repair cancelled.",
+            "Repair cancelled.",
             cancellation.Token);
     }
 
@@ -330,12 +330,12 @@ public sealed partial class RoleMenuAdminModule
             requestOptions);
         if (currentAdministrator is null || currentBot is null)
         {
-            return "Bean Bot couldn't refresh the current server role hierarchy. No replacement was posted.";
+            return "I couldn't check the current server roles. Try again before repairing this menu.";
         }
 
         if (!currentAdministrator.GuildPermissions.ManageRoles)
         {
-            return "You no longer have the **Manage Roles** permission. No replacement was posted.";
+            return "You need **Manage Roles** permission to repair this menu.";
         }
 
         var targetChannel = await _discord.GetGuildTextChannelAsync(
@@ -344,7 +344,7 @@ public sealed partial class RoleMenuAdminModule
             requestOptions);
         if (targetChannel is null)
         {
-            return "The selected replacement channel no longer exists or is not a normal text channel. No replacement was posted.";
+            return "That channel is gone or isn't a text channel. Choose another `target-channel` and try again.";
         }
 
         var finalInspection = await InspectRepairAsync(
@@ -365,7 +365,7 @@ public sealed partial class RoleMenuAdminModule
             ?? throw new InvalidOperationException("An eligible repair did not return parsed settings.");
         if (!RoleMenuRepairWorkflow.HasSameSavedConfiguration(initialSettings, settings))
         {
-            return "The saved role-menu configuration changed while this repair was being confirmed. No replacement was posted; rerun `/role-menu repair` to review the current state.";
+            return "This menu changed while you were confirming. Run `/role-menu repair` again to review it.";
         }
 
         var roleValidation = ValidateRoles(parsed.RoleIds, currentAdministrator, currentBot);
@@ -397,14 +397,14 @@ public sealed partial class RoleMenuAdminModule
         => inspection.Status switch
         {
             RoleMenuRepairInspectionStatus.SettingsMissing =>
-                "No saved role menu with that ID exists in this server.",
+                "I couldn't find a role menu with that ID in this server. Check the ID and try again.",
             RoleMenuRepairInspectionStatus.SettingsInvalid =>
-                "The saved role-menu configuration is malformed. Repair stopped without posting or changing anything; inspect or delete the stale configuration instead.",
+                "I can't repair this menu because its saved settings are invalid. Check the menu settings before trying again.",
             RoleMenuRepairInspectionStatus.Healthy =>
-                "The saved role-menu panel is present and still matches Bean Bot's expected panel. Repair did nothing; this command will not move or duplicate a healthy panel.",
+                "The menu message is still there. There's nothing to repair.",
             RoleMenuRepairInspectionStatus.UnexpectedPanel =>
-                "The saved message location is not definitely missing and no longer matches the expected Bean Bot panel. Repair refused to post a replacement to avoid creating a duplicate; inspect that message and saved binding first.",
-            _ => "The saved panel is missing and can be repaired."
+                "I found a message where this menu should be, but it doesn't match. Check that message before trying again.",
+            _ => "The menu message is missing. Run `/role-menu repair` to restore it."
         };
 
     private static string FormatRepairPublication(
@@ -415,22 +415,22 @@ public sealed partial class RoleMenuAdminModule
         if (result.Status == RoleMenuPublicationStatus.Published
             && result.MessageId is ulong messageId)
         {
-            return "Role menu repaired without changing its stable menu ID or configured roles: " +
+            return "I repaired the role menu: " +
                    CreateMessageUrl(guildId, targetChannelId, messageId);
         }
 
         return result.Status switch
         {
             RoleMenuPublicationStatus.PanelOutcomeUnknown =>
-                "Discord returned an ambiguous result while publishing the replacement. Bean Bot did not blindly retry. Inspect the target channel, then rerun the same repair so the stable menu ID can reconcile any panel that was actually created.",
+                "I couldn't tell whether Discord posted the replacement. Check the target channel, then run the same repair again.",
             RoleMenuPublicationStatus.PersistenceOutcomeUnknown =>
-                "A replacement panel was found or created, but Bean Bot could not confirm the MongoDB binding update. The saved configuration was not intentionally deleted. Rerun the same repair with this target to reconcile the stable menu ID without blindly posting another panel.",
+                "I found or posted a replacement message, but couldn't confirm it is connected to the saved menu. Check the target channel, then run the same repair with that channel again.",
             RoleMenuPublicationStatus.PersistenceAbsentPanelRolledBack =>
-                "The saved configuration disappeared during repair, so Bean Bot removed the replacement panel. No replacement remains; inspect the saved state before retrying.",
+                "The saved menu disappeared during repair, so I removed the replacement message. Check the menu before trying again.",
             RoleMenuPublicationStatus.PersistenceAbsentRollbackFailed =>
-                "The saved configuration disappeared during repair and Bean Bot could not remove the replacement panel. Inspect the target channel and persistence before retrying to avoid a duplicate.",
+                "The saved menu disappeared, and I couldn't remove the replacement message. Check the target channel before trying again.",
             _ =>
-                "Bean Bot could not confirm the repair result. Inspect the target channel and saved configuration before retrying."
+                "I couldn't confirm the repair result. Check the target channel and menu before trying again."
         };
     }
 }

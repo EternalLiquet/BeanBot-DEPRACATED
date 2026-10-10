@@ -37,14 +37,13 @@ internal static class RoleMenuRepairUi
             ? "Single selection"
             : "Multiple selection";
         var source = panelIssue == RoleMenuRepairPanelIssue.ChannelMissing
-            ? "The saved source channel is missing."
-            : "The saved source message is missing.";
+            ? "The menu's old channel is gone."
+            : "The menu message is gone.";
 
         return new EmbedBuilder()
             .WithTitle("Repair role menu?")
             .WithDescription(
-                source + " Bean Bot will publish one replacement panel with the same menu ID and " +
-                "saved configuration, then update only the saved channel/message binding.")
+                source + " I'll post a replacement message for this menu in the target channel.")
             .AddField("Menu", settings.Title)
             .AddField("Roles", roleMentions)
             .AddField("Mode", mode, inline: true)

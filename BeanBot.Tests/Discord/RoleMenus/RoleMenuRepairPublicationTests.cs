@@ -16,6 +16,43 @@ public class RoleMenuRepairPublicationTests
     private const ulong BotUserId = 60UL;
 
     [Fact]
+    public async Task PublishAsync_TwoExistingReplacements_DoesNotChooseOneOrSendAgain()
+    {
+        var settings = CreateSavedSettings();
+        Assert.True(RoleMenuSettingsParser.TryParse(settings, out var parsed, out _));
+        var draft = RoleMenuRepairWorkflow.CreateRepairDraft(
+            settings, parsed, administratorId: 70UL, targetChannelId: TargetChannelId);
+        var sendCount = 0;
+        var upsertCount = 0;
+        var first = CreateReplacementPanel();
+        var second = first with { MessageId = ReplacementMessageId + 1 };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            RoleMenuPublicationWorkflow.ExecuteAsync(
+                draft,
+                BotUserId,
+                new RoleMenuPublicationOperations(
+                    (_, _, _) => Task.FromResult<RoleMenuSettings?>(settings),
+                    (_, _, _) => Task.FromResult<RoleMenuPanelSnapshot?>(null),
+                    (_, _, _) => Task.FromResult<IReadOnlyList<RoleMenuPanelSnapshot>>([first, second]),
+                    (_, _) =>
+                    {
+                        sendCount++;
+                        return Task.FromResult(first);
+                    },
+                    (_, _) =>
+                    {
+                        upsertCount++;
+                        return Task.CompletedTask;
+                    },
+                    (_, _) => Task.FromResult(true)),
+                CancellationToken.None));
+
+        Assert.Equal(0, sendCount);
+        Assert.Equal(0, upsertCount);
+    }
+
+    [Fact]
     public async Task PublishAsync_ExistingReplacementWithStableMenuId_IsReusedWithoutDuplicateSend()
     {
         var settings = CreateSavedSettings();

@@ -38,7 +38,7 @@ Repair serializes with create/publication, delete, and other menu lifecycle writ
 
 The replacement uses the existing menu ID and canonical public role-menu embed/button. BeanBot confirms or reconciles the replacement panel before updating MongoDB. The persisted update changes only the channel/message binding and normal `updatedAtUtc` metadata; the existing menu configuration and original `createdAtUtc` are preserved.
 
-Discord sends are not blindly retried. If a send returns an ambiguous result, BeanBot performs the existing bounded recent-message reconciliation for the same stable menu ID. A later rerun with the same replacement target uses the same reconciliation path, so an already-created replacement can be adopted instead of duplicated.
+Discord sends are not blindly retried. If a send returns an ambiguous result, BeanBot performs the existing bounded recent-message reconciliation for the same stable menu ID. A later rerun with the same replacement target uses the same reconciliation path, so an already-created replacement can be adopted instead of duplicated. If the bounded scan finds multiple matching panels, repair stops for manual inspection instead of choosing one.
 
 If the replacement exists but the MongoDB binding update fails or has an unknown outcome, BeanBot keeps the replacement and does not delete the old saved configuration. Rerun the same repair with the same target to reconcile the binding. If the saved configuration disappears independently during repair, the normal publication rollback rules apply.
 
