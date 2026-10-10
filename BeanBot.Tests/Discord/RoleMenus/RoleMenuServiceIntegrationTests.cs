@@ -90,6 +90,28 @@ public class RoleMenuServiceIntegrationTests
     }
 
     [Fact]
+    public async Task CreatePreview_ValidRolesRequireAChannelFromThisServer()
+    {
+        var fixture = new Fixture();
+        fixture.MemberRoles[3UL] = [20UL];
+        var wrongGuild = await fixture.Administration.CreatePreviewAsync(
+            new RoleMenuCreateRequest("Roles", "", "multiple", 4UL, 999UL,
+                ChannelType.Text, [10UL]),
+            1UL, 3UL, 2UL, CancellationToken.None);
+
+        Assert.Null(wrongGuild.Draft);
+        Assert.Equal("Choose a text channel in this server.", wrongGuild.Content);
+        Assert.Equal(0, fixture.ChannelReads);
+
+        var valid = await fixture.Administration.CreatePreviewAsync(
+            new RoleMenuCreateRequest("Roles", "", "multiple", 4UL, 1UL,
+                ChannelType.Text, [10UL]),
+            1UL, 3UL, 2UL, CancellationToken.None);
+        Assert.NotNull(valid.Draft);
+        Assert.Equal(1, fixture.ChannelReads);
+    }
+
+    [Fact]
     public async Task PublishExistingPanel_ReusesIdentityAndCompletesDraftWithoutDuplicateSend()
     {
         var fixture = new Fixture();
@@ -165,7 +187,10 @@ public class RoleMenuServiceIntegrationTests
     [Fact]
     public async Task Edit_SavesNewSettingsBeforeAnAmbiguousPanelUpdate()
     {
-        var fixture = new Fixture();
+        var fixture = new Fixture
+        {
+            OnPanelModify = () => Task.FromException(new TimeoutException("unknown panel outcome"))
+        };
         fixture.MemberRoles[3UL] = [20UL];
         fixture.Settings.CreatedAtUtc = new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc);
         var original = fixture.Settings;
@@ -217,6 +242,300 @@ public class RoleMenuServiceIntegrationTests
         Assert.Equal(RoleMenuEditStatus.PanelUnavailable, result.Status);
         Assert.Equal(0, fixture.Store.Writes);
     }
+
+    [Fact]
+    public async Task Edit_UpdatesTheExistingPanelAfterSavingSettings()
+    {
+        var fixture = new Fixture();
+        var draft = PrepareEdit(fixture);
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("  Edited  ", "  New description  ", "single", [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.Updated, result.Status);
+        Assert.Equal(1, fixture.Store.Writes);
+        Assert.Equal(1, fixture.PanelUpdates);
+        Assert.NotNull(fixture.LastPanelProperties);
+        Assert.Equal("Edited", fixture.Store.Settings?.Title);
+        Assert.Equal("New description", fixture.Store.Settings?.Description);
+        Assert.Equal(RoleMenuSelectionMode.Exclusive, fixture.Store.Settings?.SelectionMode);
+        Assert.Equal(draft.MenuId, fixture.Store.Settings?.Id);
+    }
+
+    [Fact]
+    public async Task Edit_PanelModifyReturnsMissingAfterSave()
+    {
+        var fixture = new Fixture
+        {
+            OnPanelModify = () => Task.FromException(
+                new HttpException(HttpStatusCode.NotFound, null))
+        };
+        var draft = PrepareEdit(fixture);
+
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("Edited", "", "multiple", [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.PanelUpdateFailed, result.Status);
+        Assert.Equal(1, fixture.Store.Writes);
+        Assert.Equal("Edited", fixture.Store.Settings?.Title);
+        Assert.Equal(1, fixture.PanelUpdates);
+    }
+
+    [Fact]
+    public async Task Edit_BotLosingManageRolesStopsBeforePanelWrite()
+    {
+        var fixture = new Fixture { BotCanManageRoles = false };
+        var draft = PrepareEdit(fixture);
+
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("Edited", "", "multiple", [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.ValidationFailed, result.Status);
+        Assert.Contains("Manage Roles", result.Content);
+        Assert.Equal(0, fixture.ChannelReads);
+        Assert.Equal(0, fixture.Store.Writes);
+    }
+
+    [Fact]
+    public async Task Edit_PanelGoneAfterValidationKeepsSavedEdit()
+    {
+        var fixture = new Fixture();
+        var draft = PrepareEdit(fixture);
+        var reads = 0;
+        fixture.ReadMessage = () => ++reads == 1
+            ? Task.FromResult<IMessage>(fixture.PanelMessage)
+            : Task.FromException<IMessage>(new HttpException(HttpStatusCode.NotFound, null));
+
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("Edited", "", "multiple", [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.PanelUpdateFailed, result.Status);
+        Assert.Equal(1, fixture.Store.Writes);
+        Assert.Equal("Edited", fixture.Store.Settings?.Title);
+        Assert.Equal(0, fixture.PanelUpdates);
+        Assert.Equal(2, reads);
+    }
+
+    [Fact]
+    public async Task Edit_PanelChangedAfterValidationDoesNotModifyIt()
+    {
+        var fixture = new Fixture();
+        var draft = PrepareEdit(fixture);
+        var reads = 0;
+        var otherAuthor = Proxy<IUser>((method, _) => method.Name == "get_Id"
+            ? 999UL : throw new NotSupportedException(method.Name));
+        var changedMessage = Proxy<IUserMessage>((method, _) => method.Name switch
+        {
+            "get_Id" => 5UL,
+            "get_Author" => otherAuthor,
+            "get_Components" => RoleMenuComponents.BuildPublicComponents(draft.MenuId).Components,
+            _ => throw new NotSupportedException(method.Name)
+        });
+        fixture.ReadMessage = () => Task.FromResult<IMessage>(
+            ++reads == 1 ? fixture.PanelMessage : changedMessage);
+
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("Edited", "", "multiple", [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.PanelUpdateFailed, result.Status);
+        Assert.Equal(1, fixture.Store.Writes);
+        Assert.Equal(0, fixture.PanelUpdates);
+        Assert.Equal(2, reads);
+    }
+
+    [Fact]
+    public async Task Edit_DeletedSavedMenuDoesNotReadDiscord()
+    {
+        var fixture = new Fixture();
+        var draft = PrepareEdit(fixture);
+        fixture.Store.Settings = null;
+
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("Edited", "", "multiple", [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.NotFound, result.Status);
+        Assert.Equal(0, fixture.UserReads);
+        Assert.Equal(0, fixture.Store.Writes);
+    }
+
+    [Fact]
+    public async Task Edit_MalformedSavedBindingDoesNotReadDiscord()
+    {
+        var fixture = new Fixture();
+        var draft = PrepareEdit(fixture);
+        fixture.Store.Settings = new RoleMenuSettings(
+            fixture.Settings.Id, "1", "invalid-channel", "5", "Roles", "",
+            ["10"], RoleMenuSelectionMode.Multiple);
+
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("Edited", "", "multiple", [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.InvalidStoredConfiguration, result.Status);
+        Assert.Equal(0, fixture.UserReads);
+        Assert.Equal(0, fixture.Store.Writes);
+    }
+
+    [Fact]
+    public async Task Edit_PersistenceFailureLeavesPanelUntouched()
+    {
+        var fixture = new Fixture();
+        var draft = PrepareEdit(fixture);
+        fixture.Store.WriteFailure = new TimeoutException("unknown write result");
+
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("Edited", "", "multiple", [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.PersistenceOutcomeUnknown, result.Status);
+        Assert.Equal(1, fixture.Store.Writes);
+        Assert.Equal(0, fixture.PanelUpdates);
+        Assert.Same(fixture.Settings, fixture.Store.Settings);
+    }
+
+    [Fact]
+    public async Task Edit_PanelDisappearingAfterSaveKeepsTheNewSettings()
+    {
+        var fixture = new Fixture();
+        var draft = PrepareEdit(fixture);
+        var reads = 0;
+        fixture.ReadMessage = () => Task.FromResult<IMessage>(
+            ++reads == 1 ? fixture.PanelMessage : null!);
+
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("Edited", "", "multiple", [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.PanelUpdateFailed, result.Status);
+        Assert.Equal(1, fixture.Store.Writes);
+        Assert.Equal("Edited", fixture.Store.Settings?.Title);
+        Assert.Equal(0, fixture.PanelUpdates);
+        Assert.Equal(2, reads);
+    }
+
+    [Theory]
+    [InlineData(null, "Give the menu a title.")]
+    [InlineData("\u200B\u3164", "Give the menu a title.")]
+    [InlineData("Edited", "Choose how many roles members can pick.")]
+    public async Task Edit_InvalidSubmittedValuesDoNotReadOrMutatePanel(
+        string? title, string expected)
+    {
+        var fixture = new Fixture();
+        var draft = PrepareEdit(fixture);
+        var mode = title == "Edited" ? "invalid" : "multiple";
+
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest(title!, "", mode, [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.ValidationFailed, result.Status);
+        Assert.Equal(expected, result.Content);
+        Assert.Equal(0, fixture.ChannelReads);
+        Assert.Equal(0, fixture.Store.Writes);
+    }
+
+    [Theory]
+    [InlineData(0, "Choose between 1 and 25 roles.")]
+    [InlineData(26, "Choose between 1 and 25 roles.")]
+    [InlineData(1, "One of the roles you picked was deleted or isn't from this server. Run `/role-menu edit` again.")]
+    public async Task Edit_InvalidRoleChoicesStopBeforeReadingPanel(int roleCount, string expected)
+    {
+        var fixture = new Fixture();
+        var draft = PrepareEdit(fixture);
+        ulong[] roles = roleCount == 1
+            ? [999UL]
+            : [.. Enumerable.Range(1, roleCount).Select(value => (ulong)value)];
+
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("Edited", "", "multiple", roles));
+
+        Assert.Equal(RoleMenuEditStatus.ValidationFailed, result.Status);
+        Assert.Equal(expected, result.Content);
+        Assert.Equal(0, fixture.ChannelReads);
+        Assert.Equal(0, fixture.Store.Writes);
+    }
+
+    [Fact]
+    public async Task Edit_StalePreviewWithChangedRoleListCannotOverwriteNewerSettings()
+    {
+        var fixture = new Fixture();
+        var draft = PrepareEdit(fixture);
+        fixture.Settings.RoleIds.Add("20");
+
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("Edited", "", "multiple", [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.ValidationFailed, result.Status);
+        Assert.Equal(0, fixture.UserReads);
+        Assert.Equal(0, fixture.Store.Writes);
+    }
+
+    [Fact]
+    public async Task Edit_OverlongDescriptionStopsBeforePanelRead()
+    {
+        var fixture = new Fixture();
+        var draft = PrepareEdit(fixture);
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("Edited", new string('x', 1001), "multiple", [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.ValidationFailed, result.Status);
+        Assert.Equal("The description can't be longer than 1000 characters.", result.Content);
+        Assert.Equal(0, fixture.ChannelReads);
+        Assert.Equal(0, fixture.Store.Writes);
+    }
+
+    [Fact]
+    public async Task Edit_MissingCurrentAdministratorStopsBeforePanelWork()
+    {
+        var fixture = new Fixture { MissingUserId = 3UL };
+        var draft = PrepareEdit(fixture);
+
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("Edited", "", "multiple", [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.ValidationFailed, result.Status);
+        Assert.Equal(0, fixture.ChannelReads);
+        Assert.Equal(0, fixture.Store.Writes);
+    }
+
+    [Fact]
+    public async Task Edit_DeletedTargetChannelStopsBeforeSaving()
+    {
+        var fixture = new Fixture { ReadChannel = () => Task.FromResult<IChannel?>(null) };
+        var draft = PrepareEdit(fixture);
+
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("Edited", "", "multiple", [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.PanelUnavailable, result.Status);
+        Assert.Equal(0, fixture.Store.Writes);
+    }
+
+    [Fact]
+    public async Task Edit_MissingBotChannelPermissionStopsBeforeSaving()
+    {
+        var fixture = new Fixture { BotChannelPermissions = ChannelPermissions.None };
+        var draft = PrepareEdit(fixture);
+
+        var result = await ExecuteEditAsync(fixture, draft,
+            new RoleMenuEditRequest("Edited", "", "multiple", [10UL]));
+
+        Assert.Equal(RoleMenuEditStatus.ValidationFailed, result.Status);
+        Assert.Equal(0, fixture.Store.Writes);
+    }
+
+    private static RoleMenuEditDraft PrepareEdit(Fixture fixture)
+    {
+        fixture.MemberRoles[3UL] = [20UL];
+        fixture.Settings.CreatedAtUtc = new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc);
+        Assert.Equal(RoleMenuEditDraftCreateStatus.Created, fixture.Session.CreateEditDraft(
+            fixture.Settings.Id, 1UL, 3UL, fixture.Settings.Title, fixture.Settings.Description,
+            [10UL, 11UL], fixture.Settings.SelectionMode, out var draft,
+            RoleMenuEditSnapshot.From(fixture.Settings)));
+        return Assert.IsType<RoleMenuEditDraft>(draft);
+    }
+
+    private static Task<RoleMenuEditResult> ExecuteEditAsync(
+        Fixture fixture, RoleMenuEditDraft draft, RoleMenuEditRequest request)
+        => fixture.Session.RunMenuMutationAsync(
+            draft.MenuId,
+            token => fixture.Administration.EditAsync(draft, request, 1UL, 3UL, 2UL, token),
+            CancellationToken.None);
 
     [Fact]
     public async Task Delete_RefreshesAdministratorPermissionBeforePanelOrPersistenceChanges()
@@ -567,20 +886,23 @@ public class RoleMenuServiceIntegrationTests
                 "get_Guild" => guild,
                 "get_GuildId" => 1UL,
                 "get_RoleIds" => id == 2UL ? (IReadOnlyCollection<ulong>)[20UL] : MemberRoles[id],
-                "get_GuildPermissions" => new GuildPermissions(manageRoles: id == 2UL || AdministratorCanManageRoles),
-                "GetPermissions" => ChannelPermissions.Text,
+                "get_GuildPermissions" => new GuildPermissions(manageRoles: id == 2UL
+                    ? BotCanManageRoles : AdministratorCanManageRoles),
+                "GetPermissions" => id == 2UL ? BotChannelPermissions : ChannelPermissions.Text,
                 "AddRoleAsync" => AddAsync(id, (ulong)args[0]!),
                 _ => throw new NotSupportedException(method.Name)
             });
             var bot = User(2UL);
-            var message = Proxy<IUserMessage>((method, _) => method.Name switch
+            var message = Proxy<IUserMessage>((method, args) => method.Name switch
             {
                 "get_Id" => 5UL,
                 "get_Author" => bot,
                 "get_Components" => RoleMenuComponents.BuildPublicComponents(Settings.Id).Components,
                 "DeleteAsync" => DeletePanelMessage(),
+                "ModifyAsync" => ModifyPanel(args),
                 _ => throw new NotSupportedException(method.Name)
             });
+            PanelMessage = message;
             Channel = Proxy<ITextChannel>((method, _) => method.Name switch
             {
                 "get_Id" => 4UL,
@@ -594,7 +916,7 @@ public class RoleMenuServiceIntegrationTests
                 {
                     options.CancelToken.ThrowIfCancellationRequested();
                     UserReads++;
-                    return Task.FromResult<IGuildUser?>(User(id));
+                    return Task.FromResult<IGuildUser?>(id == MissingUserId ? null : User(id));
                 },
                 (_, options) =>
                 {
@@ -613,10 +935,17 @@ public class RoleMenuServiceIntegrationTests
         internal RoleMenuMemberService Members { get; }
         internal RoleMenuAdministrationService Administration { get; }
         internal ITextChannel Channel { get; }
+        internal IUserMessage PanelMessage { get; }
+        internal Func<Task> OnPanelModify { get; set; } = () => Task.CompletedTask;
+        internal int PanelUpdates { get; private set; }
+        internal MessageProperties? LastPanelProperties { get; private set; }
+        internal ChannelPermissions BotChannelPermissions { get; set; } = ChannelPermissions.Text;
         internal bool AdministratorCanManageRoles { get; set; } = true;
+        internal bool BotCanManageRoles { get; set; } = true;
         internal Func<Task<IChannel?>>? ReadChannel { get; set; }
         internal Func<Task<IMessage>>? ReadMessage { get; set; }
         internal int PanelDeletes { get; private set; }
+        internal ulong MissingUserId { get; set; }
         internal int UserReads { get; private set; }
         internal int ChannelReads { get; private set; }
         internal Dictionary<ulong, HashSet<ulong>> MemberRoles { get; } = new()
@@ -626,6 +955,15 @@ public class RoleMenuServiceIntegrationTests
         };
         internal ConcurrentQueue<(ulong Member, ulong Role)> Mutations { get; } = new();
         internal Func<ulong, Task> BeforeMutation { get; set; } = _ => Task.CompletedTask;
+
+        private Task ModifyPanel(object?[] args)
+        {
+            var properties = new MessageProperties();
+            ((Action<MessageProperties>)args[0]!)(properties);
+            LastPanelProperties = properties;
+            PanelUpdates++;
+            return OnPanelModify();
+        }
 
         private Task DeletePanelMessage()
         {
@@ -655,9 +993,12 @@ public class RoleMenuServiceIntegrationTests
         internal RoleMenuSettings? Settings { get; set; }
         internal int Writes { get; private set; }
         internal int Deletes { get; private set; }
+        internal Exception? WriteFailure { get; set; }
         public Task UpsertAsync(RoleMenuSettings settings, CancellationToken cancellationToken)
         {
             Writes++;
+            if (WriteFailure is not null)
+                return Task.FromException(WriteFailure);
             Settings = settings;
             return Task.CompletedTask;
         }

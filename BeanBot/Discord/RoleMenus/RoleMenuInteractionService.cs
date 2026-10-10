@@ -222,8 +222,15 @@ public sealed class RoleMenuInteractionService
         {
             if (await RunMenuMutationAsync(
                     settings.Id,
-                    token => _repository.DeleteBindingAsync(
-                        settings, guild, channel, message, token),
+                    async token =>
+                    {
+                        // The initial message lookup is only a bounded candidate list. An edit
+                        // may replace that revision before this lock is acquired.
+                        var current = await _repository.GetAsync(settings.Id, guild, token);
+                        return current is not null
+                            && await _repository.DeleteBindingAsync(
+                                current, guild, channel, message, token);
+                    },
                     cancellationToken))
             {
                 deleted++;

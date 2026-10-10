@@ -65,7 +65,8 @@ internal static class RoleMenuSetupValidation
         out RoleMenuSelectionMode selectionMode,
         [NotNullWhen(true)] out RoleMenuRoleValidationResult? roleValidation,
         out string validationMessage)
-        => TryValidateEditableFields(
+    {
+        var valid = TryValidateEditableFields(
             request.SelectionMode,
             request.RoleIds,
             administrator,
@@ -75,6 +76,14 @@ internal static class RoleMenuSetupValidation
             out selectionMode,
             out roleValidation,
             out validationMessage);
+        if (!valid)
+        {
+            validationMessage = validationMessage
+                .Replace("`/role-menu create`", "`/role-menu edit`", StringComparison.Ordinal)
+                .Replace("publish this menu", "edit this menu", StringComparison.Ordinal);
+        }
+        return valid;
+    }
 
     private static bool TryValidateEditableFields(
         string? rawSelectionMode,
@@ -185,7 +194,7 @@ internal static class RoleMenuSetupValidation
     {
         if (!bot.GuildPermissions.ManageRoles)
         {
-            return "Bean Bot needs the **Manage Roles** permission before this menu can be published.";
+            return "I need the **Manage Roles** permission to publish this menu.";
         }
 
         var permissions = bot.GetPermissions(targetChannel);
@@ -212,8 +221,8 @@ internal static class RoleMenuSetupValidation
 
         return missing.Count == 0
             ? null
-            : "Bean Bot is missing these permissions in the target channel: **" +
-              string.Join(", ", missing) + "**.";
+            : "I'm missing these permissions in that channel: **" +
+              string.Join(", ", missing) + "**. Add them, then try again.";
     }
 
     internal static RoleMenuRoleValidationResult ValidateRoles(

@@ -29,6 +29,29 @@ public class RoleMenuEditMutationWaiterTests
     }
 
     [Fact]
+    public async Task TimeoutFeedback_StillWaitsForFaultedMutation()
+    {
+        var mutation = new TaskCompletionSource<RoleMenuEditResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var feedbackSent = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var timeout = new CancellationTokenSource();
+        var waiting = RoleMenuEditMutationWaiter.WaitAsync(
+            mutation.Task, () =>
+            {
+                feedbackSent.SetResult();
+                return Task.CompletedTask;
+            }, timeout.Token);
+        timeout.Cancel();
+        await feedbackSent.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(waiting.IsCompleted);
+        mutation.SetException(new InvalidOperationException("late failure"));
+
+        Assert.Null(await waiting.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.True(mutation.Task.IsFaulted);
+    }
+
+    [Fact]
     public async Task SuccessfulMutation_ReturnsResultWithoutTimeoutFeedback()
     {
         var result = new RoleMenuEditResult(RoleMenuEditStatus.Updated, "Updated");
