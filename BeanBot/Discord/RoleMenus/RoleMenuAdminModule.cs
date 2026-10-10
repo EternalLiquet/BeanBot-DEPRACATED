@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net;
 using BeanBot.Logging;
 using BeanBot.Persistence.Models;
+using BeanBot.Persistence.Repositories;
 using Discord;
 using Discord.Interactions;
 using Discord.Net;
@@ -311,7 +312,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         "Audit saved role menus for stale panels, roles, or permissions.",
         runMode: RunMode.Sync)]
     public async Task AuditAsync(
-        [Summary("menu-id", "Optional ID shown in the role panel footer")]
+        [Summary("menu-id", "Optional ID from a previous audit")]
         string? menuId = null)
     {
         using var cancellation = RoleMenus.CreateOperationCancellation();
@@ -338,7 +339,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
             if (!RoleMenuCustomIds.TryParseMenuId(menuId.Trim(), out var parsedMenuId))
             {
                 await ReplaceResponseAsync(
-                    "That menu ID is invalid. Copy the ID from the role panel footer.",
+                    "That menu ID is invalid. Run `/role-menu audit` to see available IDs.",
                     cancellation.Token);
                 return;
             }
@@ -360,9 +361,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         "delete",
         "Delete a role menu. Members keep the roles they already have.",
         runMode: RunMode.Sync)]
-    public async Task DeleteAsync(
-        [Summary("menu-id", "The ID at the bottom of the menu. Only needed for older menus.")]
-        string? menuId = null)
+    public async Task DeleteAsync()
     {
         using var cancellation = RoleMenus.CreateOperationCancellation();
         await RoleMenus.ExecuteInitialResponseAsync(
@@ -382,53 +381,49 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(menuId))
+        await ShowDeletePageAsync(Context.Guild, null, cancellation.Token);
+    }
+
+    [ComponentInteraction(
+        RoleMenuCustomIds.DeletePagePattern,
+        ignoreGroupNames: true,
+        runMode: RunMode.Sync)]
+    public async Task ChangeDeletePageAsync(
+        string userIdValue,
+        string directionValue,
+        string createdAtTicksValue,
+        string menuIdValue)
+    {
+        using var cancellation = RoleMenus.CreateOperationCancellation();
+        if (!RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var boundUserId)
+            || boundUserId != Context.User.Id
+            || !RoleMenuCustomIds.TryParsePageCursor(
+                directionValue,
+                createdAtTicksValue,
+                menuIdValue,
+                out var cursor)
+            || Context.Guild is null
+            || Context.Interaction is not SocketMessageComponent component
+            || !IsValidManagementComponent(
+                component,
+                Context.Guild,
+                ComponentType.Button,
+                RoleMenuCustomIds.DeletePage(boundUserId, cursor)))
         {
-            if (!RoleMenuCustomIds.TryParseMenuId(menuId.Trim(), out var parsedMenuId))
-            {
-                await ReplaceResponseAsync(
-                    "That doesn't look like a menu ID. Copy it from the bottom of the menu.",
-                    cancellation.Token);
-                return;
-            }
-
-            var settings = await RoleMenus.GetAsync(
-                parsedMenuId,
-                Context.Guild.Id,
-                cancellation.Token);
-            if (settings is null)
-            {
-                await ReplaceResponseAsync(
-                    "I couldn't find a role menu with that ID in this server.",
-                    cancellation.Token);
-                return;
-            }
-
-            await ShowDeleteConfirmationAsync(settings, cancellation.Token);
-            return;
-        }
-
-        var menus = await RoleMenus.GetByGuildAsync(
-            Context.Guild.Id,
-            RoleMenuConstants.MaximumListedMenus + 1,
-            cancellation.Token);
-        if (menus.Count == 0)
-        {
-            await ReplaceResponseAsync(
-                "There are no role menus in this server yet.",
+            await RespondToInvalidComponentAsync(
+                "This list has expired or belongs to someone else. Run `/role-menu delete` again.",
                 cancellation.Token);
             return;
         }
 
-        var hasMore = menus.Count > RoleMenuConstants.MaximumListedMenus;
-        var listedMenus = menus.Take(RoleMenuConstants.MaximumListedMenus).ToList();
-        await ReplaceResponseAsync(
-            hasMore
-                ? "Here are the 25 newest menus. To delete an older one, run `/role-menu delete` " +
-                  "with the ID from the bottom of that menu."
-                : "Which role menu do you want to delete?",
-            cancellation.Token,
-            components: RoleMenuComponents.BuildDeleteSelector(Context.User.Id, listedMenus));
+        if (!await AcknowledgeEphemeralComponentAsync(
+                "Loading role menus…",
+                cancellation.Token))
+        {
+            return;
+        }
+
+        await ShowDeletePageAsync(Context.Guild, cursor, cancellation.Token);
     }
 
     [ComponentInteraction(
@@ -444,7 +439,7 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
             || !RoleMenuCustomIds.TryParseMenuId(selectedMenuIds[0], out var menuId)
             || Context.Guild is null
             || Context.Interaction is not SocketMessageComponent component
-            || !IsValidPrivateComponent(
+            || !IsValidManagementComponent(
                 component,
                 Context.Guild,
                 ComponentType.SelectMenu,
@@ -476,26 +471,42 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
             return;
         }
 
-        await ShowDeleteConfirmationAsync(settings, cancellation.Token);
+        var panelState = await _administration.InspectPanelAsync(
+            settings,
+            Context.Guild.Id,
+            Context.Guild.CurrentUser.Id,
+            cancellation.Token);
+        await ReplaceResponseAsync(
+            RoleMenuComponents.FormatDeleteConfirmationContent(panelState),
+            cancellation.Token,
+            RoleMenuComponents.BuildDeleteConfirmationEmbed(settings, panelState),
+            RoleMenuComponents.BuildDeleteConfirmationComponents(
+                Context.User.Id,
+                settings,
+                panelState));
     }
 
     [ComponentInteraction(
         RoleMenuCustomIds.DeleteConfirmPattern,
         ignoreGroupNames: true,
         runMode: RunMode.Sync)]
-    public async Task ConfirmDeleteAsync(string userIdValue, string menuIdValue)
+    public async Task ConfirmDeleteAsync(
+        string userIdValue,
+        string menuIdValue,
+        string menuVersionValue)
     {
         using var cancellation = RoleMenus.CreateOperationCancellation();
         if (!RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var boundUserId)
             || boundUserId != Context.User.Id
             || !RoleMenuCustomIds.TryParseMenuId(menuIdValue, out var menuId)
+            || !RoleMenuCustomIds.TryParseMenuVersion(menuVersionValue, out var menuVersion)
             || !TryGetGuildActors(out var guild, out _, out var bot)
             || Context.Interaction is not SocketMessageComponent component
-            || !IsValidPrivateComponent(
+            || !IsValidManagementComponent(
                 component,
                 guild,
                 ComponentType.Button,
-                RoleMenuCustomIds.DeleteConfirm(boundUserId, menuId)))
+                RoleMenuCustomIds.DeleteConfirm(boundUserId, menuId, menuVersion)))
         {
             await RespondToInvalidComponentAsync(
                 "This confirmation has expired or belongs to someone else. Run `/role-menu delete` again.",
@@ -503,55 +514,27 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
             return;
         }
 
-        if (!await AcknowledgeEphemeralComponentAsync(
-                "Deleting the menu…",
-                cancellation.Token))
+        if (!RoleMenus.TryBeginDeletion(menuId, boundUserId))
         {
+            // A repeated click while the first one is still working; leave its progress showing.
+            await RoleMenus.ExecuteInitialResponseAsync(
+                supportsOriginalResponse: false,
+                operationToken => component.DeferAsync(
+                    ephemeral: true,
+                    CreateRequestOptions(operationToken)),
+                _ => Task.CompletedTask,
+                cancellation.Token);
             return;
         }
 
-        RoleMenuDeletionResult result;
-        var mutationStarted = false;
         try
         {
-            result = await RoleMenus.RunMenuMutationAsync(
-                menuId,
-                operationToken =>
-                {
-                    mutationStarted = true;
-                    return _administration.DeleteAsync(
-                        menuId,
-                        guild.Id,
-                        bot.Id,
-                        Context.User.Id,
-                        operationToken);
-                },
-                cancellation.Token);
+            await ConfirmDeleteClaimedAsync(guild, bot, menuId, menuVersion, cancellation);
         }
-        catch (OperationCanceledException)
-            when (cancellation.IsCancellationRequested && !RoleMenus.IsShuttingDown)
+        finally
         {
-            await SendFreshFeedbackAsync(
-                mutationStarted
-                    ? "That took too long, and I couldn't confirm whether the menu was deleted. Run " +
-                      "`/role-menu delete` again to check and finish."
-                    : "I was busy and didn't start deleting the menu. Try again.");
-            return;
+            RoleMenus.EndDeletion(menuId, boundUserId);
         }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            BeanBotLog.RoleMenuDeletionFailed(_logger, menuId.ToString(), exception);
-            await SendFreshFeedbackAsync(
-                "I couldn't confirm whether the menu was deleted. Run `/role-menu delete` again to " +
-                "check and finish.");
-            return;
-        }
-
-        await SendFreshFeedbackAsync(FormatDeletion(result));
     }
 
     [ComponentInteraction(
@@ -600,6 +583,107 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
             "Deletion cancelled.",
             cancellation.Token);
     }
+
+    private async Task ConfirmDeleteClaimedAsync(
+        SocketGuild guild,
+        SocketGuildUser bot,
+        ObjectId menuId,
+        long menuVersion,
+        CancellationTokenSource cancellation)
+    {
+        if (!await AcknowledgeEphemeralComponentAsync(
+                "Deleting the menu…",
+                cancellation.Token))
+        {
+            return;
+        }
+
+        RoleMenuConfirmedDeletion deletion;
+        var mutationStarted = false;
+        try
+        {
+            deletion = await RoleMenus.RunMenuMutationAsync(
+                menuId,
+                operationToken =>
+                {
+                    mutationStarted = true;
+                    return _administration.DeleteConfirmedAsync(
+                        menuId,
+                        menuVersion,
+                        guild.Id,
+                        bot.Id,
+                        Context.User.Id,
+                        operationToken);
+                },
+                cancellation.Token);
+        }
+        catch (OperationCanceledException)
+            when (cancellation.IsCancellationRequested && !RoleMenus.IsShuttingDown)
+        {
+            await SendFreshFeedbackAsync(
+                mutationStarted
+                    ? "That took too long, and I couldn't confirm whether the menu was deleted. Run " +
+                      "`/role-menu delete` again to check and finish."
+                    : "I was busy and didn't start deleting the menu. Try again.");
+            return;
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            BeanBotLog.RoleMenuDeletionFailed(_logger, menuId.ToString(), exception);
+            await SendFreshFeedbackAsync(
+                "I couldn't confirm whether the menu was deleted. Run `/role-menu delete` again to " +
+                "check and finish.");
+            return;
+        }
+
+        await SendFreshFeedbackAsync(FormatConfirmedDeletion(deletion));
+    }
+
+    private async Task ShowDeletePageAsync(
+        SocketGuild guild,
+        RoleMenuPageCursor? cursor,
+        CancellationToken cancellationToken)
+    {
+        var page = await _administration.LoadDeletionPageAsync(
+            guild.Id,
+            cursor,
+            cancellationToken);
+        if (page.Menus.Count == 0)
+        {
+            await ReplaceResponseAsync(
+                "There are no role menus in this server yet.",
+                cancellationToken);
+            return;
+        }
+
+        await ReplaceResponseAsync(
+            "Which role menu do you want to delete?",
+            cancellationToken,
+            components: RoleMenuComponents.BuildDeleteSelector(
+                Context.User.Id,
+                page,
+                channelId => guild.GetChannel(channelId)?.Name));
+    }
+
+    private static bool IsValidManagementComponent(
+        SocketMessageComponent component,
+        SocketGuild guild,
+        ComponentType expectedType,
+        string expectedCustomId,
+        string? selectedValue = null)
+        => !RoleMenuDeletionTargets.IsControlExpired(
+               component.Message.CreatedAt,
+               DateTimeOffset.UtcNow)
+           && IsValidPrivateComponent(
+               component,
+               guild,
+               expectedType,
+               expectedCustomId,
+               selectedValue);
 
     private bool TryGetGuildActors(
         out SocketGuild guild,
@@ -681,12 +765,17 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         ObjectId menuId,
         CancellationToken operationCancellationToken)
     {
-        var content = $"Your role menu is ready: {CreateMessageUrl(guildId, channelId, messageId)}";
+        const string content = "Your role menu is ready.";
+        var viewMenuLink = RoleMenuComponents.BuildViewMenuLink(
+            CreateMessageUrl(guildId, channelId, messageId));
         if (!operationCancellationToken.IsCancellationRequested)
         {
             try
             {
-                await ReplaceResponseAsync(content, operationCancellationToken);
+                await ReplaceResponseAsync(
+                    content,
+                    operationCancellationToken,
+                    components: viewMenuLink);
                 return;
             }
             catch (Exception exception)
@@ -706,7 +795,10 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
         using var feedbackCancellation = RoleMenus.CreateFeedbackCancellation();
         try
         {
-            await ReplaceResponseAsync(content, feedbackCancellation.Token);
+            await ReplaceResponseAsync(
+                content,
+                feedbackCancellation.Token,
+                components: viewMenuLink);
         }
         catch (Exception exception)
         {
@@ -716,17 +808,6 @@ public sealed partial class RoleMenuAdminModule : RoleMenuModuleBase
                 exception);
         }
     }
-
-    private async Task ShowDeleteConfirmationAsync(
-        RoleMenuSettings settings,
-        CancellationToken cancellationToken)
-        => await ReplaceResponseAsync(
-            "Delete this role menu?",
-            cancellationToken,
-            RoleMenuComponents.BuildDeleteConfirmationEmbed(settings),
-            RoleMenuComponents.BuildDeleteConfirmationComponents(
-                Context.User.Id,
-                settings.Id));
 
     private async Task SendTerminalPublicationFeedbackAsync(
         ObjectId menuId,

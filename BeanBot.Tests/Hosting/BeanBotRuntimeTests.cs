@@ -1,12 +1,47 @@
 using BeanBot.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
-
 using Xunit;
 
 namespace BeanBot.Tests.Hosting;
 
 public class BeanBotRuntimeTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunLeaseOwnedOperationAsync_RequiresConfirmedLease(bool isHeld)
+    {
+        var operationCount = 0;
+        var executed = await BeanBotRuntime.RunLeaseOwnedOperationAsync(
+            new StubInstanceLeaseHealth(isHeld),
+            () =>
+            {
+                operationCount++;
+                return Task.CompletedTask;
+            });
+
+        Assert.Equal(isHeld, executed);
+        Assert.Equal(isHeld ? 1 : 0, operationCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RunLeaseOwnedOperation_RequiresConfirmedLease(bool isHeld)
+    {
+        var operationCount = 0;
+        var executed = BeanBotRuntime.RunLeaseOwnedOperation(
+            new StubInstanceLeaseHealth(isHeld),
+            () =>
+            {
+                operationCount++;
+                return true;
+            });
+
+        Assert.Equal(isHeld, executed);
+        Assert.Equal(isHeld ? 1 : 0, operationCount);
+    }
+
     [Fact]
     public async Task RunBoundedShutdownOperationAsync_OperationFailurePropagates()
     {
@@ -60,5 +95,10 @@ public class BeanBotRuntimeTests
 
         operation.SetException(new InvalidOperationException("late failure"));
         await Assert.ThrowsAsync<InvalidOperationException>(() => operation.Task);
+    }
+
+    private sealed class StubInstanceLeaseHealth(bool isHeld) : IInstanceLeaseHealth
+    {
+        public bool IsHeld { get; } = isHeld;
     }
 }

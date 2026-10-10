@@ -30,11 +30,16 @@ internal static class RoleMenuSetupValidation
         targetChannelId = 0;
         selectionMode = default;
         roleValidation = null;
-        if (string.IsNullOrWhiteSpace(title)
-            || title.Length > RoleMenuConstants.MaximumTitleLength)
+        if (!RoleMenuText.HasVisibleText(title))
+        {
+            validationMessage = "Give the menu a title.";
+            return false;
+        }
+
+        if (title.Length > RoleMenuConstants.MaximumTitleLength)
         {
             validationMessage =
-                $"The title needs to be between 1 and {RoleMenuConstants.MaximumTitleLength} characters.";
+                $"The title can't be longer than {RoleMenuConstants.MaximumTitleLength} characters.";
             return false;
         }
 

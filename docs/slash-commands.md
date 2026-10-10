@@ -8,8 +8,9 @@ BeanBot supports Discord application commands alongside the existing message-com
 - `/pun` uses the same cached `IPunProvider` as the legacy `%pun` command.
 - `/help` summarizes the slash-command surface and points users to `%help` for the complete legacy command list.
 - `/role-menu create` opens a native Discord setup form for an administrator with **Manage Roles**.
-- `/role-menu audit [menu-id]` performs a read-only health check of saved dropdown role panels. Without an ID it audits at most the 25 newest menus; an exact footer ID audits one menu. Results are **Healthy**, **Broken**, or **Unknown** when current state cannot be proven because a dependency lookup failed.
-- `/role-menu delete [menu-id]` removes a published dropdown role panel and its saved settings. Members keep the roles they already have. The optional exact ID supports servers with more than 25 menus.
+- `/role-menu audit [menu-id]` performs a read-only health check of saved dropdown role panels. Without an ID it audits at most the 25 newest menus and privately shows their IDs; an ID you already have audits one menu. Results are **Healthy**, **Broken**, or **Unknown** when current state cannot be proven because a dependency lookup failed.
+- `/role-menu delete` opens a private, paged picker of every saved role menu, then removes the chosen panel and its saved settings after confirmation. Members keep the roles they already have.
+- **Apps → Delete Role Menu** (right-click a role-menu panel) opens the same confirmation for that panel directly.
 
 Role-menu setup, audit, and deletion are server-only and require **Manage Roles**. Audit responses are private and never repair or mutate Discord or MongoDB state. Members manage their own allowlisted roles from each published panel without needing **Manage Roles**. See [Dropdown role menus](role-menus.md) for the full workflow and operational checks.
 
