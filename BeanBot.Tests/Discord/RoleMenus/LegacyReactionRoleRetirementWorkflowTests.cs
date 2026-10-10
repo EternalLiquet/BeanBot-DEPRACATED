@@ -391,6 +391,144 @@ public class LegacyReactionRoleRetirementWorkflowTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_PanelReadFailureDoesNotStartDeletion()
+    {
+        var deletes = 0;
+        var operations = CreateOperations(
+            readPanel: (_, _) => Task.FromException<LegacyReactionRolePanelLookupResult>(
+                new InvalidOperationException("Discord unavailable")),
+            deleteSettings: (_, _) =>
+            {
+                deletes++;
+                return Task.FromResult(true);
+            });
+
+        var result = await LegacyReactionRoleRetirementWorkflow.ExecuteAsync(
+            MessageId, GuildId, operations, CancellationToken.None);
+
+        Assert.Equal(LegacyReactionRoleRetirementStatus.PanelOutcomeUnknown,
+            result.Status);
+        Assert.NotNull(result.Failure);
+        Assert.Equal(0, deletes);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DefinitePanelDeleteFailureKeepsSavedSettings()
+    {
+        var deletes = 0;
+        var operations = CreateOperations(
+            deletePanel: (_, _, _) => Task.FromResult(false),
+            deleteSettings: (_, _) =>
+            {
+                deletes++;
+                return Task.FromResult(true);
+            });
+
+        var result = await LegacyReactionRoleRetirementWorkflow.ExecuteAsync(
+            MessageId, GuildId, operations, CancellationToken.None);
+
+        Assert.Equal(LegacyReactionRoleRetirementStatus.PanelDeletionFailed,
+            result.Status);
+        Assert.Equal(0, deletes);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FailedReconciliationReportsUnknownWithoutDeletingSettings()
+    {
+        var reads = 0;
+        var deletes = 0;
+        var operations = CreateOperations(
+            readPanel: (source, _) => ++reads == 1
+                ? Task.FromResult(Found(source))
+                : Task.FromException<LegacyReactionRolePanelLookupResult>(
+                    new InvalidOperationException("Discord read failed")),
+            deletePanel: (_, _, _) => Task.FromException<bool>(
+                new InvalidOperationException("Discord delete failed")),
+            deleteSettings: (_, _) =>
+            {
+                deletes++;
+                return Task.FromResult(true);
+            });
+
+        var result = await LegacyReactionRoleRetirementWorkflow.ExecuteAsync(
+            MessageId, GuildId, operations, CancellationToken.None);
+
+        Assert.Equal(LegacyReactionRoleRetirementStatus.PanelOutcomeUnknown,
+            result.Status);
+        Assert.NotNull(result.ReconciliationFailure);
+        Assert.Equal(0, deletes);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FailedSettingsReconciliationReportsUnknown()
+    {
+        var reads = 0;
+        var operations = CreateOperations(
+            readSettings: (_, _) => ++reads == 1
+                ? Task.FromResult<ReactionRoleSettings?>(CreateSettings())
+                : Task.FromException<ReactionRoleSettings?>(
+                    new InvalidOperationException("Mongo read failed")),
+            deleteSettings: (_, _) => Task.FromResult(false));
+
+        var result = await LegacyReactionRoleRetirementWorkflow.ExecuteAsync(
+            MessageId, GuildId, operations, CancellationToken.None);
+
+        Assert.Equal(LegacyReactionRoleRetirementStatus.PersistenceOutcomeUnknown,
+            result.Status);
+        Assert.NotNull(result.ReconciliationFailure);
+    }
+
+    [Theory]
+    [InlineData("panel-read")]
+    [InlineData("panel-delete")]
+    [InlineData("panel-reconcile")]
+    [InlineData("settings-delete")]
+    [InlineData("settings-reconcile")]
+    public async Task ExecuteAsync_ShutdownCancellationPropagatesAtEveryStage(
+        string stage)
+    {
+        var panelReads = 0;
+        var settingsReads = 0;
+        var cancelled = new OperationCanceledException("shutdown");
+        var operations = CreateOperations(
+            readSettings: (_, _) =>
+            {
+                if (stage == "settings-reconcile" && ++settingsReads > 1)
+                {
+                    return Task.FromException<ReactionRoleSettings?>(cancelled);
+                }
+                return Task.FromResult<ReactionRoleSettings?>(CreateSettings());
+            },
+            readPanel: (source, _) =>
+            {
+                if (stage == "panel-read"
+                    || stage == "panel-reconcile" && ++panelReads > 1)
+                {
+                    return Task.FromException<LegacyReactionRolePanelLookupResult>(cancelled);
+                }
+                return Task.FromResult(Found(source));
+            },
+            deletePanel: (_, _, _) => stage switch
+            {
+                "panel-delete" => Task.FromException<bool>(cancelled),
+                "panel-reconcile" => Task.FromException<bool>(
+                    new InvalidOperationException("failed")),
+                _ => Task.FromResult(true)
+            },
+            deleteSettings: (_, _) => stage switch
+            {
+                "settings-delete" => Task.FromException<bool>(cancelled),
+                "settings-reconcile" => Task.FromResult(false),
+                _ => Task.FromResult(true)
+            },
+            isShuttingDown: () => true);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            LegacyReactionRoleRetirementWorkflow.ExecuteAsync(
+                MessageId, GuildId, operations, CancellationToken.None));
+    }
+
+    [Fact]
     public void SourceParser_RejectsMalformedAndDuplicateRoleIds()
     {
         Assert.False(LegacyReactionRoleSourceParser.TryParse(
@@ -448,14 +586,15 @@ public class LegacyReactionRoleRetirementWorkflowTests
         Func<CancellationToken, Task<bool?>>? canManageRoles = null,
         Func<LegacyReactionRoleSource, CancellationToken, Task<LegacyReactionRolePanelLookupResult>>? readPanel = null,
         Func<LegacyReactionRolePanelSnapshot, IReadOnlyCollection<ulong>, CancellationToken, Task<bool>>? deletePanel = null,
-        Func<ReactionRoleSettings, CancellationToken, Task<bool>>? deleteSettings = null)
+        Func<ReactionRoleSettings, CancellationToken, Task<bool>>? deleteSettings = null,
+        Func<bool>? isShuttingDown = null)
         => new(
             readSettings ?? ((_, _) => Task.FromResult<ReactionRoleSettings?>(CreateSettings())),
             canManageRoles ?? (_ => Task.FromResult<bool?>(true)),
             readPanel ?? ((source, _) => Task.FromResult(Found(source))),
             deletePanel ?? ((_, _, _) => Task.FromResult(true)),
             deleteSettings ?? ((_, _) => Task.FromResult(true)),
-            () => false);
+            isShuttingDown ?? (() => false));
 
     private static LegacyReactionRolePanelLookupResult Found(
         LegacyReactionRoleSource source)

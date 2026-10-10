@@ -21,6 +21,8 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
     private readonly BoundedReactionRoleSettingsCache _roleSettings;
     private readonly object _operationSync = new();
     private readonly HashSet<Task> _inFlightOperations = [];
+    private readonly Dictionary<string, long> _claimedRetirements = [];
+    private const int MaximumClaimedRetirements = 128;
     private readonly TimeSpan _shutdownDrainTimeout;
     private readonly ReactionRoleMutationCoordinator _mutationCoordinator;
     private readonly ReactionRoleSettingsLifecycleCoordinator _settingsLifecycle = new();
@@ -83,6 +85,31 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
                 return _inFlightOperations.Any(operation => !operation.IsCompleted)
                     || _mutationCoordinator.ActiveKeyCount > 0;
             }
+        }
+    }
+
+    internal bool TryClaimLegacyRetirement(
+        string confirmationId, long expiresUnixSeconds, DateTimeOffset? now = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(confirmationId);
+        var current = (now ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds();
+        lock (_operationSync)
+        {
+            foreach (var expired in _claimedRetirements
+                         .Where(entry => entry.Value <= current)
+                         .Select(entry => entry.Key).ToArray())
+            {
+                _claimedRetirements.Remove(expired);
+            }
+            if (_stopping || _shutdownToken.IsCancellationRequested
+                || expiresUnixSeconds <= current
+                || _claimedRetirements.ContainsKey(confirmationId)
+                || _claimedRetirements.Count >= MaximumClaimedRetirements)
+            {
+                return false;
+            }
+            _claimedRetirements[confirmationId] = expiresUnixSeconds;
+            return true;
         }
     }
 

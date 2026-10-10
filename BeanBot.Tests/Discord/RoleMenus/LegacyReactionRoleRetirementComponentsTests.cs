@@ -29,6 +29,21 @@ public class LegacyReactionRoleRetirementComponentsTests
     }
 
     [Fact]
+    public void MissingPanelPreview_UsesPlainFallbackTitleAndExplainsSavedSettings()
+    {
+        var preview = new LegacyReactionRoleRetirementPreview(
+            new LegacyReactionRoleSource(1, 2, 3, [4]), null, true,
+            [new LegacyReactionRoleRetirementMapping(4, "5")]);
+
+        var embed = LegacyReactionRoleRetirementComponents.BuildConfirmationEmbed(preview);
+
+        Assert.Contains("Unlabeled legacy panel", embed.Description,
+            StringComparison.Ordinal);
+        Assert.Contains("message or channel is gone", embed.Description,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BuildConfirmationEmbed_MissingCustomEmojiUsesNameFallbackWithoutRawId()
     {
         var preview = new LegacyReactionRoleRetirementPreview(
@@ -42,6 +57,58 @@ public class LegacyReactionRoleRetirementComponentsTests
         Assert.Contains("Custom emoji unavailable → Deleted role", text,
             StringComparison.Ordinal);
         Assert.DoesNotContain("123456789", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FormatResult_GivesSafeNextStepForEveryOutcome()
+    {
+        foreach (var status in Enum.GetValues<LegacyReactionRoleRetirementStatus>())
+        {
+            var result = LegacyReactionRoleRetirementComponents.FormatResult(new(status));
+            Assert.False(string.IsNullOrWhiteSpace(result));
+            Assert.DoesNotContain("message ID", result, StringComparison.OrdinalIgnoreCase);
+            if (status is not LegacyReactionRoleRetirementStatus.Retired)
+            {
+                Assert.Contains("/role-menu retire-legacy", result,
+                    StringComparison.Ordinal);
+            }
+        }
+        Assert.Contains("missing legacy panel",
+            LegacyReactionRoleRetirementComponents.FormatResult(new(
+                LegacyReactionRoleRetirementStatus.Retired, SourceWasMissing: true)),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConfirmationComponents_UseExactUserMessageExpiryAndFingerprint()
+    {
+        var components = LegacyReactionRoleRetirementComponents.BuildConfirmationComponents(
+            9, 3, 1_800_000_000, "1234567890ABCDEF");
+        var buttons = components.Components.OfType<global::Discord.ActionRowComponent>()
+            .SelectMany(row => row.Components).OfType<global::Discord.ButtonComponent>().ToArray();
+
+        Assert.Equal(2, buttons.Length);
+        Assert.Equal(LegacyReactionRoleRetirementCustomIds.Confirm(
+            9, 3, 1_800_000_000, "1234567890ABCDEF"), buttons[0].CustomId);
+        Assert.Equal(LegacyReactionRoleRetirementCustomIds.Cancel(
+            9, 3, 1_800_000_000, "1234567890ABCDEF"), buttons[1].CustomId);
+    }
+
+    [Fact]
+    public void ConfirmationIds_RejectOversizedCustomId()
+    {
+        Assert.Throws<InvalidOperationException>(() =>
+            LegacyReactionRoleRetirementCustomIds.Confirm(
+                9, 3, 1_800_000_000, new string('A', 101)));
+    }
+
+    [Fact]
+    public void FormatResult_RejectsUnknownStatus()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            LegacyReactionRoleRetirementComponents.FormatResult(
+                new LegacyReactionRoleRetirementResult(
+                    (LegacyReactionRoleRetirementStatus)999)));
     }
 
     [Fact]

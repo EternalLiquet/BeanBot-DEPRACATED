@@ -163,6 +163,17 @@ public sealed partial class RoleMenuAdminModule
             return;
         }
 
+        if (!LegacyReactionRoles.TryClaimLegacyRetirement(
+                LegacyReactionRoleRetirementCustomIds.Confirm(
+                    boundUserId, messageId, expiresUnixSeconds, fingerprint),
+                expiresUnixSeconds))
+        {
+            await RespondToInvalidComponentAsync(
+                "This confirmation was already used or has expired. Run `/role-menu retire-legacy` again.",
+                cancellation.Token);
+            return;
+        }
+
         if (!await AcknowledgeEphemeralComponentAsync(
                 "Retiring the legacy reaction-role panel…",
                 cancellation.Token))
@@ -277,56 +288,29 @@ public sealed partial class RoleMenuAdminModule
         ulong botUserId,
         CancellationToken cancellationToken)
     {
-        var settings = await LegacyReactionRoles.GetFreshRoleSettingAsync(
-            messageId,
-            cancellationToken);
-        if (settings is null)
-        {
-            await ReplaceResponseAsync(
-                "I couldn't find that saved legacy panel. Run `/role-menu retire-legacy` again to choose another.",
-                cancellationToken);
-            return null;
-        }
-
-        if (!LegacyReactionRoleSourceParser.TryParse(settings, out var source)
-            || source is null
-            || source.GuildId != guildId
-            || source.MessageId != messageId)
-        {
-            await ReplaceResponseAsync(
-                "That saved panel no longer matches this server. Run `/role-menu retire-legacy` again.",
-                cancellationToken);
-            return null;
-        }
-
         var client = new LegacyReactionRoleRetirementClient(Context.Client);
-        var lookup = await client.ReadPanelAsync(source, botUserId, cancellationToken);
-        if (lookup.Status is LegacyReactionRolePanelLookupStatus.UnexpectedChannel
-            or LegacyReactionRolePanelLookupStatus.Unrecognized)
+        var result = await LegacyReactionRoleRetirementPreviewBuilder.CreateAsync(
+            messageId, guildId, botUserId,
+            LegacyReactionRoles.GetFreshRoleSettingAsync,
+            client.ReadPanelAsync,
+            roleId => Context.Guild?.GetRole(roleId)?.Name,
+            emojiId => Context.Guild?.Emotes.FirstOrDefault(emoji => emoji.Id == emojiId)?.Name,
+            cancellationToken);
+        if (result.Preview is not null)
         {
-            await ReplaceResponseAsync(
-                "I couldn't verify that this is my legacy role panel. Check the message and run `/role-menu retire-legacy` again.",
-                cancellationToken);
-            return null;
+            return result.Preview;
         }
 
-        var mappings = source.RoleIds
-            .Zip(
-                settings.RoleEmotePairs,
-                (roleId, pair) => new LegacyReactionRoleRetirementMapping(
-                    roleId, pair.EmojiId,
-                    ulong.TryParse(pair.EmojiId, out var emojiId)
-                        ? Context.Guild?.Emotes.FirstOrDefault(emoji => emoji.Id == emojiId)?.Name
-                        : null,
-                    Context.Guild?.GetRole(roleId)?.Name))
-            .ToArray();
-        return new LegacyReactionRoleRetirementPreview(
-            source,
-            lookup.SuggestedTitle,
-            lookup.Status is LegacyReactionRolePanelLookupStatus.ChannelMissing
-                or LegacyReactionRolePanelLookupStatus.MessageMissing,
-            mappings,
-            LegacyReactionRoleRetirementBinding.Fingerprint(settings));
+        var response = result.Issue switch
+        {
+            LegacyReactionRoleRetirementPreviewIssue.MissingSettings =>
+                "I couldn't find that saved legacy panel. Run `/role-menu retire-legacy` again to choose another.",
+            LegacyReactionRoleRetirementPreviewIssue.InvalidSavedBinding =>
+                "That saved panel no longer matches this server. Run `/role-menu retire-legacy` again.",
+            _ => "I couldn't verify that this is my legacy role panel. Check the message and run `/role-menu retire-legacy` again."
+        };
+        await ReplaceResponseAsync(response, cancellationToken);
+        return null;
     }
 
     private LegacyReactionRoleRetirementOperations CreateLegacyRetirementOperations(

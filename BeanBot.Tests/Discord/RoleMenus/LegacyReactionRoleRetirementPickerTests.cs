@@ -35,6 +35,42 @@ public class LegacyReactionRoleRetirementPickerTests
     }
 
     [Fact]
+    public void Cursor_RejectsMalformedAndSupportsBothDirections()
+    {
+        var cursor = ObjectId.GenerateNewId();
+        Assert.True(LegacyReactionRoleRetirementPicker.TryParseCursor("o",
+            cursor.ToString(), out var older, out var parsed));
+        Assert.False(older);
+        Assert.Equal(cursor, parsed);
+        Assert.True(LegacyReactionRoleRetirementPicker.TryParseCursor("n",
+            cursor.ToString(), out var newer, out parsed));
+        Assert.True(newer);
+        Assert.False(LegacyReactionRoleRetirementPicker.TryParseCursor("x",
+            cursor.ToString(), out _, out _));
+        Assert.False(LegacyReactionRoleRetirementPicker.TryParseCursor("o",
+            "not-an-id", out _, out _));
+    }
+
+    [Fact]
+    public void NewerPage_SkipsOverflowBoundaryAndKeepsNavigation()
+    {
+        var fetched = Enumerable.Range(1, 26)
+            .Select(index => new ReactionRoleSettings([], "1", "2",
+                index.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            { Id = ObjectId.GenerateNewId() })
+            .Reverse().ToArray();
+        var components = LegacyReactionRoleRetirementPicker.Build(9, fetched,
+            fetched[^1].Id, newer: true, _ => "general", _ => null);
+        var rows = components.Components.OfType<ActionRowComponent>().ToArray();
+        var selector = Assert.Single(rows[0].Components.OfType<SelectMenuComponent>());
+        var buttons = rows[1].Components.OfType<ButtonComponent>().ToArray();
+
+        Assert.Equal(25, selector.Options.Count);
+        Assert.Equal(fetched[1].MessageId, selector.Options.First().Value);
+        Assert.Equal(["Previous", "Next"], buttons.Select(button => button.Label));
+    }
+
+    [Fact]
     public void Build_UsesReadableFallbacksForMissingChannelAndRole()
     {
         var setting = new ReactionRoleSettings(
