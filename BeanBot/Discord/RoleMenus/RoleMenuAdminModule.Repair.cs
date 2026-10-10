@@ -1,5 +1,6 @@
 using BeanBot.Logging;
 using BeanBot.Persistence.Models;
+using BeanBot.Persistence.Repositories;
 using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
@@ -18,8 +19,6 @@ public sealed partial class RoleMenuAdminModule
         "Restore a missing role menu message with its saved roles.",
         runMode: RunMode.Sync)]
     public async Task RepairAsync(
-        [Summary("menu-id", "ID shown in the role panel footer")]
-        string menuId,
         [Summary("target-channel", "Replacement channel; required if the saved channel is gone")]
         ITextChannel? targetChannel = null)
     {
@@ -42,14 +41,6 @@ public sealed partial class RoleMenuAdminModule
             return;
         }
 
-        if (!RoleMenuCustomIds.TryParseMenuId(menuId.Trim(), out var parsedMenuId))
-        {
-            await ReplaceResponseAsync(
-                "That menu ID isn't valid. Check the ID and run `/role-menu repair` again.",
-                cancellation.Token);
-            return;
-        }
-
         if (targetChannel is not null
             && (targetChannel.GuildId != guild.Id || targetChannel.ChannelType != ChannelType.Text))
         {
@@ -59,25 +50,120 @@ public sealed partial class RoleMenuAdminModule
             return;
         }
 
+        await ShowRepairPageAsync(guild, targetChannel?.Id ?? 0, null, cancellation.Token);
+    }
+
+    [ComponentInteraction(RoleMenuRepairUi.PagePattern, ignoreGroupNames: true, runMode: RunMode.Sync)]
+    public async Task ChangeRepairPageAsync(
+        string userIdValue,
+        string targetChannelIdValue,
+        string directionValue,
+        string createdAtTicksValue,
+        string menuIdValue)
+    {
+        using var cancellation = RoleMenus.CreateOperationCancellation();
+        if (!RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var boundUserId)
+            || boundUserId != Context.User.Id
+            || !ulong.TryParse(targetChannelIdValue, out var targetChannelId)
+            || !RoleMenuCustomIds.TryParsePageCursor(
+                directionValue, createdAtTicksValue, menuIdValue, out var cursor)
+            || Context.Guild is null
+            || Context.Interaction is not SocketMessageComponent component
+            || !IsValidManagementComponent(
+                component, Context.Guild, ComponentType.Button,
+                RoleMenuRepairUi.Page(boundUserId, targetChannelId, cursor)))
+        {
+            await RespondToInvalidComponentAsync(
+                "This list has expired or belongs to someone else. Run `/role-menu repair` again.",
+                cancellation.Token);
+            return;
+        }
+
+        if (await AcknowledgeEphemeralComponentAsync("Loading role menus…", cancellation.Token))
+        {
+            await ShowRepairPageAsync(Context.Guild, targetChannelId, cursor, cancellation.Token);
+        }
+    }
+
+    [ComponentInteraction(RoleMenuRepairUi.SelectPattern, ignoreGroupNames: true, runMode: RunMode.Sync)]
+    public async Task SelectRepairAsync(
+        string userIdValue,
+        string targetChannelIdValue,
+        string[] selectedMenuIds)
+    {
+        using var cancellation = RoleMenus.CreateOperationCancellation();
+        if (!RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var boundUserId)
+            || boundUserId != Context.User.Id
+            || !ulong.TryParse(targetChannelIdValue, out var targetChannelId)
+            || selectedMenuIds is not { Length: 1 }
+            || !RoleMenuCustomIds.TryParseMenuId(selectedMenuIds[0], out var menuId)
+            || !TryGetGuildActors(out var guild, out var administrator, out var bot)
+            || Context.Interaction is not SocketMessageComponent component
+            || !IsValidManagementComponent(
+                component, guild, ComponentType.SelectMenu,
+                RoleMenuRepairUi.Select(boundUserId, targetChannelId), selectedMenuIds[0]))
+        {
+            await RespondToInvalidComponentAsync(
+                "This list has expired or belongs to someone else. Run `/role-menu repair` again.",
+                cancellation.Token);
+            return;
+        }
+
+        if (await AcknowledgeEphemeralComponentAsync("Checking the role menu…", cancellation.Token))
+        {
+            await ShowRepairPreviewAsync(
+                menuId, targetChannelId, guild, administrator, bot, cancellation.Token);
+        }
+    }
+
+    private async Task ShowRepairPageAsync(
+        SocketGuild guild,
+        ulong targetChannelId,
+        RoleMenuPageCursor? cursor,
+        CancellationToken cancellationToken)
+    {
+        var page = await _administration.LoadDeletionPageAsync(guild.Id, cursor, cancellationToken);
+        if (page.Menus.Count == 0)
+        {
+            await ReplaceResponseAsync("There are no role menus in this server yet.", cancellationToken);
+            return;
+        }
+
+        await ReplaceResponseAsync(
+            "Which role menu do you want to repair?",
+            cancellationToken,
+            components: RoleMenuRepairUi.BuildSelector(
+                Context.User.Id, targetChannelId, page,
+                channelId => guild.GetChannel(channelId)?.Name));
+    }
+
+    private async Task ShowRepairPreviewAsync(
+        ObjectId menuId,
+        ulong requestedTargetChannelId,
+        SocketGuild guild,
+        IGuildUser administrator,
+        SocketGuildUser bot,
+        CancellationToken cancellationToken)
+    {
         RoleMenuRepairInspectionResult inspection;
         try
         {
             inspection = await InspectRepairAsync(
-                parsedMenuId,
+                menuId,
                 guild.Id,
                 bot.Id,
-                cancellation.Token);
+                cancellationToken);
         }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
         catch (Exception exception)
         {
-            BeanBotLog.RoleMenuPublicationFailed(_logger, parsedMenuId.ToString(), exception);
+            BeanBotLog.RoleMenuPublicationFailed(_logger, menuId.ToString(), exception);
             await ReplaceResponseAsync(
                 "I couldn't check whether the menu message is missing. Try again when Discord is reachable.",
-                cancellation.Token);
+                cancellationToken);
             return;
         }
 
@@ -85,7 +171,7 @@ public sealed partial class RoleMenuAdminModule
         {
             await ReplaceResponseAsync(
                 FormatRepairInspection(inspection),
-                cancellation.Token);
+                cancellationToken);
             return;
         }
 
@@ -94,16 +180,18 @@ public sealed partial class RoleMenuAdminModule
         var parsed = inspection.ParsedSettings
             ?? throw new InvalidOperationException("An eligible repair did not return parsed settings.");
         if (inspection.PanelIssue == RoleMenuRepairPanelIssue.ChannelMissing
-            && targetChannel is null)
+            && requestedTargetChannelId == 0)
         {
             await ReplaceResponseAsync(
                 "The menu's channel is gone. Run `/role-menu repair` again and choose a `target-channel`.",
-                cancellation.Token);
+                cancellationToken);
             return;
         }
 
-        var targetChannelId = targetChannel?.Id ?? parsed.ChannelId;
-        var requestOptions = CreateRequestOptions(cancellation.Token);
+        var targetChannelId = requestedTargetChannelId == 0
+            ? parsed.ChannelId
+            : requestedTargetChannelId;
+        var requestOptions = CreateRequestOptions(cancellationToken);
         var currentAdministrator = await _discord.GetGuildUserAsync(
             guild.Id,
             administrator.Id,
@@ -113,7 +201,7 @@ public sealed partial class RoleMenuAdminModule
         {
             await ReplaceResponseAsync(
                 "I couldn't check the current server roles. Try again before repairing this menu.",
-                cancellation.Token);
+                cancellationToken);
             return;
         }
 
@@ -121,7 +209,7 @@ public sealed partial class RoleMenuAdminModule
         {
             await ReplaceResponseAsync(
                 "You need **Manage Roles** permission to repair this menu.",
-                cancellation.Token);
+                cancellationToken);
             return;
         }
 
@@ -130,7 +218,7 @@ public sealed partial class RoleMenuAdminModule
         {
             await ReplaceResponseAsync(
                 FormatRoleValidationFailure(validation),
-                cancellation.Token);
+                cancellationToken);
             return;
         }
 
@@ -142,20 +230,20 @@ public sealed partial class RoleMenuAdminModule
         {
             await ReplaceResponseAsync(
                 "That channel is gone or isn't a text channel. Choose another `target-channel` and try again.",
-                cancellation.Token);
+                cancellationToken);
             return;
         }
 
         var channelPermissionFailure = GetChannelPermissionFailure(currentBot, currentTarget);
         if (channelPermissionFailure is not null)
         {
-            await ReplaceResponseAsync(channelPermissionFailure, cancellation.Token);
+            await ReplaceResponseAsync(channelPermissionFailure, cancellationToken);
             return;
         }
 
         await ReplaceResponseAsync(
             "The menu message is missing. Review the details below, then confirm to post a replacement.",
-            cancellation.Token,
+            cancellationToken,
             RoleMenuRepairUi.BuildConfirmationEmbed(
                 settings,
                 validation.Roles,
@@ -163,7 +251,7 @@ public sealed partial class RoleMenuAdminModule
                 inspection.PanelIssue),
             RoleMenuRepairUi.BuildConfirmationComponents(
                 Context.User.Id,
-                settings.Id,
+                settings,
                 targetChannelId));
     }
 
@@ -174,20 +262,22 @@ public sealed partial class RoleMenuAdminModule
     public async Task ConfirmRepairAsync(
         string userIdValue,
         string menuIdValue,
-        string targetChannelIdValue)
+        string targetChannelIdValue,
+        string fingerprintValue)
     {
         using var cancellation = RoleMenus.CreateOperationCancellation();
         if (!RoleMenuCustomIds.TryParseSnowflake(userIdValue, out var boundUserId)
             || boundUserId != Context.User.Id
             || !RoleMenuCustomIds.TryParseMenuId(menuIdValue, out var menuId)
             || !RoleMenuCustomIds.TryParseSnowflake(targetChannelIdValue, out var targetChannelId)
+            || fingerprintValue.Length != 24
             || !TryGetGuildActors(out var guild, out _, out var bot)
             || Context.Interaction is not SocketMessageComponent component
-            || !IsValidPrivateComponent(
+            || !IsValidManagementComponent(
                 component,
                 guild,
                 ComponentType.Button,
-                RoleMenuRepairUi.Confirm(boundUserId, menuId, targetChannelId)))
+                RoleMenuRepairUi.Confirm(boundUserId, menuId, targetChannelId, fingerprintValue)))
         {
             await RespondToInvalidComponentAsync(
                 "This confirmation has expired or belongs to someone else. Run `/role-menu repair` again.",
@@ -205,7 +295,7 @@ public sealed partial class RoleMenuAdminModule
         var mutationStarted = false;
         try
         {
-            var feedback = await RoleMenus.RunMenuMutationAsync(
+            var mutation = RoleMenus.RunMenuMutationAsync(
                 menuId,
                 operationToken =>
                 {
@@ -216,9 +306,12 @@ public sealed partial class RoleMenuAdminModule
                         Context.User.Id,
                         bot.Id,
                         targetChannelId,
+                        fingerprintValue,
                         operationToken);
                 },
                 cancellation.Token);
+            var feedback = await RoleMenuRepairWorkflow.WaitForMutationAsync(
+                mutation, cancellation.Token);
             await SendFreshFeedbackAsync(feedback);
         }
         catch (OperationCanceledException)
@@ -307,6 +400,7 @@ public sealed partial class RoleMenuAdminModule
         ulong administratorId,
         ulong botUserId,
         ulong targetChannelId,
+        string previewFingerprint,
         CancellationToken cancellationToken)
     {
         var initialInspection = await InspectRepairAsync(
@@ -317,6 +411,11 @@ public sealed partial class RoleMenuAdminModule
         if (!initialInspection.IsEligible)
         {
             return FormatRepairInspection(initialInspection);
+        }
+        if (!RoleMenuRepairWorkflow.MatchesPreview(
+                initialInspection.Settings!, previewFingerprint))
+        {
+            return "This menu changed since the preview. Run `/role-menu repair` again to review it.";
         }
 
         var requestOptions = CreateRequestOptions(cancellationToken);
@@ -363,7 +462,8 @@ public sealed partial class RoleMenuAdminModule
             ?? throw new InvalidOperationException("An eligible repair did not return saved settings.");
         var parsed = finalInspection.ParsedSettings
             ?? throw new InvalidOperationException("An eligible repair did not return parsed settings.");
-        if (!RoleMenuRepairWorkflow.HasSameSavedConfiguration(initialSettings, settings))
+        if (!RoleMenuRepairWorkflow.HasSameSavedConfiguration(initialSettings, settings)
+            || !RoleMenuRepairWorkflow.MatchesPreview(settings, previewFingerprint))
         {
             return "This menu changed while you were confirming. Run `/role-menu repair` again to review it.";
         }

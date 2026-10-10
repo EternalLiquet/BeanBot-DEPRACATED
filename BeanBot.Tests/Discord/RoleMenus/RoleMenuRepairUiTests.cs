@@ -1,5 +1,6 @@
 using BeanBot.Discord.RoleMenus;
 using BeanBot.Persistence.Models;
+using BeanBot.Persistence.Repositories;
 using Discord;
 using MongoDB.Bson;
 using Xunit;
@@ -38,14 +39,61 @@ public class RoleMenuRepairUiTests
     {
         var menuId = ObjectId.GenerateNewId();
 
-        var components = RoleMenuRepairUi.BuildConfirmationComponents(70UL, menuId, 40UL);
+        var settings = new RoleMenuSettings(
+            menuId, "10", "20", "30", "Game Roles", "Choose games",
+            ["100"], RoleMenuSelectionMode.Exclusive);
+        var fingerprint = RoleMenuRepairWorkflow.GetPreviewFingerprint(settings);
+        var components = RoleMenuRepairUi.BuildConfirmationComponents(70UL, settings, 40UL);
 
         var row = Assert.IsType<ActionRowComponent>(Assert.Single(components.Components));
         var buttons = row.Components.Select(component => Assert.IsType<ButtonComponent>(component)).ToArray();
         Assert.Equal(2, buttons.Length);
         Assert.Equal("Repair", buttons[0].Label);
-        Assert.Equal(RoleMenuRepairUi.Confirm(70UL, menuId, 40UL), buttons[0].CustomId);
+        Assert.Equal(RoleMenuRepairUi.Confirm(70UL, menuId, 40UL, fingerprint), buttons[0].CustomId);
+        Assert.True(buttons[0].CustomId.Length <= ComponentBuilder.MaxCustomIdLength);
         Assert.Equal("Cancel", buttons[1].Label);
         Assert.Equal(RoleMenuRepairUi.Cancel(70UL), buttons[1].CustomId);
+    }
+
+    [Fact]
+    public void Selector_ListsMenusWithoutShowingRawIdsAndCarriesTargetAcrossPages()
+    {
+        var menu = new RoleMenuSettings(
+            ObjectId.GenerateNewId(), "10", "20", "30", "Game Roles", "Choose games",
+            ["100"], RoleMenuSelectionMode.Multiple);
+        var cursor = new RoleMenuPageCursor(
+            new DateTime(2026, 10, 10, 1, 0, 0, DateTimeKind.Utc),
+            menu.Id,
+            RoleMenuPageDirection.Older);
+        var page = new RoleMenuDeletionPage([menu], null, cursor);
+
+        var components = RoleMenuRepairUi.BuildSelector(70UL, 40UL, page, _ => "games");
+
+        var rows = components.Components.OfType<ActionRowComponent>().ToArray();
+        var selector = Assert.Single(rows.SelectMany(row => row.Components).OfType<SelectMenuComponent>());
+        Assert.Equal(RoleMenuRepairUi.Select(70UL, 40UL), selector.CustomId);
+        var option = Assert.Single(selector.Options);
+        Assert.Equal(menu.Id.ToString(), option.Value);
+        Assert.Equal("Game Roles", option.Label);
+        Assert.DoesNotContain(menu.Id.ToString(), option.Description, StringComparison.Ordinal);
+        var next = Assert.Single(rows.SelectMany(row => row.Components)
+            .OfType<ButtonComponent>(), button => button.Label == "Next");
+        Assert.Equal(RoleMenuRepairUi.Page(70UL, 40UL, cursor), next.CustomId);
+        Assert.True(next.CustomId.Length <= ComponentBuilder.MaxCustomIdLength);
+    }
+
+    [Fact]
+    public void ConfirmationPreview_DoesNotShowRawMenuId()
+    {
+        var settings = new RoleMenuSettings(
+            ObjectId.GenerateNewId(), "10", "20", "30", "Game Roles", "Choose games",
+            ["100"], RoleMenuSelectionMode.Multiple);
+
+        var embed = RoleMenuRepairUi.BuildConfirmationEmbed(
+            settings, [new RoleMenuRoleSnapshot(100UL, "Gamer", false, false, 1)],
+            40UL, RoleMenuRepairPanelIssue.MessageMissing);
+
+        Assert.DoesNotContain(settings.Id.ToString(), embed.Footer?.Text ?? string.Empty,
+            StringComparison.Ordinal);
     }
 }

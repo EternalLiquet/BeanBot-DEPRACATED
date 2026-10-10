@@ -6,15 +6,16 @@ Use `/role-menu repair` when a saved native dropdown role menu still exists in M
 
 Run:
 
-`/role-menu repair menu-id:<id> [target-channel:<channel>]`
+`/role-menu repair [target-channel:<channel>]`
 
 The command is guild-only and requires **Manage Roles**, like the existing create/delete administration commands.
+Choose the menu from the private paginated list. Menu IDs are handled by the controls, so you do not need to copy one.
 
 - If the saved message is missing but its channel still exists, omitting `target-channel` republishes into the saved channel.
 - If the saved channel is gone, `target-channel` is required.
 - An explicitly selected replacement must be a normal text channel in the same server.
 
-BeanBot first presents an ephemeral confirmation. The confirmation shows the saved menu, configured roles, selection mode, replacement target, and the same stable menu ID that will be used by the replacement panel.
+BeanBot then presents an ephemeral confirmation. It shows the saved menu, configured roles, selection mode, and replacement target. The replacement keeps the same stable menu ID internally.
 
 ## Safety rules
 
@@ -61,9 +62,9 @@ Use the normal edit/create/delete workflows for configuration changes rather tha
 In a Discord test guild:
 
 1. Publish a role menu and record its stable menu ID.
-2. Run `/role-menu repair` while the panel is healthy and confirm no replacement is posted.
-3. Delete the public panel manually, run repair without a target, review the ephemeral confirmation, and confirm exactly one replacement appears in the saved channel with the same menu ID and configuration.
-4. Run repair again and confirm the repaired panel is treated as healthy and no duplicate appears.
+2. Run `/role-menu repair`, select the healthy panel from the private list, and confirm no replacement is posted.
+3. Delete the public panel manually, run repair without a target, select it from the list, review the ephemeral confirmation, and confirm exactly one replacement appears in the saved channel with the same menu ID and configuration.
+4. Run repair again, select the panel, and confirm it is treated as healthy and no duplicate appears.
 5. Delete the panel and its channel, then confirm repair requires a replacement `target-channel` and succeeds in the selected text channel.
 6. Open a confirmation, then delete a configured role or remove the administrator/BeanBot hierarchy or required target-channel permissions before pressing **Repair**. Confirm publication is refused without changing persistence.
 7. If practical, force an ambiguous Discord send or MongoDB write failure. Confirm BeanBot reports the uncertain state, does not blindly retry, and a later repair using the same target reconciles the existing stable-ID panel instead of creating a second one.

@@ -151,6 +151,64 @@ public class RoleMenuRepairWorkflowTests
         Assert.Equal(settings.SelectionMode, draft.SelectionMode);
     }
 
+    [Fact]
+    public void PreviewFingerprint_RejectsChangedSettingsEvenWhenTimestampIsUnchanged()
+    {
+        var original = CreateSettings();
+        original.UpdatedAtUtc = new DateTime(2026, 10, 10, 1, 0, 0, DateTimeKind.Utc);
+        var changed = new RoleMenuSettings(
+            original.Id, original.GuildId, original.ChannelId, original.MessageId,
+            "Changed title", original.Description, original.RoleIds,
+            original.SelectionMode);
+        changed.UpdatedAtUtc = original.UpdatedAtUtc;
+        var fingerprint = RoleMenuRepairWorkflow.GetPreviewFingerprint(original);
+
+        Assert.True(RoleMenuRepairWorkflow.MatchesPreview(original, fingerprint));
+        Assert.False(RoleMenuRepairWorkflow.MatchesPreview(changed, fingerprint));
+        Assert.Equal(24, fingerprint.Length);
+    }
+
+    [Fact]
+    public async Task TimedOutRepairWait_KeepsMenuLockUntilOriginalMutationSettles()
+    {
+        var coordinator = new RoleMenuMutationCoordinator();
+        var publicationStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishPublication = new TaskCompletionSource<int>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var callerCancellation = new CancellationTokenSource();
+
+        var first = coordinator.RunMenuWriteAsync(
+            "menu:repair-test",
+            _ =>
+            {
+                publicationStarted.SetResult();
+                return finishPublication.Task;
+            },
+            callerCancellation.Token);
+        await publicationStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        var callerWait = RoleMenuRepairWorkflow.WaitForMutationAsync(
+            first, callerCancellation.Token);
+        var second = coordinator.RunMenuWriteAsync(
+            "menu:repair-test",
+            _ =>
+            {
+                secondStarted.SetResult();
+                return Task.FromResult(2);
+            },
+            CancellationToken.None);
+
+        callerCancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => callerWait);
+        Assert.False(secondStarted.Task.IsCompleted);
+
+        finishPublication.SetResult(1);
+        Assert.Equal(1, await first.WaitAsync(TimeSpan.FromSeconds(1)));
+        Assert.Equal(2, await second.WaitAsync(TimeSpan.FromSeconds(1)));
+    }
+
     private static Task<RoleMenuRepairInspectionResult> InspectAsync(
         RoleMenuSettings settings,
         RoleMenuPanelLookupResult lookup)

@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text.Json;
 using BeanBot.Persistence.Models;
 using MongoDB.Bson;
 
@@ -37,6 +39,53 @@ internal sealed record RoleMenuRepairInspectionResult(
 
 internal static class RoleMenuRepairWorkflow
 {
+    internal static string GetPreviewFingerprint(RoleMenuSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            Id = settings.Id.ToString(),
+            settings.GuildId,
+            settings.ChannelId,
+            settings.MessageId,
+            settings.Title,
+            settings.Description,
+            settings.RoleIds,
+            settings.SelectionMode,
+            settings.CreatedAtUtc,
+            settings.UpdatedAtUtc
+        });
+        return Convert.ToHexString(SHA256.HashData(bytes).AsSpan(0, 12))
+            .ToLowerInvariant();
+    }
+
+    internal static bool MatchesPreview(RoleMenuSettings settings, string fingerprint)
+        => fingerprint is { Length: 24 }
+           && string.Equals(
+               GetPreviewFingerprint(settings),
+               fingerprint,
+               StringComparison.Ordinal);
+
+    internal static async Task<T> WaitForMutationAsync<T>(
+        Task<T> mutation,
+        CancellationToken callerCancellation)
+    {
+        ArgumentNullException.ThrowIfNull(mutation);
+        try
+        {
+            return await mutation.WaitAsync(callerCancellation);
+        }
+        catch
+        {
+            _ = mutation.ContinueWith(
+                completedTask => _ = completedTask.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            throw;
+        }
+    }
+
     internal static async Task<RoleMenuRepairInspectionResult> InspectAsync(
         ObjectId menuId,
         ulong guildId,
