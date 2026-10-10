@@ -3,6 +3,8 @@ using System.Diagnostics.CodeAnalysis;
 using BeanBot.Configuration;
 using BeanBot.Discord.Puns;
 using BeanBot.Health;
+using BeanBot.Hosting;
+using BeanBot.Logging;
 using BeanBot.Persistence.Repositories;
 using Discord;
 using Discord.WebSocket;
@@ -328,7 +330,7 @@ public class DailyPunServiceTests
             () => ++resolverCalls <= 2 ? null : CreateRecordingSender(messages),
             logger: logger,
             waitForStartupReport: true);
-        handler.RecordStartupChannelStatus(channelUnavailable: true);
+        handler.RecordStartupReportOutcome(missingChannelAlertHandled: true);
         var window = DailyPunService.CreateScheduleWindow(
             timezone,
             new DateOnly(2026, 9, 7),
@@ -366,7 +368,7 @@ public class DailyPunServiceTests
         var running = handler.RunOccurrenceAsync(window, timezone, cancellation.Token);
         await clock.DelayStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
         Assert.DoesNotContain(LogLevel.Error, logger.Levels);
-        handler.RecordStartupChannelStatus(channelUnavailable: true);
+        handler.RecordStartupReportOutcome(missingChannelAlertHandled: true);
         cancellation.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => running);
@@ -390,7 +392,7 @@ public class DailyPunServiceTests
             options,
             logger: logger,
             waitForStartupReport: true);
-        handler.RecordStartupChannelStatus(channelUnavailable: false);
+        handler.RecordStartupReportOutcome(missingChannelAlertHandled: false);
         var window = DailyPunService.CreateScheduleWindow(
             timezone,
             new DateOnly(2026, 9, 7),
@@ -400,6 +402,50 @@ public class DailyPunServiceTests
         await handler.RunOccurrenceAsync(window, timezone, CancellationToken.None);
 
         Assert.Equal(1, logger.Levels.Count(level => level == LogLevel.Error));
+    }
+
+    [Theory]
+    [InlineData(true, 0)]
+    [InlineData(false, 1)]
+    public async Task RunOccurrenceAsync_MissingChannelAlertDependsOnStartupReportDelivery(
+        bool startupReportDelivered,
+        int expectedAlerts)
+    {
+        var timezone = DailyPunSchedule.CreateDefault().TimeZone;
+        var start = new DateTimeOffset(2026, 9, 7, 21, 20, 0, TimeSpan.Zero);
+        var logger = new RecordingLogger();
+        var options = CreateSchedulerOptions(
+            catchUpGraceWindow: TimeSpan.FromSeconds(61),
+            preflightRetryDelay: TimeSpan.FromSeconds(30));
+        await using var handler = CreateHandler(
+            new InMemoryClaimStore(),
+            new AdvancingPunClock(start),
+            () => null,
+            options,
+            logger: logger,
+            waitForStartupReport: true);
+        var reporter = new BeanBotStartupReport(
+            () => PunChannelStartupStatus.NotFound,
+            "2.18.3",
+            null,
+            null,
+            handler.RecordStartupReportOutcome,
+            new FixedOwnerAlertDelivery(startupReportDelivered),
+            new AdvancingPunClock(start));
+
+        reporter.QueueOnFirstReady();
+        Assert.True(
+            SpinWait.SpinUntil(() => !reporter.HasActiveDiscordOperation, TimeSpan.FromSeconds(5)),
+            "The startup report did not settle.");
+        var window = DailyPunService.CreateScheduleWindow(
+            timezone,
+            new DateOnly(2026, 9, 7),
+            ScheduledLocalTime,
+            options.CatchUpGraceWindow);
+
+        await handler.RunOccurrenceAsync(window, timezone, CancellationToken.None);
+
+        Assert.Equal(expectedAlerts, logger.Levels.Count(level => level == LogLevel.Error));
     }
 
     [Fact]
@@ -1012,6 +1058,14 @@ public class DailyPunServiceTests
             }
             return base.CreateTimer(callback, state, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         }
+    }
+
+    private sealed class FixedOwnerAlertDelivery(bool succeeds) : IOwnerAlertDelivery
+    {
+        public Task DeliverAsync(string alert, CancellationToken cancellationToken)
+            => succeeds
+                ? Task.CompletedTask
+                : Task.FromException(new InvalidOperationException("delivery unavailable"));
     }
 
     private sealed class RecordingLogger : ILogger<DailyPunService>

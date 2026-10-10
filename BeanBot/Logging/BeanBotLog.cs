@@ -42,11 +42,14 @@ internal static partial class BeanBotLog
     [LoggerMessage(Level = LogLevel.Error, Message = "I can't post daily puns because I can't access the chosen channel. Check the channel setting and my access.")]
     internal static partial void PunChannelMissing(ILogger logger);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not queue BeanBot startup report")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not send BeanBot startup report")]
     internal static partial void StartupReportFailed(ILogger logger, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Could not inspect daily pun channel for startup report")]
     internal static partial void StartupChannelCheckFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not deliver BeanBot startup report within {DeliveryWindow}; the daily pun channel alert stays enabled")]
+    internal static partial void StartupReportDeliveryExpired(ILogger logger, TimeSpan deliveryWindow, Exception? exception);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Loaded {PunCount} puns from {ResourcePath}")]
     internal static partial void PunResourceLoaded(ILogger logger, int punCount, string resourcePath);

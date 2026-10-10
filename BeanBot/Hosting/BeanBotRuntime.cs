@@ -86,6 +86,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     public bool HasActiveDiscordLifecycleOperation
         => _discordLifecycleCoordinator.HasActiveSequence
             || _ownerErrorNotifier.HasActiveDiscordOperation
+            || _startupReport.HasActiveDiscordOperation
             || _newMemberWelcomeService.HasActiveDiscordOperation
             || _fortuneMessageEditHandler.HasInFlightOperations
             || _commandReplySender.HasPendingOperations
@@ -162,6 +163,8 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         AppDomain.CurrentDomain.UnhandledException -= HandleUnhandledException;
         TaskScheduler.UnobservedTaskException -= HandleUnobservedTaskException;
     }
+
+    public Task StopStartupReportAsync() => _startupReport.StopAsync();
 
     public Task StopPunServiceAsync() => _dailyPunService.DisposeAsync().AsTask();
 
@@ -245,7 +248,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         }
         catch (Exception exception)
         {
-            _dailyPunService.RecordStartupChannelStatus(channelUnavailable: false);
+            _dailyPunService.RecordStartupReportOutcome(missingChannelAlertHandled: false);
             BeanBotLog.StartupReportFailed(_logger, exception);
         }
 

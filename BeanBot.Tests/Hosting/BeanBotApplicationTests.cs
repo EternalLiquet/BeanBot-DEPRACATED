@@ -62,6 +62,7 @@ public class BeanBotApplicationTests
                 "unsubscribe-discord-log",
                 "stop-recovery",
                 "unsubscribe-events",
+                "stop-startup-report",
                 "stop-pun",
                 "stop-health",
                 "flush-alerts",
@@ -247,7 +248,8 @@ public class BeanBotApplicationTests
     [InlineData("stop-paginator", "unsubscribe-discord-log")]
     [InlineData("unsubscribe-discord-log", "stop-recovery")]
     [InlineData("stop-recovery", "unsubscribe-events")]
-    [InlineData("unsubscribe-events", "stop-pun")]
+    [InlineData("unsubscribe-events", "stop-startup-report")]
+    [InlineData("stop-startup-report", "stop-pun")]
     [InlineData("stop-pun", "stop-health")]
     [InlineData("stop-health", "flush-alerts")]
     [InlineData("flush-alerts", "stop-discord")]
@@ -437,6 +439,7 @@ public class BeanBotApplicationTests
         public void UnsubscribeDiscordLog() => Record("unsubscribe-discord-log");
         public Task StopGatewayRecoveryAsync() => RecordAsync("stop-recovery");
         public void UnsubscribeApplicationEvents() => Record("unsubscribe-events");
+        public Task StopStartupReportAsync() => RecordAsync("stop-startup-report");
         public Task StopPunServiceAsync() => RecordAsync("stop-pun");
         public Task StopHealthServerAsync(CancellationToken cancellationToken)
         {

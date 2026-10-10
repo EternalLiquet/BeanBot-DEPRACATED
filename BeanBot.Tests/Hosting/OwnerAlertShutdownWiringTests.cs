@@ -102,8 +102,45 @@ public class OwnerAlertShutdownWiringTests
         }
     }
 
+    [Fact]
+    public async Task ApplicationShutdown_StalledStartupReportKeepsDiscordClientOwned()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var notifier = new DiscordOwnerErrorNotifier(
+            new FailingDelivery(),
+            _ => TimeSpan.Zero,
+            TimeSpan.FromMilliseconds(40));
+        var startupReport = new BeanBotStartupReport(
+            () => PunChannelStartupStatus.NotFound,
+            "2.18.3",
+            null,
+            null,
+            _ => { },
+            new BlockingDelivery(started, completion),
+            TimeProvider.System);
+        var (host, runtime, calls) = CreateRuntime(notifier, startupReport);
+        using (host)
+        {
+            startupReport.QueueOnFirstReady();
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+            var application = new BeanBotApplication(
+                runtime, NullLogger<BeanBotApplication>.Instance, TimeSpan.FromMilliseconds(200));
+            await application.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.Contains(nameof(IBeanBotRuntime.StopStartupReportAsync), calls);
+            Assert.DoesNotContain(nameof(IBeanBotRuntime.StopDiscordAsync), calls);
+            Assert.DoesNotContain(nameof(IBeanBotRuntime.DisposeDiscordClient), calls);
+            Assert.True(startupReport.HasActiveDiscordOperation);
+            completion.TrySetResult();
+            Assert.False(startupReport.HasActiveDiscordOperation);
+        }
+    }
+
     private static (IHost Host, IBeanBotRuntime Runtime, List<string> Calls) CreateRuntime(
-        DiscordOwnerErrorNotifier notifier)
+        DiscordOwnerErrorNotifier notifier,
+        BeanBotStartupReport? startupReport = null)
     {
         var builder = Host.CreateApplicationBuilder();
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
@@ -116,6 +153,10 @@ public class OwnerAlertShutdownWiringTests
         });
         builder.Services.AddBeanBot(builder.Configuration);
         builder.Services.AddSingleton(notifier);
+        if (startupReport is not null)
+        {
+            builder.Services.AddSingleton(startupReport);
+        }
         var host = builder.Build();
         var realRuntime = host.Services.GetRequiredService<IBeanBotRuntime>();
         var calls = new List<string>();
@@ -128,6 +169,8 @@ public class OwnerAlertShutdownWiringTests
             if (method.Name == "get_CanDisposeDiscordClient") return true;
             if (method.Name == nameof(IBeanBotRuntime.FlushOwnerAlertsAsync))
                 return realRuntime.FlushOwnerAlertsAsync();
+            if (method.Name == nameof(IBeanBotRuntime.StopStartupReportAsync))
+                return realRuntime.StopStartupReportAsync();
             if (method.ReturnType == typeof(Task<bool>)) return Task.FromResult(true);
             if (method.ReturnType == typeof(Task)) return Task.CompletedTask;
             return null;

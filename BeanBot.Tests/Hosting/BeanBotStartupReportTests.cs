@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using BeanBot.Hosting;
 using BeanBot.Logging;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace BeanBot.Tests.Hosting;
@@ -87,68 +87,6 @@ public class BeanBotStartupReportTests
     }
 
     [Fact]
-    public void QueueOnFirstReady_IsAtomicAndDoesNotRepeatOnReconnect()
-    {
-        var notifier = new CapturingNotifier();
-        var checks = 0;
-        var recorded = new ConcurrentQueue<bool>();
-        var reporter = new BeanBotStartupReport(
-            () =>
-            {
-                Interlocked.Increment(ref checks);
-                return PunChannelStartupStatus.FromCachedChannel("daily-puns", true, true);
-            },
-            "2.18.3",
-            null,
-            null,
-            recorded.Enqueue,
-            notifier);
-
-        Parallel.For(0, 20, _ => reporter.QueueOnFirstReady());
-        reporter.QueueOnFirstReady();
-
-        Assert.Single(notifier.Alerts);
-        Assert.Equal(1, checks);
-        Assert.Equal([false], recorded);
-    }
-
-    [Fact]
-    public void QueueOnFirstReady_MissingChannelConsumesScheduledAlertBeforeQueueing()
-    {
-        var notifier = new CapturingNotifier();
-        var recorded = new ConcurrentQueue<string>();
-        var reporter = new BeanBotStartupReport(
-            () => PunChannelStartupStatus.NotFound,
-            "2.18.3",
-            null,
-            null,
-            unhealthy => recorded.Enqueue($"mark:{unhealthy}"),
-            new RecordingOrderNotifier(recorded, notifier));
-
-        reporter.QueueOnFirstReady();
-
-        Assert.Equal(["mark:True", "enqueue"], recorded);
-        Assert.Single(notifier.Alerts);
-    }
-
-    [Fact]
-    public void QueueOnFirstReady_ChannelCheckFailureStillSendsHonestReport()
-    {
-        var notifier = new CapturingNotifier();
-        var reporter = new BeanBotStartupReport(
-            () => throw new InvalidOperationException("cache unavailable"),
-            "2.18.3",
-            null,
-            null,
-            _ => { },
-            notifier);
-
-        reporter.QueueOnFirstReady();
-
-        Assert.Contains("I couldn't check this channel yet", Assert.Single(notifier.Alerts));
-    }
-
-    [Fact]
     public void Format_SanitizesUntrustedChannelName()
     {
         var report = BeanBotStartupReport.Format(
@@ -163,57 +101,341 @@ public class BeanBotStartupReportTests
     }
 
     [Fact]
-    public async Task QueueOnFirstReady_FailedDeliveryDoesNotBlockOrRepeatOnReconnect()
+    public async Task QueueOnFirstReady_IsAtomicAndDoesNotRepeatOnReconnect()
     {
-        var delivery = new FailingDelivery();
-        await using var notifier = new DiscordOwnerErrorNotifier(
+        var delivery = new ScriptedDelivery();
+        var checks = 0;
+        var outcomes = new OutcomeRecorder();
+        var reporter = CreateReporter(
             delivery,
-            _ => TimeSpan.Zero,
-            TimeSpan.FromMilliseconds(100));
-        var reporter = new BeanBotStartupReport(
-            () => PunChannelStartupStatus.NotFound,
+            outcomes,
+            new AutoAdvancingClock(),
+            () =>
+            {
+                Interlocked.Increment(ref checks);
+                return PunChannelStartupStatus.FromCachedChannel("daily-puns", true, true);
+            });
+
+        Parallel.For(0, 20, _ => reporter.QueueOnFirstReady());
+        reporter.QueueOnFirstReady();
+        await outcomes.Settled.WaitAsync(TestTimeout);
+        reporter.QueueOnFirstReady();
+
+        Assert.Equal(1, delivery.CallCount);
+        Assert.Equal(1, checks);
+        Assert.Equal([false], outcomes.Values);
+    }
+
+    [Fact]
+    public async Task QueueOnFirstReady_MissingChannelIsHandledOnlyAfterDelivery()
+    {
+        var delivery = new ScriptedDelivery { BlockFirstSend = true };
+        var outcomes = new OutcomeRecorder();
+        var reporter = CreateReporter(delivery, outcomes, new NeverFiringClock());
+
+        reporter.QueueOnFirstReady();
+        await delivery.FirstSendStarted.Task.WaitAsync(TestTimeout);
+
+        Assert.Empty(outcomes.Values);
+        Assert.True(reporter.HasActiveDiscordOperation);
+
+        delivery.ReleaseFirstSend();
+        await outcomes.Settled.WaitAsync(TestTimeout);
+
+        Assert.Equal([true], outcomes.Values);
+        Assert.Contains("Daily pun channel: not found.", Assert.Single(delivery.Reports));
+    }
+
+    [Fact]
+    public async Task QueueOnFirstReady_TransientFailuresRetryWithBackoffUntilDelivered()
+    {
+        var delivery = new ScriptedDelivery { FailuresBeforeSuccess = 3 };
+        var outcomes = new OutcomeRecorder();
+        var clock = new AutoAdvancingClock();
+        var reporter = CreateReporter(delivery, outcomes, clock);
+
+        reporter.QueueOnFirstReady();
+        await outcomes.Settled.WaitAsync(TestTimeout);
+
+        Assert.Equal([true], outcomes.Values);
+        Assert.Equal(4, delivery.CallCount);
+        Assert.Equal(
+            [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4)],
+            clock.RetryDelays);
+    }
+
+    [Fact]
+    public async Task QueueOnFirstReady_RetriesExpireAfterFiveMinutesAndAllowFallbackAlert()
+    {
+        var delivery = new ScriptedDelivery { FailuresBeforeSuccess = int.MaxValue };
+        var outcomes = new OutcomeRecorder();
+        var clock = new AutoAdvancingClock();
+        var logger = new RecordingLogger();
+        var reporter = CreateReporter(delivery, outcomes, clock, logger: logger);
+
+        reporter.QueueOnFirstReady();
+        await outcomes.Settled.WaitAsync(TestTimeout);
+
+        Assert.Equal([false], outcomes.Values);
+        Assert.True(delivery.CallCount > 3);
+        Assert.All(clock.RetryDelays, delay => Assert.True(delay <= BeanBotStartupReport.MaximumRetryDelay));
+        Assert.True(clock.Elapsed <= BeanBotStartupReport.DeliveryWindow);
+        Assert.True(
+            clock.Elapsed > BeanBotStartupReport.DeliveryWindow - BeanBotStartupReport.MaximumRetryDelay,
+            $"Retries stopped early after {clock.Elapsed}.");
+        Assert.Contains(LogLevel.Warning, logger.Levels);
+        Assert.DoesNotContain(logger.Levels, level => level >= LogLevel.Error);
+        Assert.False(reporter.HasActiveDiscordOperation);
+    }
+
+    [Fact]
+    public async Task QueueOnFirstReady_StalledSendIsNeverOverlappedAndExpiresIntoFallback()
+    {
+        var delivery = new ScriptedDelivery { BlockFirstSend = true };
+        var outcomes = new OutcomeRecorder();
+        var clock = new AutoAdvancingClock();
+        var reporter = CreateReporter(delivery, outcomes, clock);
+
+        reporter.QueueOnFirstReady();
+        await outcomes.Settled.WaitAsync(TestTimeout);
+
+        Assert.Equal([false], outcomes.Values);
+        Assert.Equal(1, delivery.CallCount);
+        Assert.Equal(BeanBotStartupReport.DeliveryWindow, clock.Elapsed);
+        Assert.True(reporter.HasActiveDiscordOperation);
+
+        delivery.ReleaseFirstSend(new InvalidOperationException("late failure"));
+        Assert.False(reporter.HasActiveDiscordOperation);
+        Assert.Equal(1, delivery.CallCount);
+    }
+
+    [Fact]
+    public async Task StopAsync_CancelsPendingRetryAndAllowsFallbackAlert()
+    {
+        var delivery = new ScriptedDelivery { FailuresBeforeSuccess = int.MaxValue };
+        var outcomes = new OutcomeRecorder();
+        var clock = new NeverFiringClock();
+        var reporter = CreateReporter(delivery, outcomes, clock);
+
+        reporter.QueueOnFirstReady();
+        await clock.TimerCreated.Task.WaitAsync(TestTimeout);
+        await reporter.StopAsync().WaitAsync(TestTimeout);
+
+        Assert.Equal([false], outcomes.Values);
+        Assert.Equal(1, delivery.CallCount);
+        Assert.False(reporter.HasActiveDiscordOperation);
+    }
+
+    [Fact]
+    public async Task StopAsync_StalledSendKeepsDiscordOperationActiveWithoutBlockingShutdown()
+    {
+        var delivery = new ScriptedDelivery { BlockFirstSend = true };
+        var outcomes = new OutcomeRecorder();
+        var reporter = CreateReporter(delivery, outcomes, new NeverFiringClock());
+
+        reporter.QueueOnFirstReady();
+        await delivery.FirstSendStarted.Task.WaitAsync(TestTimeout);
+        await reporter.StopAsync().WaitAsync(TestTimeout);
+
+        Assert.Equal([false], outcomes.Values);
+        Assert.True(reporter.HasActiveDiscordOperation);
+        delivery.ReleaseFirstSend();
+        Assert.False(reporter.HasActiveDiscordOperation);
+        Assert.Equal(1, delivery.CallCount);
+    }
+
+    [Fact]
+    public async Task StopAsync_BeforeReadyPreventsLaterReport()
+    {
+        var delivery = new ScriptedDelivery();
+        var outcomes = new OutcomeRecorder();
+        var reporter = CreateReporter(delivery, outcomes, new AutoAdvancingClock());
+
+        await reporter.StopAsync().WaitAsync(TestTimeout);
+        reporter.QueueOnFirstReady();
+
+        Assert.Equal(0, delivery.CallCount);
+        Assert.Empty(outcomes.Values);
+        Assert.False(reporter.HasActiveDiscordOperation);
+    }
+
+    [Fact]
+    public async Task QueueOnFirstReady_ChannelCheckFailureStillSendsHonestReport()
+    {
+        var delivery = new ScriptedDelivery();
+        var outcomes = new OutcomeRecorder();
+        var reporter = CreateReporter(
+            delivery,
+            outcomes,
+            new AutoAdvancingClock(),
+            () => throw new InvalidOperationException("cache unavailable"));
+
+        reporter.QueueOnFirstReady();
+        await outcomes.Settled.WaitAsync(TestTimeout);
+
+        Assert.Contains("I couldn't check this channel yet", Assert.Single(delivery.Reports));
+        Assert.Equal([false], outcomes.Values);
+    }
+
+    private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(5);
+
+    private static BeanBotStartupReport CreateReporter(
+        IOwnerAlertDelivery delivery,
+        OutcomeRecorder outcomes,
+        TimeProvider clock,
+        Func<PunChannelStartupStatus>? checkChannel = null,
+        ILogger<BeanBotStartupReport>? logger = null)
+        => new(
+            checkChannel ?? (() => PunChannelStartupStatus.NotFound),
             "2.18.3",
             null,
             null,
-            _ => { },
-            notifier);
+            outcomes.Record,
+            delivery,
+            clock,
+            logger);
 
-        var stopwatch = Stopwatch.StartNew();
-        reporter.QueueOnFirstReady();
-        reporter.QueueOnFirstReady();
-        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1));
-        await notifier.FlushAsync(TimeSpan.FromSeconds(1));
-
-        Assert.Equal(DiscordOwnerErrorNotifier.DefaultMaximumAttempts, delivery.Attempts);
-        await notifier.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1));
-    }
-
-    private sealed class CapturingNotifier : IOwnerErrorNotifier
+    private sealed class OutcomeRecorder
     {
-        public ConcurrentQueue<string> Alerts { get; } = new();
-        public void Enqueue(string alert) => Alerts.Enqueue(alert);
-    }
+        private readonly TaskCompletionSource _settled =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private sealed class RecordingOrderNotifier(
-        ConcurrentQueue<string> recorded,
-        IOwnerErrorNotifier inner) : IOwnerErrorNotifier
-    {
-        public void Enqueue(string alert)
+        public ConcurrentQueue<bool> Values { get; } = new();
+        public Task Settled => _settled.Task;
+
+        public void Record(bool missingChannelAlertHandled)
         {
-            recorded.Enqueue("enqueue");
-            inner.Enqueue(alert);
+            Values.Enqueue(missingChannelAlertHandled);
+            _settled.TrySetResult();
         }
     }
 
-    private sealed class FailingDelivery : IOwnerAlertDelivery
+    private sealed class ScriptedDelivery : IOwnerAlertDelivery
     {
-        private int _attempts;
-        public int Attempts => Volatile.Read(ref _attempts);
+        private readonly TaskCompletionSource _firstSendCompletion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _callCount;
+
+        public int FailuresBeforeSuccess { get; init; }
+        public bool BlockFirstSend { get; init; }
+        public int CallCount => Volatile.Read(ref _callCount);
+        public ConcurrentQueue<string> Reports { get; } = new();
+        public TaskCompletionSource FirstSendStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task DeliverAsync(string alert, CancellationToken cancellationToken)
         {
-            Interlocked.Increment(ref _attempts);
-            return Task.FromException(new InvalidOperationException("delivery unavailable"));
+            var call = Interlocked.Increment(ref _callCount);
+            Reports.Enqueue(alert);
+            if (call == 1 && BlockFirstSend)
+            {
+                FirstSendStarted.TrySetResult();
+                return _firstSendCompletion.Task;
+            }
+
+            return call <= FailuresBeforeSuccess
+                ? Task.FromException(new InvalidOperationException("delivery unavailable"))
+                : Task.CompletedTask;
         }
+
+        public void ReleaseFirstSend(Exception? failure = null)
+        {
+            if (failure is null)
+            {
+                _firstSendCompletion.SetResult();
+            }
+            else
+            {
+                _firstSendCompletion.SetException(failure);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Fires every timer immediately and moves the clock forward by its due time. Timers shorter
+    /// than the retry cap are retry delays; the longer ones are the delivery-window wait.
+    /// </summary>
+    private sealed class AutoAdvancingClock : TimeProvider
+    {
+        private static readonly DateTimeOffset Start = new(2026, 10, 10, 12, 0, 0, TimeSpan.Zero);
+        private readonly object _sync = new();
+        private readonly List<TimeSpan> _retryDelays = [];
+        private DateTimeOffset _utcNow = Start;
+
+        public TimeSpan Elapsed
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _utcNow - Start;
+                }
+            }
+        }
+
+        public TimeSpan[] RetryDelays
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return [.. _retryDelays];
+                }
+            }
+        }
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            lock (_sync)
+            {
+                return _utcNow;
+            }
+        }
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            lock (_sync)
+            {
+                if (dueTime <= BeanBotStartupReport.MaximumRetryDelay)
+                {
+                    _retryDelays.Add(dueTime);
+                }
+
+                _utcNow = _utcNow.Add(dueTime);
+            }
+
+            return base.CreateTimer(callback, state, TimeSpan.Zero, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    private sealed class NeverFiringClock : TimeProvider
+    {
+        public TaskCompletionSource TimerCreated { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            if (dueTime <= BeanBotStartupReport.MaximumRetryDelay)
+            {
+                TimerCreated.TrySetResult();
+            }
+
+            return base.CreateTimer(callback, state, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    private sealed class RecordingLogger : ILogger<BeanBotStartupReport>
+    {
+        public ConcurrentQueue<LogLevel> Levels { get; } = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => Levels.Enqueue(logLevel);
     }
 }

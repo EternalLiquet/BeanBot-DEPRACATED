@@ -86,9 +86,14 @@ public sealed partial class DailyPunService : IAsyncDisposable
         BeanBotLog.PunServiceInitializing(_logger);
     }
 
-    internal void RecordStartupChannelStatus(bool channelUnavailable)
+    /// <summary>
+    /// Missing-channel alerts stay quiet until the startup report settles. Pass true only
+    /// after the owner received a report that already said the channel is unavailable;
+    /// otherwise one fallback alert remains available.
+    /// </summary>
+    internal void RecordStartupReportOutcome(bool missingChannelAlertHandled)
     {
-        if (channelUnavailable)
+        if (missingChannelAlertHandled)
         {
             Interlocked.Exchange(ref _missingChannelAlertLogged, 1);
         }
