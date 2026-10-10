@@ -144,6 +144,22 @@ public class DiscordMessageWaiterTests
     }
 
     [Fact]
+    public void InteractionSession_StaleLeaseCannotReleaseReplacementSession()
+    {
+        using var sessions = new BoundedInteractionSessionRegistry(1);
+        Assert.Equal(InteractionSessionAcquireResult.Acquired, sessions.Acquire(10, 20, out var oldLease));
+        oldLease!.Dispose();
+        Assert.Equal(InteractionSessionAcquireResult.Acquired, sessions.Acquire(10, 20, out var newLease));
+
+        oldLease.Dispose();
+
+        Assert.Equal(1, sessions.ActiveCount);
+        Assert.Equal(InteractionSessionAcquireResult.AlreadyActive, sessions.Acquire(10, 20, out _));
+        newLease!.Dispose();
+        Assert.Equal(0, sessions.ActiveCount);
+    }
+
+    [Fact]
     public void InteractionSession_DisposeRejectsNewSessionsAndLateLeaseDisposeIsSafe()
     {
         var sessions = new BoundedInteractionSessionRegistry(1);

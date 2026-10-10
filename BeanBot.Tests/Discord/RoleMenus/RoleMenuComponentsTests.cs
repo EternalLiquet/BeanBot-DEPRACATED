@@ -18,7 +18,7 @@ public class RoleMenuComponentsTests
 
         var row = Assert.IsType<ActionRowComponent>(Assert.Single(components.Components));
         var button = Assert.IsType<ButtonComponent>(Assert.Single(row.Components));
-        Assert.Equal("Manage Roles", button.Label);
+        Assert.Equal("Choose your roles", button.Label);
         Assert.Equal(RoleMenuCustomIds.Manage(menuId), button.CustomId);
         Assert.Equal(ButtonStyle.Primary, button.Style);
     }
@@ -56,7 +56,7 @@ public class RoleMenuComponentsTests
         Assert.Equal("Choose the games you play.", embed.Description);
         Assert.True(embed.Footer.HasValue);
         var footer = embed.Footer.GetValueOrDefault();
-        Assert.Contains("Choose any combination", footer.Text, StringComparison.Ordinal);
+        Assert.Contains("Choose as many as you like", footer.Text, StringComparison.Ordinal);
         Assert.Contains(menuId.ToString(), footer.Text, StringComparison.Ordinal);
     }
 
@@ -75,8 +75,8 @@ public class RoleMenuComponentsTests
         Assert.Contains("<@&10>", roles.Value, StringComparison.Ordinal);
         Assert.Contains("<@&20>", roles.Value, StringComparison.Ordinal);
         Assert.Equal(
-            "Multiple selection",
-            Assert.Single(embed.Fields, field => field.Name == "Mode").Value);
+            "Any number",
+            Assert.Single(embed.Fields, field => field.Name == "Members can choose").Value);
         Assert.Equal(
             $"<#{draft.TargetChannelId}>",
             Assert.Single(embed.Fields, field => field.Name == "Channel").Value);
@@ -91,15 +91,15 @@ public class RoleMenuComponentsTests
         var embed = RoleMenuComponents.BuildPreviewEmbed(draft, noRoles);
 
         Assert.Equal(
-            "Choose the roles you want. You can update this at any time.",
+            "Choose the roles you want. You can change them any time.",
             embed.Description);
         Assert.Equal(
-            "No valid roles remain.",
+            "None of these roles can be used anymore.",
             Assert.Single(embed.Fields, field => field.Name == "Roles").Value);
         Assert.Equal(
-            "Single selection",
-            Assert.Single(embed.Fields, field => field.Name == "Mode").Value);
-        Assert.Equal("Preview • Not published", embed.Footer.GetValueOrDefault().Text);
+            "One role",
+            Assert.Single(embed.Fields, field => field.Name == "Members can choose").Value);
+        Assert.Equal("Preview • Only you can see this", embed.Footer.GetValueOrDefault().Text);
     }
 
     [Fact]
@@ -112,7 +112,7 @@ public class RoleMenuComponentsTests
         var publish = Assert.Single(
             buttons,
             button => button.CustomId == RoleMenuCustomIds.Publish(draftId));
-        Assert.Equal("Publish", publish.Label);
+        Assert.Equal("Publish menu", publish.Label);
         Assert.Equal(ButtonStyle.Success, publish.Style);
         var cancel = Assert.Single(
             buttons,
@@ -267,15 +267,15 @@ public class RoleMenuComponentsTests
         var staleOption = Assert.Single(
             select.Options,
             option => option.Value == stale.Id.ToString());
-        Assert.Equal("Untitled or stale role menu", staleOption.Label);
+        Assert.Equal("Untitled role menu", staleOption.Label);
         Assert.Equal(
-            "Multiple selection • Unknown creation date",
+            "Any number of roles • Creation date unknown",
             staleOption.Description);
         var normalOption = Assert.Single(
             select.Options,
             option => option.Value == normal.Id.ToString());
         Assert.Equal("Music", normalOption.Label);
-        Assert.Equal("Single selection • 2026-08-20", normalOption.Description);
+        Assert.Equal("One role • Created 2026-08-20", normalOption.Description);
     }
 
     [Fact]
@@ -290,7 +290,7 @@ public class RoleMenuComponentsTests
         var delete = Assert.Single(
             buttons,
             button => button.CustomId == RoleMenuCustomIds.DeleteConfirm(userId, menuId));
-        Assert.Equal("Delete", delete.Label);
+        Assert.Equal("Delete menu", delete.Label);
         Assert.Equal(ButtonStyle.Danger, delete.Style);
         var cancel = Assert.Single(
             buttons,
@@ -308,10 +308,12 @@ public class RoleMenuComponentsTests
 
         var embed = RoleMenuComponents.BuildDeleteConfirmationEmbed(settings);
 
+        Assert.NotNull(embed.Title);
+        Assert.True(embed.Title.Length <= EmbedBuilder.MaxTitleLength);
+        Assert.Equal(new string('a', 98) + "…", embed.Title);
+        Assert.DoesNotContain(embed.Title, char.IsSurrogate);
         Assert.NotNull(embed.Description);
         Assert.True(embed.Description.Length <= EmbedBuilder.MaxDescriptionLength);
-        Assert.Contains(new string('a', 98) + "…", embed.Description, StringComparison.Ordinal);
-        Assert.DoesNotContain(embed.Description, char.IsSurrogate);
     }
 
     [Fact]
@@ -321,7 +323,51 @@ public class RoleMenuComponentsTests
 
         var embed = RoleMenuComponents.BuildDeleteConfirmationEmbed(settings);
 
-        Assert.Contains("Untitled or stale role menu", embed.Description, StringComparison.Ordinal);
+        Assert.Equal("Untitled role menu", embed.Title);
+    }
+
+    [Fact]
+    public void BuildDeleteConfirmationEmbed_NamesChannelRoleCountAndKeepsMemberRoles()
+    {
+        var settings = CreateSettings(RoleMenuSelectionMode.Multiple, "Game Roles");
+
+        var embed = RoleMenuComponents.BuildDeleteConfirmationEmbed(settings);
+
+        Assert.Equal("Game Roles", embed.Title);
+        Assert.Equal(
+            "In <#2> • 2 roles members can choose\n\nThis removes the menu message. Members will " +
+            "keep the roles they already have.",
+            embed.Description);
+        Assert.DoesNotContain("configuration", embed.Description, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildDeleteConfirmationEmbed_OmitsUnreadableChannel()
+    {
+        var settings = new RoleMenuSettings(
+            ObjectId.GenerateNewId(),
+            "1",
+            "not-a-channel",
+            "3",
+            "Games",
+            string.Empty,
+            ["10"],
+            RoleMenuSelectionMode.Exclusive);
+
+        var embed = RoleMenuComponents.BuildDeleteConfirmationEmbed(settings);
+
+        Assert.StartsWith("1 role members can choose\n", embed.Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("<#", embed.Description, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(0, "No roles members can choose")]
+    [InlineData(1, "1 role members can choose")]
+    [InlineData(2, "2 roles members can choose")]
+    [InlineData(25, "25 roles members can choose")]
+    public void FormatChoosableRoleCount_UsesCorrectSingularAndPlural(int count, string expected)
+    {
+        Assert.Equal(expected, RoleMenuComponents.FormatChoosableRoleCount(count));
     }
 
     [Fact]
