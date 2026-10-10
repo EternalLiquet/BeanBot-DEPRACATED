@@ -25,6 +25,7 @@ public class BeanBotInteractionModuleTests
     [InlineData(nameof(BeanBotInteractionModule.PingAsync))]
     [InlineData(nameof(BeanBotInteractionModule.PunAsync))]
     [InlineData(nameof(BeanBotInteractionModule.HelpAsync))]
+    [InlineData("VersionAsync")]
     public void Commands_RunInlineSoFailuresStayInsideTheTrackedExecution(string methodName)
     {
         var method = Assert.IsAssignableFrom<MethodInfo>(
@@ -35,6 +36,27 @@ public class BeanBotInteractionModuleTests
             method.GetCustomAttribute<SlashCommandAttribute>());
 
         Assert.Equal(RunMode.Sync, attribute.RunMode);
+    }
+
+    [Fact]
+    public void VersionCommand_UsesExpectedName()
+    {
+        var method = typeof(BeanBotInteractionModule).GetMethod("VersionAsync");
+        var attribute = Assert.IsType<SlashCommandAttribute>(
+            method?.GetCustomAttribute<SlashCommandAttribute>());
+
+        Assert.Equal("version", attribute.Name);
+    }
+
+    [Theory]
+    [InlineData("2.18.3", "BeanBot v2.18.3")]
+    [InlineData("0.0.0-local", "Development build")]
+    [InlineData("unknown", "I can't tell which version I'm running.")]
+    [InlineData("", "I can't tell which version I'm running.")]
+    [InlineData(null, "I can't tell which version I'm running.")]
+    public void FormatVersionResponse_UsesRunningBuildVersion(string? version, string expected)
+    {
+        Assert.Equal(expected, BeanBotInteractionModule.FormatVersionResponse(version));
     }
 
     [Fact]
