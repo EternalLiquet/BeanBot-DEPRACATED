@@ -128,8 +128,8 @@ public class LegacyReactionRoleRetirementPickerTests
 
         Assert.Equal(LegacyReactionRoleMigrationPicker.Select(9), selector.CustomId);
         Assert.Equal(25, selector.Options.Count);
-        Assert.Equal(settings[0].MessageId, selector.Options[0].Value);
-        Assert.Contains("Gamer", selector.Options[0].Description,
+        Assert.Equal(settings[0].MessageId, selector.Options.First().Value);
+        Assert.Contains("Gamer", selector.Options.First().Description,
             StringComparison.Ordinal);
         Assert.Equal(LegacyReactionRoleMigrationPicker.Page(9, false,
             settings[24].Id), next.CustomId);
