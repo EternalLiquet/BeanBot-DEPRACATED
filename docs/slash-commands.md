@@ -8,7 +8,7 @@ BeanBot supports Discord application commands alongside the existing message-com
 - `/pun` uses the same cached `IPunProvider` as the legacy `%pun` command.
 - `/help` summarizes the slash-command surface and points users to `%help` for the complete legacy command list.
 - `/role-menu create` opens a native Discord setup form for an administrator with **Manage Roles**.
-- `/role-menu delete [menu-id]` removes a published dropdown role panel and its saved configuration. The optional exact ID supports servers with more than 25 menus.
+- `/role-menu delete [menu-id]` removes a published dropdown role panel and its saved settings. Members keep the roles they already have. The optional exact ID supports servers with more than 25 menus.
 
 Role-menu setup and deletion are server-only. Members manage their own allowlisted roles from each published panel without needing **Manage Roles**. See [Dropdown role menus](role-menus.md) for the full workflow and operational checks.
 

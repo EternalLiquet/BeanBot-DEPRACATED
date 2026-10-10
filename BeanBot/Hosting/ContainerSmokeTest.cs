@@ -36,23 +36,10 @@ internal static class ContainerSmokeTest
 
         try
         {
-            Directory.CreateDirectory(persistentDataDirectory);
-            if (!File.Exists(punResourcePath) || new FileInfo(punResourcePath).Length == 0)
-            {
-                throw new InvalidOperationException("The published pun resource is missing or empty.");
-            }
-
-            var probePath = Path.Combine(
+            LocalRuntimePrerequisites.Validate(
                 persistentDataDirectory,
-                $"container-smoke-{Guid.NewGuid():N}.tmp");
-            try
-            {
-                File.WriteAllText(probePath, "BeanBot container smoke test");
-            }
-            finally
-            {
-                File.Delete(probePath);
-            }
+                punResourcePath,
+                "container-smoke");
 
             output.WriteLine(
                 $"BeanBot container smoke test passed. Version={BuildIdentity.Current.Version}, CommitSha={BuildIdentity.Current.CommitSha}");
