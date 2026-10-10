@@ -74,16 +74,18 @@ Use `/livez` for process/container liveness and restart decisions, and use `/hea
 
 ## Local Development
 
-Install a stable .NET 10 SDK and Docker. The repository's `global.json` accepts SDK
+Install a stable .NET 10 SDK. The repository's `global.json` accepts SDK
 10.0.100 or newer .NET 10 patches and feature bands while excluding preview and
-other major SDKs. The integration suite automatically starts an isolated MongoDB
-container; it does not use `BEANBOT_MONGO_CONNECTION_STRING` or require a manually
-managed test database. Then restore, build, and run the test suite from the repo root:
+other major SDKs. The normal test command excludes the seven tests that start a
+MongoDB container. To run those tests locally, install Docker and use
+`./scripts/verify.sh mongo-integration`; the tests start an isolated MongoDB
+container and never use `BEANBOT_MONGO_CONNECTION_STRING`. Restore, build, and
+run the normal suite from the repo root:
 
 ```powershell
 dotnet restore BeanBot.sln
 dotnet build BeanBot.sln --configuration Release --no-restore
-dotnet test BeanBot.sln --configuration Release --no-build
+dotnet test BeanBot.sln --configuration Release --no-build --filter 'Category!=MongoIntegration'
 ```
 
 Repository changes use a Codex-native Planner → Implementer → Verifier → Reviewer loop with one writer and independent verification/review. See [Codex development loop](docs/codex-development-loop.md) for role handoffs and the shared fast/full verification commands.
@@ -122,10 +124,12 @@ Repository-wide compiler settings are defined in `Directory.Build.props`, packag
 versions in `Directory.Packages.props`, and formatting and naming conventions in
 `.editorconfig`. Run `./scripts/verify.sh fast` before submitting changes; it checks
 formatting and analyzers in addition to building and testing the solution.
-Full verification additionally enforces locked restores, the measured coverage
-baseline, master/develop ancestry, dependency vulnerability checks, a
+Full verification additionally enforces locked restores, the measured non-Mongo
+coverage baseline, master/develop ancestry, dependency vulnerability checks, a
 digest-pinned Docker build, and a non-root/read-only container smoke test.
-Coverage reports are written under `.artifacts/coverage`.
+Coverage reports are written under `.artifacts/coverage`. The explicit
+`./scripts/verify.sh all-tests` mode runs both test groups and checks the
+separate combined coverage baseline; it requires Docker.
 
 To start the bot:
 

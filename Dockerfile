@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/dotnet/sdk:10.0-noble@sha256:2fa828c68761b1b8c23d7662dc134421b9d3b59fe1425fdbc80804e390cdb24d AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0-noble@sha256:35d40304542c8689331f8cab17c65926cdf48fe711e289321d71924b230a7d29 AS build
 WORKDIR /src
 
 ARG BEANBOT_VERSION=0.0.0-local
@@ -16,7 +16,7 @@ RUN dotnet publish "BeanBot.csproj" -c Release -o /app/publish --no-restore \
 RUN test -s /app/publish/Resources/puns.csv \
     && mkdir -p /app/publish/BeanBotFiles/Logs
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra@sha256:6385dc0eaef704fad88d3f65c334e791a371bbe448f52ca39d83d2df49251e28 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra@sha256:00e0ad6a7ef8c0c1391b87f05c7ac757a15740455688f2bfcd146a3f4b987efd AS final
 WORKDIR /app
 
 ARG BEANBOT_VERSION=0.0.0-local

@@ -19,7 +19,7 @@ namespace BeanBot.Discord.RoleMenus;
 public sealed class RoleMenuMemberModule : RoleMenuModuleBase
 {
     private const string InvalidMenuMessage =
-        "This role menu is invalid, stale, or no longer available. Ask a server administrator to recreate it.";
+        "This role menu isn't working anymore. Ask a server admin to set it up again.";
 
     private readonly RoleMenuMemberService _members;
     private readonly ILogger<RoleMenuMemberModule> _logger;
@@ -101,7 +101,7 @@ public sealed class RoleMenuMemberModule : RoleMenuModuleBase
         {
             BeanBotLog.RoleMenuSelectionFailed(_logger, menuId.ToString(), exception);
             await ReplaceResponseAsync(
-                "Bean Bot couldn't load this role menu. Try again in a moment.",
+                "I couldn't load this menu. Try again in a moment.",
                 cancellation.Token);
         }
     }
@@ -149,7 +149,8 @@ public sealed class RoleMenuMemberModule : RoleMenuModuleBase
             || Context.Interaction is not SocketMessageComponent component)
         {
             await RespondToInvalidComponentAsync(
-                "That private role-menu control is invalid, expired, or belongs to another member.",
+                "These controls have expired or belong to someone else. Click **Choose your roles** " +
+                "on the menu to get your own.",
                 cancellation.Token);
             return;
         }
@@ -172,7 +173,8 @@ public sealed class RoleMenuMemberModule : RoleMenuModuleBase
         if (controlIssue != RoleMenuPrivateControlIssue.None)
         {
             await RespondToInvalidComponentAsync(
-                "That private role-menu control is invalid, expired, or belongs to another member.",
+                "These controls have expired or belong to someone else. Click **Choose your roles** " +
+                "on the menu to get your own.",
                 cancellation.Token);
             return;
         }
@@ -182,12 +184,12 @@ public sealed class RoleMenuMemberModule : RoleMenuModuleBase
             operationToken => component.UpdateAsync(
                 properties => SetMessage(
                     properties,
-                    "Applying your role choices…",
+                    "Updating your roles…",
                     null,
                     MessageComponent.Empty),
                 CreateRequestOptions(operationToken)),
             operationToken => ReplaceResponseAsync(
-                "Applying your role choices…",
+                "Updating your roles…",
                 operationToken),
             cancellation.Token);
 
@@ -208,8 +210,8 @@ public sealed class RoleMenuMemberModule : RoleMenuModuleBase
             when (cancellation.IsCancellationRequested && !RoleMenus.IsShuttingDown)
         {
             await SendFreshFeedbackAsync(
-                "Bean Bot ran out of time before it could confirm the final result. Open the role " +
-                "menu again to check your current roles before retrying.");
+                "That took too long, so I couldn't confirm your role changes. Open the menu again " +
+                "to check your roles before trying again.");
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -222,8 +224,8 @@ public sealed class RoleMenuMemberModule : RoleMenuModuleBase
                 binding.MenuId.ToString(),
                 exception);
             await SendFreshFeedbackAsync(
-                "Bean Bot couldn't confirm the final result. Open the role menu again to check " +
-                "your current roles before retrying.");
+                "I couldn't confirm your role changes. Open the menu again to check your roles " +
+                "before trying again.");
         }
     }
 

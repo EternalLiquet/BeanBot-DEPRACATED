@@ -6,6 +6,7 @@ internal sealed class InteractionCommandRegistration
     private readonly Func<Task> _registerCommands;
     private readonly TimeSpan _timeout;
     private readonly CancellationToken _applicationStopping;
+    private readonly Func<Task, TimeSpan, Task> _waitForRegistration;
     private Task? _registrationTask;
     private Task? _successfulRegistrationTask;
     private bool _registered;
@@ -16,10 +17,20 @@ internal sealed class InteractionCommandRegistration
         Func<Task> registerCommands,
         TimeSpan timeout,
         CancellationToken applicationStopping = default)
+        : this(registerCommands, timeout, WaitForRegistrationAsync, applicationStopping)
+    {
+    }
+
+    internal InteractionCommandRegistration(
+        Func<Task> registerCommands,
+        TimeSpan timeout,
+        Func<Task, TimeSpan, Task> waitForRegistration,
+        CancellationToken applicationStopping = default)
     {
         _registerCommands = registerCommands ?? throw new ArgumentNullException(nameof(registerCommands));
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
         _timeout = timeout;
+        _waitForRegistration = waitForRegistration ?? throw new ArgumentNullException(nameof(waitForRegistration));
         _applicationStopping = applicationStopping;
     }
 
@@ -101,7 +112,7 @@ internal sealed class InteractionCommandRegistration
 
         try
         {
-            await registrationTask.WaitAsync(_timeout);
+            await _waitForRegistration(registrationTask, _timeout);
         }
         catch
         {
@@ -120,6 +131,9 @@ internal sealed class InteractionCommandRegistration
             return TryClaimSuccessReportUnsafe();
         }
     }
+
+    private static Task WaitForRegistrationAsync(Task registrationTask, TimeSpan timeout)
+        => registrationTask.WaitAsync(timeout);
 
     private bool TryClaimSuccessReportUnsafe()
     {
