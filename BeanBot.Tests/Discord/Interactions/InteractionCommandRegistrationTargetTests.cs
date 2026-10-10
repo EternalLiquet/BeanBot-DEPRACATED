@@ -140,6 +140,8 @@ public class InteractionCommandRegistrationTargetTests
         const ulong expectedGuildId = 123456789;
         var calls = 0;
         var stalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstWait = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waitCalls = 0;
         var target = InteractionCommandRegistrationTarget.ForGuild(expectedGuildId);
         var registration = new InteractionCommandRegistration(
             () => target.RegisterAsync(
@@ -151,15 +153,20 @@ public class InteractionCommandRegistrationTargetTests
                     calls++;
                     return stalled.Task;
                 }),
-            TimeSpan.FromMilliseconds(20));
+            TimeSpan.FromSeconds(30),
+            (registrationTask, _) => Interlocked.Increment(ref waitCalls) == 1
+                ? firstWait.Task
+                : registrationTask);
 
-        await Assert.ThrowsAsync<TimeoutException>(() => registration.EnsureRegisteredAsync());
+        var firstWaiter = registration.EnsureRegisteredAsync();
+        firstWait.SetException(new TimeoutException("deterministic test timeout"));
+        await Assert.ThrowsAsync<TimeoutException>(() => firstWaiter);
         var secondWaiter = registration.EnsureRegisteredAsync();
         Assert.Equal(1, calls);
 
         stalled.SetResult();
         Assert.True(await secondWaiter);
-        await registration.StopAsync(TimeSpan.FromMilliseconds(25));
+        await registration.StopAsync(TimeSpan.FromSeconds(1));
 
         Assert.False(await registration.EnsureRegisteredAsync());
         Assert.Equal(1, calls);
