@@ -13,6 +13,7 @@ internal static class BeanBotConfiguration
     internal const string GeneralChannelVariable = "BEANBOT_GENERAL_CHANNEL_ID";
     internal const string HatoeteUrlVariable = "BEANBOT_HATOETE_URL";
     internal const string YoshimaruUrlVariable = "BEANBOT_YOSHIMARU_URL";
+    internal const string InteractionGuildVariable = "BEANBOT_INTERACTION_GUILD_ID";
     internal const string DailyPunTimeVariable = "BEANBOT_DAILY_PUN_TIME";
     internal const string DailyPunTimeZoneVariable = "BEANBOT_DAILY_PUN_TIMEZONE";
     internal const string HealthCheckPortVariable = "BEANBOT_HEALTHCHECK_PORT";
@@ -38,6 +39,9 @@ internal static class BeanBotConfiguration
         new(HatoeteUrlVariable, "hatoeteUrl", "HatoeteUrl"),
         new(YoshimaruUrlVariable, "yoshimaruUrl", "YoshimaruUrl")
     ];
+
+    private static readonly ConfigurationKey InteractionGuild =
+        new(InteractionGuildVariable, "interactionGuildId", "InteractionGuildId");
 
     private static readonly ConfigurationKey[] DailyPunKeys =
     [
@@ -78,6 +82,8 @@ internal static class BeanBotConfiguration
         {
             AddNormalizedValue(configuration, normalizedValues, key);
         }
+
+        AddNormalizedValue(configuration, normalizedValues, InteractionGuild);
 
         foreach (var key in DailyPunKeys)
         {
