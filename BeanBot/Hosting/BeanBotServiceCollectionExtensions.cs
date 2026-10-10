@@ -75,6 +75,7 @@ internal static class BeanBotServiceCollectionExtensions
         services.AddSingleton<IDailyPunClaimStore, MongoDailyPunClaimStore>();
         services.AddSingleton<IMongoReadinessProbe, MongoReadinessProbe>();
         services.AddSingleton<MongoReadinessMonitor>();
+        services.AddSingleton<ApplicationReadinessState>();
 
         services.AddSingleton<DiscordConnectionHealth>();
         services.AddSingleton<DiscordLifecycleCoordinator>();
@@ -179,12 +180,16 @@ internal static class BeanBotServiceCollectionExtensions
             provider.GetRequiredService<DiscordSocketClient>(),
             provider.GetRequiredService<DiscordConnectionHealth>(),
             provider.GetRequiredService<MongoReadinessMonitor>(),
+            provider.GetRequiredService<ApplicationReadinessState>(),
             provider.GetRequiredService<ILogger<HealthCheckServer>>()));
 
         services.AddSingleton<BeanBotRuntime>();
         services.AddSingleton<IBeanBotRuntime>(provider =>
             provider.GetRequiredService<BeanBotRuntime>());
-        services.AddSingleton<BeanBotApplication>();
+        services.AddSingleton<BeanBotApplication>(provider => new BeanBotApplication(
+            provider.GetRequiredService<IBeanBotRuntime>(),
+            provider.GetRequiredService<ApplicationReadinessState>(),
+            provider.GetRequiredService<ILogger<BeanBotApplication>>()));
         services.AddSingleton<IBeanBotApplication>(provider =>
             provider.GetRequiredService<BeanBotApplication>());
         services.AddSingleton<BeanBotHostedService>();
