@@ -99,6 +99,7 @@ public sealed class RoleMenuCommandRegistrationTests
             var services = new ServiceCollection()
                 .AddSingleton(roleMenus)
                 .AddSingleton(discord)
+                .AddSingleton(new RoleMenuAuditService(roleMenus, discord))
                 .AddSingleton(new RoleMenuAdministrationService(
                     roleMenus,
                     discord,
