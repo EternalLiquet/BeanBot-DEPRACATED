@@ -16,7 +16,6 @@ internal static class RoleMenuComponents
     private const string UntitledMenuName = "Untitled role menu";
 
     internal static Embed BuildPublicEmbed(
-        ObjectId menuId,
         string title,
         string description,
         RoleMenuSelectionMode selectionMode)
@@ -29,7 +28,7 @@ internal static class RoleMenuComponents
             .WithDescription(string.IsNullOrWhiteSpace(description)
                 ? DefaultDescription
                 : description)
-            .WithFooter($"Role menu • {modeText} • ID: {menuId}")
+            .WithFooter($"Role menu • {modeText}")
             .Build();
     }
 
@@ -139,63 +138,143 @@ internal static class RoleMenuComponents
 
     internal static MessageComponent BuildDeleteSelector(
         ulong userId,
-        IReadOnlyCollection<RoleMenuSettings> settings)
+        RoleMenuDeletionPage page,
+        Func<ulong, string?> getChannelName)
     {
-        ArgumentNullException.ThrowIfNull(settings);
-        var selector = new SelectMenuBuilder()
-            .WithCustomId(RoleMenuCustomIds.DeleteSelect(userId))
-            .WithPlaceholder("Choose a role menu to delete")
-            .WithMinValues(1)
-            .WithMaxValues(1);
-        foreach (var menu in settings)
+        ArgumentNullException.ThrowIfNull(page);
+        ArgumentNullException.ThrowIfNull(getChannelName);
+        var components = new ComponentBuilder();
+        if (page.Menus.Count > 0)
         {
-            var mode = menu.SelectionMode == RoleMenuSelectionMode.Exclusive
-                ? "One role"
-                : "Any number of roles";
-            var date = menu.CreatedAtUtc == default
-                ? "Creation date unknown"
-                : "Created " + menu.CreatedAtUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            selector.AddOption(
-                RoleMenuText.TruncateWithEllipsis(
-                    string.IsNullOrWhiteSpace(menu.Title)
-                        ? UntitledMenuName
-                        : menu.Title,
-                    SelectMenuOptionBuilder.MaxSelectLabelLength),
-                menu.Id.ToString(),
-                RoleMenuText.TruncateWithEllipsis(
-                    $"{mode} • {date}",
-                    SelectMenuOptionBuilder.MaxDescriptionLength));
+            var selector = new SelectMenuBuilder()
+                .WithCustomId(RoleMenuCustomIds.DeleteSelect(userId))
+                .WithPlaceholder("Choose a role menu")
+                .WithMinValues(1)
+                .WithMaxValues(1);
+            foreach (var menu in page.Menus)
+            {
+                selector.AddOption(
+                    RoleMenuText.TruncateWithEllipsis(
+                        GetDisplayTitle(menu.Title),
+                        SelectMenuOptionBuilder.MaxSelectLabelLength),
+                    menu.Id.ToString(),
+                    RoleMenuText.TruncateWithEllipsis(
+                        DescribeMenuForSelector(menu, getChannelName),
+                        SelectMenuOptionBuilder.MaxDescriptionLength));
+            }
+
+            components.WithSelectMenu(selector);
         }
 
-        return new ComponentBuilder().WithSelectMenu(selector).Build();
+        if (page.Previous is { } previous)
+        {
+            components.WithButton(
+                "Previous",
+                RoleMenuCustomIds.DeletePage(userId, previous),
+                ButtonStyle.Secondary,
+                row: 1);
+        }
+
+        if (page.Next is { } next)
+        {
+            components.WithButton(
+                "Next",
+                RoleMenuCustomIds.DeletePage(userId, next),
+                ButtonStyle.Secondary,
+                row: 1);
+        }
+
+        return components
+            .WithButton(
+                "Cancel",
+                RoleMenuCustomIds.DeleteCancel(userId),
+                ButtonStyle.Secondary,
+                row: 1)
+            .Build();
     }
 
-    internal static Embed BuildDeleteConfirmationEmbed(RoleMenuSettings settings)
+    internal static Embed BuildDeleteConfirmationEmbed(
+        RoleMenuSettings settings,
+        RoleMenuPanelState panelState)
     {
         ArgumentNullException.ThrowIfNull(settings);
         var title = RoleMenuText.TruncateWithEllipsis(
-            string.IsNullOrWhiteSpace(settings.Title)
-                ? UntitledMenuName
-                : settings.Title,
+            GetDisplayTitle(settings.Title),
             RoleMenuConstants.MaximumTitleLength);
-        var details = FormatChoosableRoleCount(settings.RoleIds.Count);
-        if (ulong.TryParse(
-                settings.ChannelId,
-                NumberStyles.None,
-                CultureInfo.InvariantCulture,
-                out var channelId)
-            && channelId != 0)
+        var lines = new List<string>();
+        if (RoleMenuCustomIds.TryParseSnowflake(settings.ChannelId, out var channelId))
         {
-            details = $"In <#{channelId.ToString(CultureInfo.InvariantCulture)}> • {details}";
+            lines.Add($"In <#{channelId.ToString(CultureInfo.InvariantCulture)}>");
+        }
+
+        lines.Add(
+            $"{FormatChoosableRoleCount(settings.RoleIds.Count)} • " +
+            FormatSelectionMode(settings.SelectionMode));
+        lines.Add(FormatCreatedAt(settings.CreatedAtUtc));
+        var panelNote = panelState switch
+        {
+            RoleMenuPanelState.MessageMissing => "The menu's message was deleted.",
+            RoleMenuPanelState.ChannelMissing => "The menu's channel was deleted.",
+            RoleMenuPanelState.NotAPanel =>
+                "The saved message isn't this role menu anymore, so I'll leave it alone.",
+            _ => null
+        };
+        if (panelNote is not null)
+        {
+            lines.Add(string.Empty);
+            lines.Add(panelNote);
+        }
+
+        if (RoleMenuDeletionTargets.CanDelete(panelState))
+        {
+            lines.Add(string.Empty);
+            lines.Add("Members keep the roles they already have.");
         }
 
         return new EmbedBuilder()
             .WithTitle(title)
-            .WithDescription(
-                $"{details}\n\nThis removes the menu message. Members will keep the roles they " +
-                "already have.")
+            .WithDescription(string.Join('\n', lines))
             .WithColor(Color.Red)
             .Build();
+    }
+
+    internal static string FormatDeleteConfirmationContent(RoleMenuPanelState panelState)
+        => panelState switch
+        {
+            RoleMenuPanelState.Inaccessible =>
+                "I can't open this menu's message. Make sure I can see that channel and read its " +
+                "history, then try again.",
+            RoleMenuPanelState.Unavailable =>
+                "I couldn't check this menu's message. Try again in a moment.",
+            _ => "Delete this role menu?"
+        };
+
+    internal static string GetDisplayTitle(string? title)
+        => RoleMenuText.HasVisibleText(title) ? title!.Trim() : UntitledMenuName;
+
+    internal static string FormatCreatedAt(DateTime createdAtUtc)
+        => createdAtUtc == default
+            ? "Creation date unknown"
+            : "Created " +
+              createdAtUtc.ToString("MMM d, yyyy, h:mm tt", CultureInfo.InvariantCulture) +
+              " UTC";
+
+    private static string FormatSelectionMode(RoleMenuSelectionMode selectionMode)
+        => selectionMode == RoleMenuSelectionMode.Exclusive
+            ? "Members can choose one"
+            : "Members can choose any number";
+
+    private static string DescribeMenuForSelector(
+        RoleMenuSettings menu,
+        Func<ulong, string?> getChannelName)
+    {
+        var channelName = RoleMenuCustomIds.TryParseSnowflake(menu.ChannelId, out var channelId)
+            ? getChannelName(channelId)
+            : null;
+        var channel = string.IsNullOrWhiteSpace(channelName)
+            ? "Unknown channel"
+            : "#" + RoleMenuText.TruncateWithEllipsis(channelName, 40);
+        return $"{channel} • {FormatCreatedAt(menu.CreatedAtUtc)}";
     }
 
     internal static string FormatChoosableRoleCount(int roleCount)
@@ -208,17 +287,54 @@ internal static class RoleMenuComponents
 
     internal static MessageComponent BuildDeleteConfirmationComponents(
         ulong userId,
-        ObjectId menuId)
-        => new ComponentBuilder()
+        RoleMenuSettings settings,
+        RoleMenuPanelState panelState)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (!RoleMenuDeletionTargets.CanDelete(panelState))
+        {
+            return MessageComponent.Empty;
+        }
+
+        var components = new ComponentBuilder()
             .WithButton(
                 "Delete menu",
-                RoleMenuCustomIds.DeleteConfirm(userId, menuId),
+                RoleMenuCustomIds.DeleteConfirm(
+                    userId,
+                    settings.Id,
+                    RoleMenuDeletionTargets.GetVersion(settings)),
                 ButtonStyle.Danger)
             .WithButton(
                 "Cancel",
                 RoleMenuCustomIds.DeleteCancel(userId),
-                ButtonStyle.Secondary)
+                ButtonStyle.Secondary);
+        if (panelState == RoleMenuPanelState.Current
+            && TryCreatePanelUrl(settings, out var panelUrl))
+        {
+            components.WithButton("View menu", style: ButtonStyle.Link, url: panelUrl);
+        }
+
+        return components.Build();
+    }
+
+    internal static MessageComponent BuildViewMenuLink(string panelUrl)
+        => new ComponentBuilder()
+            .WithButton("View menu", style: ButtonStyle.Link, url: panelUrl)
             .Build();
+
+    private static bool TryCreatePanelUrl(RoleMenuSettings settings, out string panelUrl)
+    {
+        panelUrl = string.Empty;
+        if (!RoleMenuCustomIds.TryParseSnowflake(settings.GuildId, out var guildId)
+            || !RoleMenuCustomIds.TryParseSnowflake(settings.ChannelId, out var channelId)
+            || !RoleMenuCustomIds.TryParseSnowflake(settings.MessageId, out var messageId))
+        {
+            return false;
+        }
+
+        panelUrl = RoleMenuPresentation.CreateMessageUrl(guildId, channelId, messageId);
+        return true;
+    }
 
     internal static bool HasManageButton(IMessage message, ObjectId menuId)
     {
