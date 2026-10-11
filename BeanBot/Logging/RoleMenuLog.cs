@@ -5,6 +5,16 @@ namespace BeanBot.Logging;
 
 internal static partial class BeanBotLog
 {
+    [LoggerMessage(Level = LogLevel.Information, Message = "Role menu publish phase. AttemptId={AttemptId} Phase={Phase} Outcome={Outcome} ElapsedMs={ElapsedMs} PhaseElapsedMs={PhaseElapsedMs}")]
+    internal static partial void RoleMenuPublishPhase(
+        ILogger logger, string attemptId, string phase, string outcome, double elapsedMs,
+        double phaseElapsedMs);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Role menu publish phase. AttemptId={AttemptId} Phase={Phase} Outcome={Outcome} ElapsedMs={ElapsedMs} PhaseElapsedMs={PhaseElapsedMs}")]
+    internal static partial void RoleMenuPublishPhaseWarning(
+        ILogger logger, string attemptId, string phase, string outcome, double elapsedMs,
+        double phaseElapsedMs);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Role menu settings saved idempotently. MenuId={MenuId}")]
     internal static partial void RoleMenuSettingsSaved(ILogger logger, ObjectId menuId);
 

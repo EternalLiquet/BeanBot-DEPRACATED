@@ -101,6 +101,7 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
         runMode: RunMode.Sync)]
     public async Task PublishAsync(string draftIdValue)
     {
+        var diagnostics = new RoleMenuPublishDiagnostics(_logger);
         using var cancellation = RoleMenus.CreateOperationCancellation();
         var requestOptions = CreateRequestOptions(cancellation.Token);
         if (!RoleMenuCustomIds.TryParseDraftId(draftIdValue, out var draftId)
@@ -112,19 +113,26 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
                 ComponentType.Button,
                 RoleMenuCustomIds.Publish(draftId)))
         {
+            diagnostics.Complete("rejected");
+            diagnostics.Finish("rejected");
             await RespondToInvalidComponentAsync(
                 "This preview isn't available anymore. Run `/role-menu create` again.",
                 cancellation.Token);
             return;
         }
 
+        diagnostics.Complete();
+        diagnostics.Start("admission");
         var accessStatus = RoleMenus.TryBeginPublish(
             draftId,
             guild.Id,
             administrator.Id,
             out var draft);
+        diagnostics.Complete(accessStatus == RoleMenuDraftAccessStatus.Acquired
+            ? "completed" : "rejected");
         if (accessStatus != RoleMenuDraftAccessStatus.Acquired || draft is null)
         {
+            diagnostics.Finish("rejected");
             var message = accessStatus switch
             {
                 RoleMenuDraftAccessStatus.AlreadyPublishing =>
@@ -143,20 +151,21 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
         var publicationStarted = false;
         try
         {
-            if (!await AcknowledgeEphemeralComponentAsync(
-                    "Publishing your menu…",
-                    cancellation.Token))
+            if (!await diagnostics.TrackAsync("acknowledgement", () =>
+                    AcknowledgeEphemeralComponentAsync(
+                        "Publishing your menu…", cancellation.Token)))
             {
+                diagnostics.Finish("not_published");
                 return;
             }
 
-            var currentAdministrator = await _discord.GetGuildUserAsync(
-                guild.Id,
-                administrator.Id,
-                requestOptions);
-            var currentBot = await _discord.GetGuildUserAsync(guild.Id, bot.Id, requestOptions);
+            var currentAdministrator = await diagnostics.TrackAsync("administrator_lookup", () =>
+                _discord.GetGuildUserAsync(guild.Id, administrator.Id, requestOptions));
+            var currentBot = await diagnostics.TrackAsync("bot_lookup", () =>
+                _discord.GetGuildUserAsync(guild.Id, bot.Id, requestOptions));
             if (currentAdministrator is null || currentBot is null)
             {
+                diagnostics.Finish("rejected");
                 await RestorePreviewAsync(
                     draft,
                     [],
@@ -165,13 +174,16 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
                 return;
             }
 
+            diagnostics.Start("role_validation");
             var validation = ValidateDraftRoles(
                 draft,
                 currentAdministrator,
                 currentBot);
+            diagnostics.Complete(validation.IsValid ? "completed" : "rejected");
             previewRoles = validation.Roles;
             if (!validation.IsValid)
             {
+                diagnostics.Finish("rejected");
                 await RestorePreviewAsync(
                     draft,
                     validation.Roles,
@@ -180,12 +192,12 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
                 return;
             }
 
-            var targetChannel = await _discord.GetGuildTextChannelAsync(
-                guild.Id,
-                draft.TargetChannelId,
-                requestOptions);
+            var targetChannel = await diagnostics.TrackAsync("channel_lookup", () =>
+                _discord.GetGuildTextChannelAsync(
+                    guild.Id, draft.TargetChannelId, requestOptions));
             if (targetChannel is null)
             {
+                diagnostics.Finish("rejected");
                 await RestorePreviewAsync(
                     draft,
                     validation.Roles,
@@ -195,9 +207,12 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
                 return;
             }
 
+            diagnostics.Start("channel_validation");
             var channelPermissionFailure = GetChannelPermissionFailure(currentBot, targetChannel);
+            diagnostics.Complete(channelPermissionFailure is null ? "completed" : "rejected");
             if (channelPermissionFailure is not null)
             {
+                diagnostics.Finish("rejected");
                 await RestorePreviewAsync(
                     draft,
                     validation.Roles,
@@ -206,6 +221,7 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
                 return;
             }
 
+            diagnostics.Start("lock_wait");
             var publishedMessageId = await RoleMenus.RunMenuMutationAsync(
                 draft.MenuId,
                 operationToken =>
@@ -216,22 +232,29 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
                         validation.Roles,
                         targetChannel,
                         currentBot.Id,
+                        diagnostics,
                         operationToken);
                 },
                 cancellation.Token);
             if (publishedMessageId is ulong messageId)
             {
-                await TrySendPublicationConfirmationAsync(
-                    guild.Id,
-                    draft.TargetChannelId,
-                    messageId,
-                    draft.MenuId,
-                    cancellation.Token);
+                await diagnostics.TrackAsync("confirmation", () =>
+                    TrySendPublicationConfirmationAsync(
+                        guild.Id,
+                        draft.TargetChannelId,
+                        messageId,
+                        draft.MenuId,
+                        cancellation.Token));
             }
+
+            diagnostics.Finish(cancellation.IsCancellationRequested
+                ? RoleMenus.IsShuttingDown ? "shutdown_cancelled" : "timeout"
+                : publishedMessageId is null ? "not_published" : "published");
         }
         catch (OperationCanceledException)
             when (cancellation.IsCancellationRequested && !RoleMenus.IsShuttingDown)
         {
+            diagnostics.Finish("timeout");
             await RestorePreviewFreshAsync(
                 draft,
                 previewRoles,
@@ -242,10 +265,12 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
+            diagnostics.Finish("shutdown_cancelled");
             throw;
         }
         catch (Exception exception)
         {
+            diagnostics.Finish("failed");
             BeanBotLog.RoleMenuPublicationFailed(_logger, draft.Id.ToString("N"), exception);
             await RestorePreviewFreshAsync(
                 draft,
@@ -677,9 +702,12 @@ public sealed class RoleMenuAdminModule : RoleMenuModuleBase
         IReadOnlyCollection<RoleMenuRoleSnapshot> roles,
         ITextChannel targetChannel,
         ulong botUserId,
+        RoleMenuPublishDiagnostics diagnostics,
         CancellationToken cancellationToken)
     {
-        var result = await _administration.PublishAsync(draft, targetChannel, botUserId, cancellationToken);
+        diagnostics.Complete();
+        var result = await _administration.PublishAsync(
+            draft, targetChannel, botUserId, cancellationToken, diagnostics);
         if (result.Status == RoleMenuPublicationStatus.Published)
         {
             return result.MessageId
