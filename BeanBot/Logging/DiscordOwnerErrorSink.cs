@@ -121,9 +121,16 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
     public async Task FlushAsync(TimeSpan timeout)
     {
         var deadline = DateTimeOffset.UtcNow.Add(timeout);
-        while ((_alerts.Reader.Count > 0 || Volatile.Read(ref _sendInProgress) != 0) &&
-               DateTimeOffset.UtcNow < deadline)
+        while (DateTimeOffset.UtcNow < deadline)
         {
+            lock (_deliverySync)
+            {
+                if (_alerts.Reader.Count == 0 && _sendInProgress == 0)
+                {
+                    return;
+                }
+            }
+
             await Task.Delay(TimeSpan.FromMilliseconds(25));
         }
     }
@@ -153,16 +160,34 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
 
     private async Task ProcessAlertsAsync(CancellationToken cancellationToken)
     {
-        await foreach (var alert in _alerts.Reader.ReadAllAsync(cancellationToken))
+        while (await _alerts.Reader.WaitToReadAsync(cancellationToken))
         {
-            Interlocked.Exchange(ref _sendInProgress, 1);
-            try
+            while (true)
             {
-                await DeliverWithRetryAsync(alert, cancellationToken);
-            }
-            finally
-            {
-                Interlocked.Exchange(ref _sendInProgress, 0);
+                string alert;
+                lock (_deliverySync)
+                {
+                    if (!_alerts.Reader.TryRead(out alert!))
+                    {
+                        break;
+                    }
+
+                    // Publish the in-progress state in the same lock as FlushAsync's
+                    // idle check, so a dequeued alert cannot temporarily disappear.
+                    _sendInProgress = 1;
+                }
+
+                try
+                {
+                    await DeliverWithRetryAsync(alert, cancellationToken);
+                }
+                finally
+                {
+                    lock (_deliverySync)
+                    {
+                        _sendInProgress = 0;
+                    }
+                }
             }
         }
     }
