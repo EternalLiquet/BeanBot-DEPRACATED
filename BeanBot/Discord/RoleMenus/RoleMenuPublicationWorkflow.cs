@@ -58,28 +58,31 @@ internal static class RoleMenuPublicationWorkflow
         RoleMenuDraft draft,
         ulong botUserId,
         RoleMenuPublicationOperations operations,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RoleMenuPublishDiagnostics? diagnostics = null)
     {
         ArgumentNullException.ThrowIfNull(draft);
         ArgumentNullException.ThrowIfNull(operations);
         ValidateOperations(operations);
         var failures = new List<RoleMenuPublicationFailure>();
 
-        var existingSettings = await operations.ReadSettings(
-            draft.MenuId,
-            draft.GuildId,
-            cancellationToken);
+        var existingSettings = await TrackAsync(
+            diagnostics, "mongo_read", () => operations.ReadSettings(
+                draft.MenuId, draft.GuildId, cancellationToken));
         var panel = await FindExistingPanelAsync(
             draft,
             botUserId,
             existingSettings,
             operations,
-            cancellationToken);
+            diagnostics,
+            reconciling: false,
+            cancellationToken: cancellationToken);
         if (panel is null)
         {
             try
             {
-                panel = await operations.SendPanel(draft, cancellationToken);
+                panel = await TrackAsync(
+                    diagnostics, "discord_send", () => operations.SendPanel(draft, cancellationToken));
                 if (!IsExpectedPanel(panel, draft, botUserId))
                 {
                     throw new InvalidOperationException(
@@ -95,7 +98,8 @@ internal static class RoleMenuPublicationWorkflow
                     draft,
                     botUserId,
                     existingSettings,
-                    operations);
+                    operations,
+                    diagnostics);
                 panel = reconciliation.Panel;
                 if (reconciliation.Exception is not null)
                 {
@@ -120,7 +124,8 @@ internal static class RoleMenuPublicationWorkflow
             existingSettings?.CreatedAtUtc ?? default);
         try
         {
-            await operations.UpsertSettings(settings, cancellationToken);
+            await TrackAsync(diagnostics, "persistence", () =>
+                operations.UpsertSettings(settings, cancellationToken));
         }
         catch (Exception exception)
         {
@@ -131,7 +136,8 @@ internal static class RoleMenuPublicationWorkflow
                 draft,
                 panel,
                 operations,
-                failures);
+                failures,
+                diagnostics);
         }
 
         return new RoleMenuPublicationResult(
@@ -144,17 +150,17 @@ internal static class RoleMenuPublicationWorkflow
         RoleMenuDraft draft,
         RoleMenuPanelSnapshot panel,
         RoleMenuPublicationOperations operations,
-        List<RoleMenuPublicationFailure> failures)
+        List<RoleMenuPublicationFailure> failures,
+        RoleMenuPublishDiagnostics? diagnostics)
     {
         RoleMenuSettings? persistedSettings;
         using (var reconciliationCancellation = CreateCleanupCancellation())
         {
             try
             {
-                persistedSettings = await operations.ReadSettings(
-                    draft.MenuId,
-                    draft.GuildId,
-                    reconciliationCancellation.Token);
+                persistedSettings = await TrackAsync(diagnostics, "persistence_reconciliation_read",
+                    () => operations.ReadSettings(
+                        draft.MenuId, draft.GuildId, reconciliationCancellation.Token));
             }
             catch (Exception exception)
             {
@@ -192,9 +198,8 @@ internal static class RoleMenuPublicationWorkflow
         {
             try
             {
-                rollbackSucceeded = await operations.DeletePanel(
-                    panel,
-                    rollbackCancellation.Token);
+                rollbackSucceeded = await TrackAsync(diagnostics, "panel_rollback", () =>
+                    operations.DeletePanel(panel, rollbackCancellation.Token));
             }
             catch (Exception exception)
             {
@@ -224,7 +229,8 @@ internal static class RoleMenuPublicationWorkflow
         RoleMenuDraft draft,
         ulong botUserId,
         RoleMenuSettings? existingSettings,
-        RoleMenuPublicationOperations operations)
+        RoleMenuPublicationOperations operations,
+        RoleMenuPublishDiagnostics? diagnostics)
     {
         using var reconciliationCancellation = CreateCleanupCancellation();
         try
@@ -234,7 +240,9 @@ internal static class RoleMenuPublicationWorkflow
                 botUserId,
                 existingSettings,
                 operations,
-                reconciliationCancellation.Token);
+                diagnostics,
+                reconciling: true,
+                cancellationToken: reconciliationCancellation.Token);
             return new PanelReconciliationResult(panel);
         }
         catch (Exception exception)
@@ -248,6 +256,8 @@ internal static class RoleMenuPublicationWorkflow
         ulong botUserId,
         RoleMenuSettings? existingSettings,
         RoleMenuPublicationOperations operations,
+        RoleMenuPublishDiagnostics? diagnostics,
+        bool reconciling,
         CancellationToken cancellationToken)
     {
         if (existingSettings is not null
@@ -259,20 +269,24 @@ internal static class RoleMenuPublicationWorkflow
                 existingSettings.MessageId,
                 out var existingMessageId))
         {
-            var exactPanel = await operations.ReadExactPanel(
-                draft.TargetChannelId,
-                existingMessageId,
-                cancellationToken);
+            var exactPanel = await TrackAsync(
+                diagnostics,
+                reconciling ? "panel_reconciliation_exact" : "exact_panel_lookup",
+                () => operations.ReadExactPanel(
+                    draft.TargetChannelId, existingMessageId, cancellationToken));
             if (IsExpectedPanel(exactPanel, draft, botUserId))
             {
                 return exactPanel;
             }
         }
 
-        var recentPanels = await operations.ReadRecentPanels(
-            draft.TargetChannelId,
-            RoleMenuConstants.PanelReconciliationSearchLimit,
-            cancellationToken);
+        var recentPanels = await TrackAsync(
+            diagnostics,
+            reconciling ? "panel_reconciliation_history" : "history_lookup",
+            () => operations.ReadRecentPanels(
+                draft.TargetChannelId,
+                RoleMenuConstants.PanelReconciliationSearchLimit,
+                cancellationToken));
         ArgumentNullException.ThrowIfNull(recentPanels);
         var matchingPanels = recentPanels
             .Where(panel => IsExpectedPanel(panel, draft, botUserId))
@@ -300,6 +314,18 @@ internal static class RoleMenuPublicationWorkflow
 
     private static CancellationTokenSource CreateCleanupCancellation()
         => new(RoleMenuConstants.CleanupTimeout);
+
+    private static Task<T> TrackAsync<T>(
+        RoleMenuPublishDiagnostics? diagnostics,
+        string phase,
+        Func<Task<T>> operation)
+        => diagnostics is null ? operation() : diagnostics.TrackAsync(phase, operation);
+
+    private static Task TrackAsync(
+        RoleMenuPublishDiagnostics? diagnostics,
+        string phase,
+        Func<Task> operation)
+        => diagnostics is null ? operation() : diagnostics.TrackAsync(phase, operation);
 
     private static void ValidateOperations(RoleMenuPublicationOperations operations)
     {
