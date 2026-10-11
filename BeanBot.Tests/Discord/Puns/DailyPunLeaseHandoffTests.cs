@@ -47,7 +47,6 @@ public sealed class DailyPunLeaseHandoffTests
 
     private static DailyPunService CreateService()
         => new(
-            123,
             new StaticPunProvider(),
             new AlwaysAcquiredClaimStore(),
             () => null,
@@ -59,7 +58,8 @@ public sealed class DailyPunLeaseHandoffTests
                 TimeSpan.FromSeconds(30),
                 TimeSpan.FromSeconds(5)),
             NullLogger<DailyPunService>.Instance,
-            DailyPunSchedule.CreateDefault());
+            DailyPunSchedule.CreateDefault(),
+            () => true);
 
     private sealed class StaticPunProvider : IPunProvider
     {

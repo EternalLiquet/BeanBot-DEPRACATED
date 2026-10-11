@@ -31,6 +31,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime, IDisposable
     private readonly LegacyCommandReplySender _commandReplySender;
     private readonly LegacyReactionRoleSetupDiscordOperations _legacyReactionRoleSetupDiscordOperations;
     private readonly DailyPunService _dailyPunService;
+    private readonly BeanBotStartupReport _startupReport;
     private readonly FortuneMessageEditHandler _fortuneMessageEditHandler;
     private readonly NewMemberHandler _newMemberHandler;
     private readonly NewMemberWelcomeService _newMemberWelcomeService;
@@ -43,6 +44,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime, IDisposable
     private readonly CancellationTokenSource _sideEffectCancellation = new();
     private readonly CancellationTokenRegistration _applicationStoppingRegistration;
     private Task? _gatewayRecoveryStopTask;
+    private Task? _startupReportStopTask;
     private Task? _punStopTask;
     private Task? _ownerAlertStopTask;
     private int _ownedReadyOperationCount;
@@ -66,6 +68,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime, IDisposable
         LegacyCommandReplySender commandReplySender,
         LegacyReactionRoleSetupDiscordOperations legacyReactionRoleSetupDiscordOperations,
         DailyPunService dailyPunService,
+        BeanBotStartupReport startupReport,
         FortuneMessageEditHandler fortuneMessageEditHandler,
         NewMemberHandler newMemberHandler,
         NewMemberWelcomeService newMemberWelcomeService,
@@ -94,6 +97,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime, IDisposable
         _legacyReactionRoleSetupDiscordOperations = legacyReactionRoleSetupDiscordOperations
             ?? throw new ArgumentNullException(nameof(legacyReactionRoleSetupDiscordOperations));
         _dailyPunService = dailyPunService ?? throw new ArgumentNullException(nameof(dailyPunService));
+        _startupReport = startupReport ?? throw new ArgumentNullException(nameof(startupReport));
         _fortuneMessageEditHandler = fortuneMessageEditHandler ?? throw new ArgumentNullException(nameof(fortuneMessageEditHandler));
         _newMemberHandler = newMemberHandler ?? throw new ArgumentNullException(nameof(newMemberHandler));
         _newMemberWelcomeService = newMemberWelcomeService ?? throw new ArgumentNullException(nameof(newMemberWelcomeService));
@@ -112,6 +116,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime, IDisposable
             || _discordOutageRecoveryNotifier.HasActiveDiscordOperation
             || Volatile.Read(ref _ownedReadyOperationCount) != 0
             || _dailyPunService.HasActiveDiscordOperation
+            || _startupReport.HasActiveDiscordOperation
             || _newMemberWelcomeService.HasActiveDiscordOperation
             || _fortuneMessageEditHandler.HasInFlightOperations
             || _commandReplySender.HasPendingOperations
@@ -243,6 +248,14 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime, IDisposable
         AppDomain.CurrentDomain.UnhandledException -= HandleUnhandledException;
         TaskScheduler.UnobservedTaskException -= HandleUnobservedTaskException;
         _applicationStoppingRegistration.Dispose();
+    }
+
+    public Task StopStartupReportAsync()
+    {
+        lock (_sideEffectStopSync)
+        {
+            return _startupReportStopTask ??= _startupReport.StopAsync();
+        }
     }
 
     public Task StopPunServiceAsync()
@@ -424,6 +437,16 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime, IDisposable
                 return;
             }
 
+            try
+            {
+                _startupReport.QueueOnFirstReady();
+            }
+            catch (Exception exception)
+            {
+                _dailyPunService.RecordStartupReportOutcome(missingChannelAlertHandled: false);
+                BeanBotLog.StartupReportFailed(_logger, exception);
+            }
+
             _discordGatewayRecovery.NotifyReady();
         }
 
@@ -498,6 +521,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime, IDisposable
             _paginatorService.Dispose();
             _discordClient.Log -= _logHandler.LogMessages;
             _gatewayRecoveryStopTask ??= _discordGatewayRecovery.DisposeAsync().AsTask();
+            _startupReportStopTask ??= _startupReport.StopAsync();
             _punStopTask ??= _dailyPunService.DisposeAsync().AsTask();
             _ownerAlertStopTask ??= _ownerErrorNotifier.DisposeAsync().AsTask();
         }

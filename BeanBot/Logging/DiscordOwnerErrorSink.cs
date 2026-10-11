@@ -66,6 +66,21 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
     {
     }
 
+    internal bool HasActiveDiscordOperation
+    {
+        get
+        {
+            lock (_deliverySync)
+            {
+                // A timed-out shutdown may still be stopping the worker between
+                // queued alerts or while waiting to retry. Keep the client owned
+                // until the worker cannot start another delivery.
+                return (Volatile.Read(ref _disposed) != 0 && !_worker.IsCompleted)
+                    || _activeDelivery is { IsCompleted: false };
+            }
+        }
+    }
+
     internal DiscordOwnerErrorNotifier(
         IOwnerAlertDelivery delivery,
         Func<int, TimeSpan>? retryDelay = null,
@@ -83,17 +98,6 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
             SingleWriter = false
         });
         _worker = Task.Run(() => ProcessAlertsAsync(_shutdown.Token));
-    }
-
-    internal bool HasActiveDiscordOperation
-    {
-        get
-        {
-            lock (_deliverySync)
-            {
-                return _activeDelivery is { IsCompleted: false };
-            }
-        }
     }
 
     internal void StartAccepting()
@@ -117,9 +121,16 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
     public async Task FlushAsync(TimeSpan timeout)
     {
         var deadline = DateTimeOffset.UtcNow.Add(timeout);
-        while ((_alerts.Reader.Count > 0 || Volatile.Read(ref _sendInProgress) != 0) &&
-               DateTimeOffset.UtcNow < deadline)
+        while (DateTimeOffset.UtcNow < deadline)
         {
+            lock (_deliverySync)
+            {
+                if (_alerts.Reader.Count == 0 && _sendInProgress == 0)
+                {
+                    return;
+                }
+            }
+
             await Task.Delay(TimeSpan.FromMilliseconds(25));
         }
     }
@@ -149,16 +160,34 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
 
     private async Task ProcessAlertsAsync(CancellationToken cancellationToken)
     {
-        await foreach (var alert in _alerts.Reader.ReadAllAsync(cancellationToken))
+        while (await _alerts.Reader.WaitToReadAsync(cancellationToken))
         {
-            Interlocked.Exchange(ref _sendInProgress, 1);
-            try
+            while (true)
             {
-                await DeliverWithRetryAsync(alert, cancellationToken);
-            }
-            finally
-            {
-                Interlocked.Exchange(ref _sendInProgress, 0);
+                string alert;
+                lock (_deliverySync)
+                {
+                    if (!_alerts.Reader.TryRead(out alert!))
+                    {
+                        break;
+                    }
+
+                    // Publish the in-progress state in the same lock as FlushAsync's
+                    // idle check, so a dequeued alert cannot temporarily disappear.
+                    _sendInProgress = 1;
+                }
+
+                try
+                {
+                    await DeliverWithRetryAsync(alert, cancellationToken);
+                }
+                finally
+                {
+                    lock (_deliverySync)
+                    {
+                        _sendInProgress = 0;
+                    }
+                }
             }
         }
     }

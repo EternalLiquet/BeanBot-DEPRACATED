@@ -6,6 +6,20 @@ namespace BeanBot.Tests.Logging;
 public class DiscordOwnerErrorNotifierLeaseHandoffTests
 {
     [Fact]
+    public async Task FlushAsync_WaitsForEachAcceptedAlertAcrossWorkerHandoffs()
+    {
+        var delivery = new RecordingDelivery();
+        await using var notifier = new DiscordOwnerErrorNotifier(delivery);
+
+        for (var index = 0; index < 64; index++)
+        {
+            notifier.Enqueue($"alert {index}");
+            await notifier.FlushAsync(TimeSpan.FromSeconds(1));
+            Assert.Equal(index + 1, delivery.CallCount);
+        }
+    }
+
+    [Fact]
     public async Task DisposeAsync_UnresponsiveDeliveryRemainsOwnedAndRejectsNewAlerts()
     {
         var deliveryStarted = new TaskCompletionSource(
@@ -53,6 +67,18 @@ public class DiscordOwnerErrorNotifierLeaseHandoffTests
             Interlocked.Increment(ref _callCount);
             _started.TrySetResult();
             return _completion.Task;
+        }
+    }
+
+    private sealed class RecordingDelivery : IOwnerAlertDelivery
+    {
+        private int _callCount;
+        public int CallCount => Volatile.Read(ref _callCount);
+
+        public Task DeliverAsync(string alert, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _callCount);
+            return Task.CompletedTask;
         }
     }
 }

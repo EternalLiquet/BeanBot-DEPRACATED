@@ -80,6 +80,7 @@ public class BeanBotHostIntegrationTests
                 "unsubscribe-discord-log",
                 "stop-recovery",
                 "unsubscribe-events",
+                "stop-startup-report",
                 "stop-pun",
                 "flush-alerts",
                 "stop-health",
@@ -342,6 +343,12 @@ public class BeanBotHostIntegrationTests
         }
 
         public void UnsubscribeApplicationEvents() => Calls.Add("unsubscribe-events");
+
+        public Task StopStartupReportAsync()
+        {
+            Calls.Add("stop-startup-report");
+            return Task.CompletedTask;
+        }
 
         public Task StopPunServiceAsync()
         {

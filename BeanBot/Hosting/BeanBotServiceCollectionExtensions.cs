@@ -187,6 +187,7 @@ internal static class BeanBotServiceCollectionExtensions
 
         services.AddSingleton<CommandHandler>();
         services.AddSingleton<DailyPunService>();
+        services.AddSingleton<BeanBotStartupReport>();
         services.AddSingleton<FortuneMessageEditHandler>();
         services.AddSingleton<NewMemberHandler>();
         services.AddSingleton<ReactionRoleHandler>();
