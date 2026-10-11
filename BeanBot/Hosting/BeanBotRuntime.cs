@@ -25,6 +25,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
     private readonly InteractionHandler[] _interactionHandlers;
     private readonly LegacyCommandReplySender _commandReplySender;
     private readonly DailyPunService _dailyPunService;
+    private readonly BeanBotStartupReport _startupReport;
     private readonly FortuneMessageEditHandler _fortuneMessageEditHandler;
     private readonly NewMemberHandler _newMemberHandler;
     private readonly NewMemberWelcomeService _newMemberWelcomeService;
@@ -48,6 +49,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         IEnumerable<InteractionHandler> interactionHandlers,
         LegacyCommandReplySender commandReplySender,
         DailyPunService dailyPunService,
+        BeanBotStartupReport startupReport,
         FortuneMessageEditHandler fortuneMessageEditHandler,
         NewMemberHandler newMemberHandler,
         NewMemberWelcomeService newMemberWelcomeService,
@@ -70,6 +72,7 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         _interactionHandlers = interactionHandlers?.ToArray() ?? throw new ArgumentNullException(nameof(interactionHandlers));
         _commandReplySender = commandReplySender ?? throw new ArgumentNullException(nameof(commandReplySender));
         _dailyPunService = dailyPunService ?? throw new ArgumentNullException(nameof(dailyPunService));
+        _startupReport = startupReport ?? throw new ArgumentNullException(nameof(startupReport));
         _fortuneMessageEditHandler = fortuneMessageEditHandler ?? throw new ArgumentNullException(nameof(fortuneMessageEditHandler));
         _newMemberHandler = newMemberHandler ?? throw new ArgumentNullException(nameof(newMemberHandler));
         _newMemberWelcomeService = newMemberWelcomeService ?? throw new ArgumentNullException(nameof(newMemberWelcomeService));
@@ -82,6 +85,8 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
 
     public bool HasActiveDiscordLifecycleOperation
         => _discordLifecycleCoordinator.HasActiveSequence
+            || _ownerErrorNotifier.HasActiveDiscordOperation
+            || _startupReport.HasActiveDiscordOperation
             || _newMemberWelcomeService.HasActiveDiscordOperation
             || _fortuneMessageEditHandler.HasInFlightOperations
             || _commandReplySender.HasPendingOperations
@@ -159,13 +164,17 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
         TaskScheduler.UnobservedTaskException -= HandleUnobservedTaskException;
     }
 
+    public Task StopStartupReportAsync() => _startupReport.StopAsync();
+
     public Task StopPunServiceAsync() => _dailyPunService.DisposeAsync().AsTask();
 
     public Task StopHealthServerAsync(CancellationToken cancellationToken)
         => _healthCheckServer.StopAsync(cancellationToken);
 
     public Task FlushOwnerAlertsAsync()
-        => _ownerErrorNotifier.FlushAsync(TimeSpan.FromSeconds(3));
+        // Shut the notifier down before the client-disposal decision. A plain
+        // queue flush can time out while the worker is between DMs or retries.
+        => _ownerErrorNotifier.DisposeAsync().AsTask();
 
     public async Task StopDiscordAsync(CancellationToken cancellationToken)
     {
@@ -233,6 +242,16 @@ internal sealed class BeanBotRuntime : IBeanBotRuntime
 
     private async Task OnDiscordReadyAsync()
     {
+        try
+        {
+            _startupReport.QueueOnFirstReady();
+        }
+        catch (Exception exception)
+        {
+            _dailyPunService.RecordStartupReportOutcome(missingChannelAlertHandled: false);
+            BeanBotLog.StartupReportFailed(_logger, exception);
+        }
+
         _discordConnectionHealth.MarkReady();
         _discordGatewayRecovery.NotifyReady();
         if (_logger.IsEnabled(LogLevel.Information))

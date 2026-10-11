@@ -44,6 +44,7 @@ public class BeanBotServiceRegistrationTests
         AssertSingleton<RoleMenuInteractionService>(services);
         AssertSingleton<PunProvider>(services);
         AssertSingleton<IPunProvider>(services);
+        AssertSingleton<BeanBotStartupReport>(services);
         AssertSingleton<FortuneResponseEditService>(services);
         AssertSingleton<LogHandler>(services);
         AssertSingleton<LegacyCommandReplySender>(services);
@@ -141,6 +142,7 @@ public class BeanBotServiceRegistrationTests
                 ownerErrorNotifier,
                 host.Services.GetRequiredService<IOwnerErrorNotifier>());
             Assert.NotNull(host.Services.GetRequiredService<DiscordGatewayRecoveryService>());
+            Assert.NotNull(host.Services.GetRequiredService<BeanBotStartupReport>());
             Assert.Same(
                 host.Services.GetRequiredService<PunProvider>(),
                 host.Services.GetRequiredService<IPunProvider>());

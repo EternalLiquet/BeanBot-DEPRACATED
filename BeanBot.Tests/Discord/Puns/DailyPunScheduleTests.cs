@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using BeanBot.Configuration;
 using BeanBot.Discord.Puns;
+using BeanBot.Health;
 using BeanBot.Persistence.Repositories;
 using Discord.WebSocket;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -80,6 +81,7 @@ public class DailyPunScheduleTests
             HealthCheckOptions.Disabled);
         var handler = new DailyPunService(
             client,
+            new DiscordConnectionHealth(),
             options,
             new UnavailablePunProvider(),
             new UnusedClaimStore(),
