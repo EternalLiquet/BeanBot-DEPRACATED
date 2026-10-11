@@ -66,6 +66,21 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
     {
     }
 
+    internal bool HasActiveDiscordOperation
+    {
+        get
+        {
+            lock (_deliverySync)
+            {
+                // A timed-out shutdown may still be stopping the worker between
+                // queued alerts or while waiting to retry. Keep the client owned
+                // until the worker cannot start another delivery.
+                return (Volatile.Read(ref _disposed) != 0 && !_worker.IsCompleted)
+                    || _activeDelivery is { IsCompleted: false };
+            }
+        }
+    }
+
     internal DiscordOwnerErrorNotifier(
         IOwnerAlertDelivery delivery,
         Func<int, TimeSpan>? retryDelay = null,
@@ -83,17 +98,6 @@ internal sealed class DiscordOwnerErrorNotifier : IOwnerErrorNotifier, IAsyncDis
             SingleWriter = false
         });
         _worker = Task.Run(() => ProcessAlertsAsync(_shutdown.Token));
-    }
-
-    internal bool HasActiveDiscordOperation
-    {
-        get
-        {
-            lock (_deliverySync)
-            {
-                return _activeDelivery is { IsCompleted: false };
-            }
-        }
     }
 
     internal void StartAccepting()

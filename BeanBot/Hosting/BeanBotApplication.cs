@@ -26,6 +26,7 @@ internal interface IBeanBotRuntime
     void UnsubscribeDiscordLog();
     Task StopGatewayRecoveryAsync();
     void UnsubscribeApplicationEvents();
+    Task StopStartupReportAsync() => Task.CompletedTask;
     Task StopPunServiceAsync();
     Task ReleaseInstanceLeaseAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     void SkipInstanceLeaseRelease()
@@ -187,6 +188,7 @@ internal sealed class BeanBotApplication : IBeanBotApplication
         await RunSynchronousStageAsync("discord-log", _runtime.UnsubscribeDiscordLog);
         await RunStageAsync("gateway-recovery", _runtime.StopGatewayRecoveryAsync);
         await RunSynchronousStageAsync("application-events", _runtime.UnsubscribeApplicationEvents);
+        await RunStageAsync("startup-report", _runtime.StopStartupReportAsync);
         await RunStageAsync("pun-service", _runtime.StopPunServiceAsync);
         await RunStageAsync(
             "owner-alerts-before-lease-release",
