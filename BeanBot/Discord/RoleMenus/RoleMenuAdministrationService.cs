@@ -102,10 +102,12 @@ public sealed class RoleMenuAdministrationService
         RoleMenuDraft draft,
         ITextChannel targetChannel,
         ulong botUserId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RoleMenuPublishDiagnostics? diagnostics = null)
     {
         var result = await RoleMenuPublicationWorkflow.ExecuteAsync(
-            draft, botUserId, CreatePublicationOperations(targetChannel, draft.MenuId), cancellationToken);
+            draft, botUserId, CreatePublicationOperations(targetChannel, draft.MenuId), cancellationToken,
+            diagnostics);
         LogPublicationFailures(draft.MenuId, result.Failures);
         if (result.IsTerminal)
         {
