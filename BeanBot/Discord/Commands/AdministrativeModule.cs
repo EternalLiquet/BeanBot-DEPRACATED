@@ -152,6 +152,13 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
         LegacyCommandReplySender replySender, ICommandContext context, string message)
         => replySender.SendMessageAsync(context, message, allowedMentions: AllowedMentions.None);
 
+    internal static Task<IUserMessage> SendUnknownInputMessageAsync(
+        LegacyCommandReplySender replySender, ICommandContext context, string kind, string input)
+        => replySender.SendMessageAsync(
+            context,
+            $"The {kind} {input} does not exist. Please start again.",
+            allowedMentions: AllowedMentions.None);
+
     internal static string? GetRoleValidationMessage(ReactionRoleAssignabilityStatus status)
     {
         return status switch
@@ -259,9 +266,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
 
         if (roleResolution.Status == RoleResolutionStatus.NotFound)
         {
-            messages.Add(await _replySender.SendMessageAsync(
-                Context,
-                $"The role {response.Content} does not exist. Please start again."));
+            messages.Add(await SendUnknownInputMessageAsync(_replySender, Context, "role", response.Content));
             return null;
         }
 
@@ -350,9 +355,7 @@ public class AdministrativeModule : ModuleBase<SocketCommandContext>
             response.Content.Contains(candidate.Name, StringComparison.OrdinalIgnoreCase));
         if (emote == null)
         {
-            messages.Add(await _replySender.SendMessageAsync(
-                Context,
-                $"The emote {response.Content} does not exist. Please start again."));
+            messages.Add(await SendUnknownInputMessageAsync(_replySender, Context, "emote", response.Content));
             return null;
         }
 
