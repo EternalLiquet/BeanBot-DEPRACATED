@@ -39,6 +39,36 @@ public class AdministrativeModuleRoleAssignabilityTests
         Assert.Same(AllowedMentions.None, emittedMentions);
     }
 
+    [Theory]
+    [InlineData("role", "@everyone")]
+    [InlineData("role", "<@&123>")]
+    [InlineData("emote", "<@456>")]
+    [InlineData("emote", "plain text")]
+    public async Task SendUnknownInputMessageAsync_DisablesMentionsWithoutChangingText(string kind, string input)
+    {
+        string? emittedText = null;
+        AllowedMentions? emittedMentions = null;
+        var sentMessage = DispatchProxy.Create<IUserMessage, DiscordProxy>();
+        var channel = DispatchProxy.Create<IMessageChannel, DiscordProxy>();
+        ((DiscordProxy)channel).InvokeMethod = (method, arguments) =>
+        {
+            emittedText = Assert.IsType<string>(arguments[0]);
+            var mentionIndex = Array.FindIndex(method.GetParameters(), parameter => parameter.Name == "allowedMentions");
+            emittedMentions = Assert.IsType<AllowedMentions>(arguments[mentionIndex]);
+            return Task.FromResult(sentMessage);
+        };
+        var context = DispatchProxy.Create<ICommandContext, DiscordProxy>();
+        ((DiscordProxy)context).InvokeMethod = (method, _) => method.Name == "get_Channel"
+            ? channel
+            : throw new InvalidOperationException(method.Name);
+        using var sender = new LegacyCommandReplySender(
+            NullLogger<LegacyCommandReplySender>.Instance, 1, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), CancellationToken.None);
+
+        Assert.Same(sentMessage, await AdministrativeModule.SendUnknownInputMessageAsync(sender, context, kind, input));
+        Assert.Equal($"The {kind} {input} does not exist. Please start again.", emittedText);
+        Assert.Same(AllowedMentions.None, emittedMentions);
+    }
+
     public class DiscordProxy : DispatchProxy
     {
         public Func<MethodInfo, object?[], object?>? InvokeMethod { get; set; }
