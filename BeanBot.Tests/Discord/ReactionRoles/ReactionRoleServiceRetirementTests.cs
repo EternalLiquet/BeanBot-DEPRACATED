@@ -245,14 +245,93 @@ public class ReactionRoleServiceRetirementTests
                 : throw new NotSupportedException(targetMethod?.Name);
     }
 
-    private static ReactionRoleService CreateService(IReactionRoleSettingsStore store)
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Retirement_WaitsForRawMutationAfterCallerTimeout(bool lateFailure)
+    {
+        var store = new RetirementStore { Settings = CreateSettings() };
+        await using var service = CreateService(store, TimeSpan.FromMilliseconds(50));
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var raw = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retirementEntered = false;
+        var caller = service.CoordinateRoleMutation(new ReactionRoleMutationKey(1, 2, 4), 3, true,
+            (_, _) => { entered.SetResult(); return raw.Task; })!;
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Assert.ThrowsAsync<TimeoutException>(() => caller);
+        var retirement = service.RunSettingsRetirementAsync(3, _ =>
+        {
+            retirementEntered = true;
+            return Task.FromResult(true);
+        }, CancellationToken.None);
+        try
+        {
+            Assert.True(service.HasPendingOperations);
+            Assert.False(retirementEntered);
+            Assert.False(retirement.IsCompleted);
+        }
+        finally
+        {
+            if (lateFailure) raw.TrySetException(new InvalidOperationException("late Discord failure"));
+            else raw.TrySetResult();
+            await retirement.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        Assert.True(retirementEntered);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task QueuedMutation_RechecksBindingAfterRetirementOrReplacement(bool replace)
+    {
+        var original = CreateSettings();
+        var store = new RetirementStore { Settings = original };
+        await using var service = CreateService(store);
+        var writerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writer = service.RunSettingsRetirementAsync(3, async _ =>
+        {
+            writerEntered.SetResult();
+            await releaseWriter.Task;
+            store.Settings = replace
+                ? new ReactionRoleSettings([new RoleEmotePair("4", "5")], "1", "2", "3") { Id = ObjectId.GenerateNewId() }
+                : null;
+            return true;
+        }, CancellationToken.None);
+        await writerEntered.Task;
+        var mutations = 0;
+        var operation = service.CoordinateConfiguredRoleMutation(new ReactionRoleMutationKey(1, 2, 4),
+            3, original, "5", true, (_, _) => { mutations++; return Task.CompletedTask; })!;
+        releaseWriter.SetResult();
+        await writer;
+        await operation;
+        Assert.Equal(0, mutations);
+    }
+
+    [Fact]
+    public async Task ConfiguredMutation_PreservesDesiredStateForExistingBinding()
+    {
+        var original = CreateSettings();
+        var store = new RetirementStore { Settings = original };
+        await using var service = CreateService(store);
+        var states = new List<bool>();
+        foreach (var desired in new[] { true, false })
+        {
+            var operation = service.CoordinateConfiguredRoleMutation(new ReactionRoleMutationKey(1, 2, 4),
+                3, original, "5", desired, (state, _) => { states.Add(state); return Task.CompletedTask; })!;
+            await operation;
+        }
+        Assert.Equal(new[] { true, false }, states);
+    }
+
+    private static ReactionRoleService CreateService(IReactionRoleSettingsStore store, TimeSpan? mutationTimeout = null)
         => new(
             new ReactionRoleRepository(store, NullLogger<ReactionRoleRepository>.Instance),
             client: null,
             TimeSpan.FromSeconds(1),
             NullLogger<ReactionRoleService>.Instance,
             cacheCapacity: 8,
-            CancellationToken.None);
+            CancellationToken.None, roleMutationTimeout: mutationTimeout);
 
     private static ReactionRoleSettings CreateSettings()
         => new([new RoleEmotePair("4", "5")], "1", "2", "3");

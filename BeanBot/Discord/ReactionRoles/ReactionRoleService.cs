@@ -116,7 +116,29 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
     internal Task? CoordinateRoleMutation(
         ReactionRoleMutationKey key, ulong messageId, bool desiredState,
         Func<bool, CancellationToken, Task> mutate)
-        => _mutationCoordinator.Submit(key, messageId, desiredState, mutate, _shutdownToken);
+        => _mutationCoordinator.Submit(key, messageId, desiredState,
+            (state, token) => _settingsLifecycle.RunReadAsync(messageId,
+                leaseToken => mutate(state, leaseToken), token), _shutdownToken);
+
+    internal Task? CoordinateConfiguredRoleMutation(
+        ReactionRoleMutationKey key, ulong messageId, ReactionRoleSettings expected,
+        string emojiId, bool desiredState, Func<bool, CancellationToken, Task> mutate)
+        => CoordinateRoleMutation(key, messageId, desiredState, async (state, token) =>
+        {
+            // The lease belongs to the raw write, not the finite gateway wait. Retirement may
+            // have completed while this attempt waited for a lease or a previous mutation.
+            var current = await GetFreshRoleSettingAsync(messageId, token);
+            if (current is null || current.Id != expected.Id
+                || current.GuildId != key.GuildId.ToString(CultureInfo.InvariantCulture)
+                || current.GuildId != expected.GuildId || current.ChannelId != expected.ChannelId
+                || current.MessageId != expected.MessageId
+                || current.RoleEmotePairs?.Any(pair => pair.EmojiId == emojiId
+                    && pair.RoleId == key.RoleId.ToString(CultureInfo.InvariantCulture)) != true)
+            {
+                return;
+            }
+            await mutate(state, token);
+        });
 
     public Task HandleReact(Cacheable<IUserMessage, ulong> message, Cacheable<IMessageChannel, ulong> channel, SocketReaction reaction)
         => TrackHandlerAsync(cancellationToken =>
@@ -202,33 +224,19 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
                 return;
             }
 
-            await _settingsLifecycle.RunReadAsync(
-                message.Id,
-                async operationCancellation =>
-                {
-                    var roleSetting = await GetCachedRoleSettingAsync(
-                        message.Id, operationCancellation);
-                    var pair = roleSetting?.RoleEmotePairs?
-                        .FirstOrDefault(candidate =>
-                            candidate.EmojiId == customEmote.Id.ToString(CultureInfo.InvariantCulture));
-                    if (pair == null || !ulong.TryParse(pair.RoleId, out var roleId))
-                    {
-                        return;
-                    }
+            var roleSetting = await GetCachedRoleSettingAsync(message.Id, cancellationToken);
+            var emojiId = customEmote.Id.ToString(CultureInfo.InvariantCulture);
+            var pair = roleSetting?.RoleEmotePairs?
+                .FirstOrDefault(candidate => candidate.EmojiId == emojiId);
+            if (pair == null || !ulong.TryParse(pair.RoleId, out var roleId)) return;
 
-                    var guild = textChannel.Guild;
-                    var operation = CoordinateRoleMutation(
-                        new ReactionRoleMutationKey(guild.Id, reaction.UserId, roleId),
-                        message.Id, addRole,
-                        (desiredState, mutationCancellation) => ApplyDesiredRoleStateAsync(
-                            guild, reaction.UserId, roleId, message.Id, desiredState,
-                            mutationCancellation));
-                    if (operation is not null)
-                    {
-                        await operation;
-                    }
-                },
-                cancellationToken);
+            var guild = textChannel.Guild;
+            var operation = CoordinateConfiguredRoleMutation(
+                new ReactionRoleMutationKey(guild.Id, reaction.UserId, roleId),
+                message.Id, roleSetting!, emojiId, addRole,
+                (desiredState, mutationCancellation) => ApplyDesiredRoleStateAsync(
+                    guild, reaction.UserId, roleId, message.Id, desiredState, mutationCancellation));
+            if (operation is not null) await operation;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
