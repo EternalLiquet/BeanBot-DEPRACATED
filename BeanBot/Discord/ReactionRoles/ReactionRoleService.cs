@@ -116,14 +116,23 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
     internal Task? CoordinateRoleMutation(
         ReactionRoleMutationKey key, ulong messageId, bool desiredState,
         Func<bool, CancellationToken, Task> mutate)
-        => _mutationCoordinator.Submit(key, messageId, desiredState,
+        => CoordinateRoleMutationWithOutcome(key, messageId, desiredState, async (state, token) =>
+        {
+            await mutate(state, token);
+            return true;
+        });
+
+    private Task? CoordinateRoleMutationWithOutcome(
+        ReactionRoleMutationKey key, ulong messageId, bool desiredState,
+        Func<bool, CancellationToken, Task<bool>> mutate)
+        => _mutationCoordinator.SubmitWithOutcome(key, messageId, desiredState,
             (state, token) => _settingsLifecycle.RunReadAsync(messageId,
                 leaseToken => mutate(state, leaseToken), token), _shutdownToken);
 
     internal Task? CoordinateConfiguredRoleMutation(
         ReactionRoleMutationKey key, ulong messageId, ReactionRoleSettings expected,
         string emojiId, bool desiredState, Func<bool, CancellationToken, Task> mutate)
-        => CoordinateRoleMutation(key, messageId, desiredState, async (state, token) =>
+        => CoordinateRoleMutationWithOutcome(key, messageId, desiredState, async (state, token) =>
         {
             // The lease belongs to the raw write, not the finite gateway wait. Retirement may
             // have completed while this attempt waited for a lease or a previous mutation.
@@ -135,9 +144,10 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
                 || current.RoleEmotePairs?.Any(pair => pair.EmojiId == emojiId
                     && pair.RoleId == key.RoleId.ToString(CultureInfo.InvariantCulture)) != true)
             {
-                return;
+                return false;
             }
             await mutate(state, token);
+            return true;
         });
 
     public Task HandleReact(Cacheable<IUserMessage, ulong> message, Cacheable<IMessageChannel, ulong> channel, SocketReaction reaction)

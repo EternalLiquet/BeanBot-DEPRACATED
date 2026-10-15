@@ -324,6 +324,36 @@ public class ReactionRoleServiceRetirementTests
         Assert.Equal(new[] { true, false }, states);
     }
 
+    [Fact]
+    public async Task StaleAttempt_DoesNotDiscardNewerValidSameDirectionEvent()
+    {
+        var original = CreateSettings();
+        var replacement = new ReactionRoleSettings([new RoleEmotePair("4", "5")], "1", "2", "3")
+        { Id = ObjectId.GenerateNewId() };
+        var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseLookup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new RetirementStore
+        {
+            Settings = replacement,
+            GetByMessageId = async (_, _) =>
+            {
+                lookupStarted.TrySetResult();
+                await releaseLookup.Task;
+                return replacement;
+            }
+        };
+        await using var service = CreateService(store);
+        var states = new List<bool>();
+        Task Mutate(bool state, CancellationToken _) { states.Add(state); return Task.CompletedTask; }
+        var key = new ReactionRoleMutationKey(1, 2, 4);
+        var owner = service.CoordinateConfiguredRoleMutation(key, 3, original, "5", true, Mutate)!;
+        await lookupStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Null(service.CoordinateConfiguredRoleMutation(key, 3, replacement, "5", true, Mutate));
+        releaseLookup.SetResult();
+        await owner;
+        Assert.Equal(new[] { true }, states);
+    }
+
     private static ReactionRoleService CreateService(IReactionRoleSettingsStore store, TimeSpan? mutationTimeout = null)
         => new(
             new ReactionRoleRepository(store, NullLogger<ReactionRoleRepository>.Instance),

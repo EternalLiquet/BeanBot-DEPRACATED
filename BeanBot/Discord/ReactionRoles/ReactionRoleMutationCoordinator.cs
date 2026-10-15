@@ -33,6 +33,20 @@ internal sealed class ReactionRoleMutationCoordinator
         Func<bool, CancellationToken, Task> mutate, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(mutate);
+        return SubmitWithOutcome(key, messageId, desiredState, async (state, token) =>
+        {
+            await mutate(state, token);
+            return true;
+        }, cancellationToken);
+    }
+
+    // False means no state was applied (for example a retired binding). Only a newer real event
+    // can cause another attempt, including when that event requests the same desired state.
+    internal Task? SubmitWithOutcome(
+        ReactionRoleMutationKey key, ulong messageId, bool desiredState,
+        Func<bool, CancellationToken, Task<bool>> mutate, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(mutate);
         Entry entry;
         TaskCompletionSource start;
         lock (_syncRoot)
@@ -89,7 +103,7 @@ internal sealed class ReactionRoleMutationCoordinator
                 ulong messageId;
                 bool desiredState;
                 long version;
-                Func<bool, CancellationToken, Task> mutate;
+                Func<bool, CancellationToken, Task<bool>> mutate;
                 lock (_syncRoot)
                 {
                     if (_stopping) return;
@@ -104,8 +118,7 @@ internal sealed class ReactionRoleMutationCoordinator
                     using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     operationCancellation.CancelAfter(_operationTimeout);
                     operationCancellation.Token.ThrowIfCancellationRequested();
-                    await mutate(desiredState, operationCancellation.Token);
-                    succeeded = true;
+                    succeeded = await mutate(desiredState, operationCancellation.Token);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -119,7 +132,7 @@ internal sealed class ReactionRoleMutationCoordinator
                 {
                     if (!_stopping && !cancellationToken.IsCancellationRequested
                         && entry.Version > version && (!succeeded || entry.DesiredState != desiredState)) continue;
-                    // Failed attempts need a newer real event, never a blind retry.
+                    // Failed or skipped attempts need a newer real event, never a blind retry.
                     RemoveEntryIfCurrent(key, entry);
                     return;
                 }
@@ -141,11 +154,11 @@ internal sealed class ReactionRoleMutationCoordinator
             completed => _ = completed.Exception, CancellationToken.None,
             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
-    private sealed class Entry(ulong messageId, bool desiredState, Func<bool, CancellationToken, Task> mutate)
+    private sealed class Entry(ulong messageId, bool desiredState, Func<bool, CancellationToken, Task<bool>> mutate)
     {
         internal ulong MessageId { get; set; } = messageId;
         internal bool DesiredState { get; set; } = desiredState;
-        internal Func<bool, CancellationToken, Task> Mutate { get; set; } = mutate;
+        internal Func<bool, CancellationToken, Task<bool>> Mutate { get; set; } = mutate;
         internal long Version { get; set; }
         internal Task Worker { get; set; } = Task.CompletedTask;
     }
