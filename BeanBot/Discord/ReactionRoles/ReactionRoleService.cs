@@ -113,7 +113,8 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
         }
     }
 
-    internal Task? CoordinateRoleMutation(
+    // Test seam for raw-write ownership; production must validate the persisted binding.
+    internal Task? CoordinateRoleMutationWithoutBindingValidationForTesting(
         ReactionRoleMutationKey key, ulong messageId, bool desiredState,
         Func<bool, CancellationToken, Task> mutate)
         => CoordinateRoleMutationWithOutcome(key, messageId, desiredState, async (state, token) =>
@@ -136,7 +137,11 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
         {
             // The lease belongs to the raw write, not the finite gateway wait. Retirement may
             // have completed while this attempt waited for a lease or a previous mutation.
-            var current = await GetFreshRoleSettingAsync(messageId, token);
+            // Authoritative read without publishing to the shared cache: a slow Mongo read
+            // must not hold the global cache lock or later resurrect a concurrently deleted entry.
+            var current = await _reactionRoleRepository.GetRoleSetting(messageId, token);
+            // Record identity is a generation boundary, even if the replacement maps the same role.
+            // Only a new event observed against that replacement may apply its mapping.
             if (current is null || current.Id != expected.Id
                 || current.GuildId != key.GuildId.ToString(CultureInfo.InvariantCulture)
                 || current.GuildId != expected.GuildId || current.ChannelId != expected.ChannelId
@@ -144,6 +149,7 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
                 || current.RoleEmotePairs?.Any(pair => pair.EmojiId == emojiId
                     && pair.RoleId == key.RoleId.ToString(CultureInfo.InvariantCulture)) != true)
             {
+                BeanBotLog.ReactionRoleBindingSkipped(_logger);
                 return false;
             }
             await mutate(state, token);

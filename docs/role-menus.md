@@ -116,6 +116,11 @@ Retirement requires **Manage Roles** and a private confirmation bound to the adm
 
 BeanBot deletes a verified Discord panel once, then conditionally removes the exact saved record and invalidates its reaction-role cache entry. If Discord deletion is ambiguous, BeanBot leaves the saved record and does not retry automatically. Check the panel before running the command again. If Discord deletion succeeds but saving cleanup fails, the panel remains gone; rerun the command to finish cleanup. Retirement does not remove roles that members already hold and does not automatically follow migration.
 
+Legacy reaction mutations retain their settings read lease until the actual Discord write completes, even after the gateway caller's wait times out. Before writing, each attempt reads MongoDB directly and validates the exact saved record identity and mapping. Replacing a record creates a new generation: a queued event from the old record is skipped even if the replacement has the same emoji and role. A newer event observed against the replacement can still apply, including a coalesced event requesting the same state. Skips produce one Debug log per attempted mutation without an owner error alert.
+
+The existing 10-second attempt budget includes settings-lease acquisition and the fresh database read. Retirement holds its write lease across Discord operations, and the bounded 64-stripe lease table means unrelated message IDs with the same remainder can contend. An attempt that expires before acquiring its lease performs no role write. The finite caller wait and worker can each report a timeout/failure; owner error delivery remains subject to the existing notifier's bounds. Failed attempts are not blindly retried: only a newer real event retained by the coordinator can cause another attempt. A lone event that expires while waiting is not preserved for later replay. Per-message lease admission, timeout alert deduplication, and ingress lookup ordering remain separate work; never release an acquired lease or key while an uncooperative Discord write is still in flight.
+
+
 ## Manual smoke check
 
 Use a test server with BeanBot's role below one test role and above two other test roles.

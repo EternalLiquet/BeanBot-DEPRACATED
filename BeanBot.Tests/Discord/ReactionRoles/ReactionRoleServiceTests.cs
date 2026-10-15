@@ -49,7 +49,7 @@ public class ReactionRoleServiceTests
         };
         try
         {
-            var owner = service.CoordinateRoleMutation(new ReactionRoleMutationKey(1, 2, 3), 42, true,
+            var owner = service.CoordinateRoleMutationWithoutBindingValidationForTesting(new ReactionRoleMutationKey(1, 2, 3), 42, true,
                 (_, _) => rawMutation.Task)!;
             await Assert.ThrowsAsync<TimeoutException>(() => owner);
             var application = new BeanBotApplication(runtime, NullLogger<BeanBotApplication>.Instance);
@@ -351,7 +351,7 @@ public class ReactionRoleServiceTests
         var mutationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var followupCalls = 0;
         var key = new ReactionRoleMutationKey(1, 2, 3);
-        var owner = service.CoordinateRoleMutation(key, 42, true, async (_, _) =>
+        var owner = service.CoordinateRoleMutationWithoutBindingValidationForTesting(key, 42, true, async (_, _) =>
         {
             mutationStarted.SetResult();
             await rawMutation.Task;
@@ -359,7 +359,7 @@ public class ReactionRoleServiceTests
         await mutationStarted.Task;
         await Assert.ThrowsAsync<TimeoutException>(() => owner);
         Assert.True(service.HasPendingOperations);
-        Assert.Null(service.CoordinateRoleMutation(key, 43, false, (_, _) =>
+        Assert.Null(service.CoordinateRoleMutationWithoutBindingValidationForTesting(key, 43, false, (_, _) =>
         {
             followupCalls++;
             return Task.CompletedTask;
@@ -370,7 +370,7 @@ public class ReactionRoleServiceTests
         Assert.True(service.HasPendingOperations);
         Assert.True(cacheLock.Wait(0));
         cacheLock.Release();
-        Assert.Null(service.CoordinateRoleMutation(key, 44, false, (_, _) => Task.CompletedTask));
+        Assert.Null(service.CoordinateRoleMutationWithoutBindingValidationForTesting(key, 44, false, (_, _) => Task.CompletedTask));
         rawMutation.SetResult();
         var deadline = DateTime.UtcNow.AddSeconds(1);
         while (service.HasPendingOperations && DateTime.UtcNow < deadline) await Task.Delay(5);

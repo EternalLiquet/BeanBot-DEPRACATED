@@ -168,6 +168,9 @@ internal static partial class BeanBotLog
     [LoggerMessage(Level = LogLevel.Warning, Message = "Could not replace the response to edited fortune message {MessageId}")]
     internal static partial void FortuneResponseReplaceFailed(ILogger logger, ulong messageId, Exception exception);
 
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Skipped reaction-role mutation because its saved binding is missing or changed")]
+    internal static partial void ReactionRoleBindingSkipped(ILogger logger);
+
     [LoggerMessage(Level = LogLevel.Error, Message = "Failed to {Action} a reaction role for message {MessageId}")]
     internal static partial void ReactionRoleActionFailed(ILogger logger, string action, ulong messageId, Exception exception);
 

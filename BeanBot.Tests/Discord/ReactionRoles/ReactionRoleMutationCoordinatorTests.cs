@@ -350,6 +350,52 @@ public class ReactionRoleMutationCoordinatorTests
     }
 
     [Fact]
+    public async Task Submit_TimeoutWaitingForCollidingRetirementDoesNotWriteOrReleaseWriter()
+    {
+        var lifecycle = new ReactionRoleSettingsLifecycleCoordinator();
+        var coordinator = CreateCoordinator(timeout: TimeSpan.FromMilliseconds(50));
+        var releaseWriter = NewCompletion();
+        var writer = lifecycle.RunWriteAsync(3, async _ =>
+        {
+            await releaseWriter.Task;
+            return true;
+        }, CancellationToken.None);
+        var enteredAttempt = NewCompletion();
+        var writes = 0;
+        var owner = coordinator.Submit(new(1, 2, 4), 67, true, (_, token) =>
+        {
+            enteredAttempt.SetResult();
+            return lifecycle.RunReadAsync(67, _ =>
+            {
+                writes++;
+                return Task.CompletedTask;
+            }, token);
+        }, CancellationToken.None)!;
+        await enteredAttempt.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var workers = coordinator.SnapshotOperations();
+        try
+        {
+            // The caller deadline and worker cancellation may finish in either order.
+            var error = await Record.ExceptionAsync(() => owner);
+            Assert.True(error is null or TimeoutException);
+            await Task.WhenAll(workers).WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal(0, writes);
+            Assert.Equal(0, coordinator.ActiveKeyCount);
+            Assert.False(writer.IsCompleted);
+        }
+        finally
+        {
+            releaseWriter.TrySetResult();
+            await writer;
+        }
+        // A later real event can try again after retirement releases its stripe.
+        await coordinator.Submit(new(1, 2, 4), 67, true, (_, token) =>
+            lifecycle.RunReadAsync(67, _ => { writes++; return Task.CompletedTask; }, token),
+            CancellationToken.None)!;
+        Assert.Equal(1, writes);
+    }
+
+    [Fact]
     public async Task Submit_LateFailureWithoutNewEventDoesNotRetry()
     {
         var coordinator = CreateCoordinator(timeout: TimeSpan.FromMilliseconds(25));
