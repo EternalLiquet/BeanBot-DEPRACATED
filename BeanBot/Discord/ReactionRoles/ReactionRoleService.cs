@@ -113,10 +113,48 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
         }
     }
 
-    internal Task? CoordinateRoleMutation(
+    // Test seam for raw-write ownership; production must validate the persisted binding.
+    internal Task? CoordinateRoleMutationWithoutBindingValidationForTesting(
         ReactionRoleMutationKey key, ulong messageId, bool desiredState,
         Func<bool, CancellationToken, Task> mutate)
-        => _mutationCoordinator.Submit(key, messageId, desiredState, mutate, _shutdownToken);
+        => CoordinateRoleMutationWithOutcome(key, messageId, desiredState, async (state, token) =>
+        {
+            await mutate(state, token);
+            return true;
+        });
+
+    private Task? CoordinateRoleMutationWithOutcome(
+        ReactionRoleMutationKey key, ulong messageId, bool desiredState,
+        Func<bool, CancellationToken, Task<bool>> mutate)
+        => _mutationCoordinator.SubmitWithOutcome(key, messageId, desiredState,
+            (state, token) => _settingsLifecycle.RunReadAsync(messageId,
+                leaseToken => mutate(state, leaseToken), token), _shutdownToken);
+
+    internal Task? CoordinateConfiguredRoleMutation(
+        ReactionRoleMutationKey key, ulong messageId, ReactionRoleSettings expected,
+        string emojiId, bool desiredState, Func<bool, CancellationToken, Task> mutate)
+        => CoordinateRoleMutationWithOutcome(key, messageId, desiredState, async (state, token) =>
+        {
+            // The lease belongs to the raw write, not the finite gateway wait. Retirement may
+            // have completed while this attempt waited for a lease or a previous mutation.
+            // Authoritative read without publishing to the shared cache: a slow Mongo read
+            // must not hold the global cache lock or later resurrect a concurrently deleted entry.
+            var current = await _reactionRoleRepository.GetRoleSetting(messageId, token);
+            // Record identity is a generation boundary, even if the replacement maps the same role.
+            // Only a new event observed against that replacement may apply its mapping.
+            if (current is null || current.Id != expected.Id
+                || current.GuildId != key.GuildId.ToString(CultureInfo.InvariantCulture)
+                || current.GuildId != expected.GuildId || current.ChannelId != expected.ChannelId
+                || current.MessageId != expected.MessageId
+                || current.RoleEmotePairs?.Any(pair => pair.EmojiId == emojiId
+                    && pair.RoleId == key.RoleId.ToString(CultureInfo.InvariantCulture)) != true)
+            {
+                BeanBotLog.ReactionRoleBindingSkipped(_logger);
+                return false;
+            }
+            await mutate(state, token);
+            return true;
+        });
 
     public Task HandleReact(Cacheable<IUserMessage, ulong> message, Cacheable<IMessageChannel, ulong> channel, SocketReaction reaction)
         => TrackHandlerAsync(cancellationToken =>
@@ -202,33 +240,19 @@ public class ReactionRoleService : IDisposable, IAsyncDisposable
                 return;
             }
 
-            await _settingsLifecycle.RunReadAsync(
-                message.Id,
-                async operationCancellation =>
-                {
-                    var roleSetting = await GetCachedRoleSettingAsync(
-                        message.Id, operationCancellation);
-                    var pair = roleSetting?.RoleEmotePairs?
-                        .FirstOrDefault(candidate =>
-                            candidate.EmojiId == customEmote.Id.ToString(CultureInfo.InvariantCulture));
-                    if (pair == null || !ulong.TryParse(pair.RoleId, out var roleId))
-                    {
-                        return;
-                    }
+            var roleSetting = await GetCachedRoleSettingAsync(message.Id, cancellationToken);
+            var emojiId = customEmote.Id.ToString(CultureInfo.InvariantCulture);
+            var pair = roleSetting?.RoleEmotePairs?
+                .FirstOrDefault(candidate => candidate.EmojiId == emojiId);
+            if (pair == null || !ulong.TryParse(pair.RoleId, out var roleId)) return;
 
-                    var guild = textChannel.Guild;
-                    var operation = CoordinateRoleMutation(
-                        new ReactionRoleMutationKey(guild.Id, reaction.UserId, roleId),
-                        message.Id, addRole,
-                        (desiredState, mutationCancellation) => ApplyDesiredRoleStateAsync(
-                            guild, reaction.UserId, roleId, message.Id, desiredState,
-                            mutationCancellation));
-                    if (operation is not null)
-                    {
-                        await operation;
-                    }
-                },
-                cancellationToken);
+            var guild = textChannel.Guild;
+            var operation = CoordinateConfiguredRoleMutation(
+                new ReactionRoleMutationKey(guild.Id, reaction.UserId, roleId),
+                message.Id, roleSetting!, emojiId, addRole,
+                (desiredState, mutationCancellation) => ApplyDesiredRoleStateAsync(
+                    guild, reaction.UserId, roleId, message.Id, desiredState, mutationCancellation));
+            if (operation is not null) await operation;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
