@@ -17,9 +17,10 @@ namespace BeanBot.Tests.Discord.RoleMenus;
 public sealed class RoleMenuCommandRegistrationTests
 {
     [Fact]
-    public async Task GlobalRegistration_IncludesGuildOnlyDeleteRoleMenuMessageCommand()
+    public async Task GlobalRegistration_PreservesRoleMenuCommandContracts()
     {
         await using var registration = await RegistrationFixture.CreateAsync();
+        var properties = registration.GetRegisteredProperties();
 
         var command = Assert.Single(
             registration.Interactions.ContextCommands,
@@ -28,23 +29,17 @@ public sealed class RoleMenuCommandRegistrationTests
         Assert.False(command.Module.DontAutoRegister);
         Assert.Null(command.Module.Parent);
 
-        var properties = Assert.IsType<MessageCommandProperties>(Assert.Single(
-            registration.GetRegisteredProperties(),
+        var messageProperties = Assert.IsType<MessageCommandProperties>(Assert.Single(
+            properties,
             candidate => candidate is MessageCommandProperties
                          && candidate.Name.GetValueOrDefault() == "Delete Role Menu"));
-        Assert.Equal(GuildPermission.ManageRoles, properties.DefaultMemberPermissions.GetValueOrDefault());
+        Assert.Equal(GuildPermission.ManageRoles, messageProperties.DefaultMemberPermissions.GetValueOrDefault());
         Assert.Equal(
             [InteractionContextType.Guild],
-            properties.ContextTypes.GetValueOrDefault()!);
-    }
-
-    [Fact]
-    public async Task GlobalRegistration_DeleteSlashCommandTakesNoMenuId()
-    {
-        await using var registration = await RegistrationFixture.CreateAsync();
+            messageProperties.ContextTypes.GetValueOrDefault()!);
 
         var roleMenu = Assert.IsType<SlashCommandProperties>(Assert.Single(
-            registration.GetRegisteredProperties(),
+            properties,
             candidate => candidate is SlashCommandProperties
                          && candidate.Name.GetValueOrDefault() == "role-menu"));
         var delete = Assert.Single(
@@ -53,29 +48,11 @@ public sealed class RoleMenuCommandRegistrationTests
 
         Assert.True(delete.Options is null or { Count: 0 });
         Assert.DoesNotContain("ID", delete.Description, StringComparison.Ordinal);
-    }
 
-    [Fact]
-    public async Task GlobalRegistration_EditHasNoMenuIdOption()
-    {
-        await using var registration = await RegistrationFixture.CreateAsync();
-        var roleMenu = Assert.IsType<SlashCommandProperties>(Assert.Single(
-            registration.GetRegisteredProperties(),
-            candidate => candidate is SlashCommandProperties
-                         && candidate.Name.GetValueOrDefault() == "role-menu"));
         var edit = Assert.Single(roleMenu.Options.GetValueOrDefault()!,
             option => option.Name == "edit");
         Assert.True(edit.Options is null or { Count: 0 });
-    }
 
-    [Fact]
-    public async Task GlobalRegistration_MigrationDoesNotRequireCopiedMessageId()
-    {
-        await using var registration = await RegistrationFixture.CreateAsync();
-        var roleMenu = Assert.IsType<SlashCommandProperties>(Assert.Single(
-            registration.GetRegisteredProperties(),
-            candidate => candidate is SlashCommandProperties
-                         && candidate.Name.GetValueOrDefault() == "role-menu"));
         var migrate = Assert.Single(roleMenu.Options.GetValueOrDefault()!,
             option => option.Name == "migrate");
         Assert.DoesNotContain(migrate.Options!,
@@ -83,16 +60,7 @@ public sealed class RoleMenuCommandRegistrationTests
         Assert.Contains(migrate.Options!, option => option.Name == "target-channel");
         Assert.Contains(migrate.Options!, option => option.Name == "title");
         Assert.Contains(migrate.Options!, option => option.Name == "description");
-    }
 
-    [Fact]
-    public async Task GlobalRegistration_RepairUsesPickerWithOptionalTargetChannel()
-    {
-        await using var registration = await RegistrationFixture.CreateAsync();
-        var roleMenu = Assert.IsType<SlashCommandProperties>(Assert.Single(
-            registration.GetRegisteredProperties(),
-            candidate => candidate is SlashCommandProperties
-                         && candidate.Name.GetValueOrDefault() == "role-menu"));
         var repair = Assert.Single(roleMenu.Options.GetValueOrDefault()!,
             option => option.Name == "repair");
         var target = Assert.Single(repair.Options!);
